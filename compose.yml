@@ -1,0 +1,12 @@
+services:
+  print-warden:
+    build: .
+    container_name: print-warden
+    restart: unless-stopped
+    ports: ["8710:8710"]
+    volumes:
+      - ./printers.yaml:/config/printers.yaml:ro
+      - ./data:/app/data
+    env_file: .env          # HA_BEARER_TOKEN, OBICO_WEBHOOK_SECRET
+    environment:
+      TZ: America/Chicago

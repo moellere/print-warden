@@ -1,0 +1,77 @@
+# Copy to printers.yaml. One entry per printer.
+printers:
+  garagex4:
+    location: covington
+    moonraker: http://x4.local:7125
+    cameras:
+      nozzle: http://x4.local/webcam/?action=snapshot   # C920 on the X beam, rides with Z
+      bed: http://nas.local:5000/api/bedcam/latest.jpg    # camv3 via Frigate, fixed whole-bed view
+    flip_v:
+      nozzle: true          # the C920 hangs upside down; Obico applies the same vertical flip
+      bed: true
+    light: light.workbench
+    auto_start: false        # tap-to-start (or quoted chat permission) until the bed-clear check exists
+    slicer:                  # OrcaSlicer preset names from the Artillery vendor directory
+      machine: Artillery Sidewinder X4 Plus 0.4 nozzle
+      processes:
+        draft: 0.24mm Draft @Artillery X4Plus 0.4 nozzle
+        standard: 0.20mm Standard @Artillery X4Plus 0.4 nozzle
+        strength: 0.20mm Strength @Artillery X4Plus 0.4 nozzle
+        fine: 0.12mm Fine @Artillery X4Plus 0.4 nozzle
+      filaments:
+        PLA: Artillery Generic PLA
+        PETG: Artillery Generic PETG
+        ABS: Artillery Generic ABS
+    rules:
+      heater_deviation_c: 8
+      heater_deviation_s: 90
+      stall_minutes: 10
+      layer_snapshot: true
+
+  wyolax1:
+    location: wyola
+    moonraker: http://x1.local:7125
+    power_device: printer     # Moonraker [power printer] (Sonoff); off between prints, MCU stays on USB power.
+                              # Start = power on, FIRMWARE_RESTART until Klipper is ready (two after MCU comm loss), then print.
+    cameras:
+      bed: http://x1.local/webcam/?action=snapshot   # crowsnest PiCam
+    slicer:
+      machine: Artillery Sidewinder X1 0.4 nozzle
+      processes:
+        draft: 0.24mm Draft @Artillery X1
+        standard: 0.20mm Standard @Artillery X1
+        optimal: 0.16mm Optimal @Artillery X1
+      filaments:
+        PLA: Artillery Generic PLA
+        PETG: Artillery Generic PETG
+        ABS: Artillery Generic ABS
+    rules:
+      stall_minutes: 10
+
+home_assistant:
+  url: https://homeassistant.local:8123
+  webhook_id: print-warden-alert
+  token_env: HA_BEARER_TOKEN
+  verify_tls: false
+  notify_service: notify.mobile_app_your_phone   # gets the Start / Skip buttons
+
+obico:
+  url: http://nas.local:3334
+  webhook_secret_env: OBICO_WEBHOOK_SECRET
+
+spoolman:
+  url: http://nas.local:7912     # spools + materials live here; set_active_spool records what is loaded
+
+slicer:
+  orca: /opt/orcaslicer/AppRun
+  openscad: openscad
+  vendor_dir: /opt/orcaslicer/resources/profiles/Artillery
+  house_rules: /opt/slicer/house-rules.json     # tree supports (slim), no brim
+
+storage:
+  dir: ./data          # events.db + snapshots/
+  keep_days: 14
+
+server:
+  host: 0.0.0.0
+  port: 8710

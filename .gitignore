@@ -1,0 +1,8 @@
+printers.yaml
+data/
+.venv/
+__pycache__/
+*.egg-info/
+.env
+slicer/test-cube.*
+slicer/build.log
