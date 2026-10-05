@@ -5,7 +5,8 @@ printers:
     moonraker: http://x4.local:7125
     cameras:
       nozzle: http://x4.local/webcam/?action=snapshot   # C920 on the X beam, rides with Z
-      bed: http://nas.local:5000/api/bedcam/latest.jpg    # camv3 via Frigate, fixed whole-bed view
+      bed: http://nas.local:5000/api/bedcam/latest.jpg    # a fixed camera via Frigate, whole-bed view
+      overview: http://nas.local:5000/api/benchcam/latest.jpg   # optional: any extra view (e.g. an overhead bench camera)
     flip_v:
       nozzle: true          # the C920 hangs upside down; Obico applies the same vertical flip
       bed: true
