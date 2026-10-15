@@ -18,7 +18,7 @@ async def fetch(
         r.raise_for_status()
         data = r.content
     if rotate or flip_v:
-        im = Image.open(io.BytesIO(data))
+        im: Image.Image = Image.open(io.BytesIO(data))
         if flip_v:
             im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         if rotate:

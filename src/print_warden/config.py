@@ -40,6 +40,7 @@ class Printer:
     auto_start: bool = False
     location: str | None = None
     power_device: str | None = None
+    track_spool_usage: bool = True
 
     @property
     def ws_url(self) -> str:
@@ -58,6 +59,7 @@ class HomeAssistant:
     token: str | None
     verify_tls: bool = False
     notify_service: str | None = None
+    action_secret: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,8 @@ class Config:
     public_url: str
     slicer: SlicerConfig = SlicerConfig()
     spoolman_url: str | None = None
+    api_token: str | None = None
+    approval_ttl_minutes: float = 15.0
 
 
 def load(path: str | Path) -> Config:
@@ -99,6 +103,7 @@ def load(path: str | Path) -> Config:
             auto_start=bool(p.get("auto_start", False)),
             location=(p.get("location") or None),
             power_device=(p.get("power_device") or None),
+            track_spool_usage=bool(p.get("track_spool_usage", True)),
         )
     ha = None
     if h := raw.get("home_assistant"):
@@ -108,10 +113,14 @@ def load(path: str | Path) -> Config:
             token=os.environ.get(h.get("token_env", "HA_BEARER_TOKEN")),
             verify_tls=bool(h.get("verify_tls", False)),
             notify_service=h.get("notify_service"),
+            action_secret=os.environ.get(
+                h.get("action_secret_env", "HA_ACTION_SECRET")
+            ),
         )
     ob = raw.get("obico") or {}
     st = raw.get("storage") or {}
     sv = raw.get("server") or {}
+    pol = raw.get("policy") or {}
     host = sv.get("host", "0.0.0.0")
     port = int(sv.get("port", 8710))
     return Config(
@@ -128,4 +137,6 @@ def load(path: str | Path) -> Config:
         public_url=(sv.get("public_url") or f"http://{host}:{port}").rstrip("/"),
         slicer=SlicerConfig(**(raw.get("slicer") or {})),
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
+        api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
+        approval_ttl_minutes=float(pol.get("approval_ttl_minutes", 15)),
     )

@@ -128,6 +128,7 @@ class RuleEngine:
                         f"{state.capitalize()} {fn} after {dur / 3600:.1f} h: {ps.get('message') or ''}",
                         filename=fn,
                         print_duration=dur,
+                        filament_used_mm=ps.get("filament_used"),
                     )
                 )
         self.prev_state = state

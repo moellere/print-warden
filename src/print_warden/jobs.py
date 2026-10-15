@@ -1,4 +1,5 @@
-"""Job ledger: one SQLite table, explicit state machine, every transition logged with who authorized it."""
+"""Job ledger: one SQLite table, explicit state machine, every transition logged with who authorized it.
+Transitions outside TRANSITIONS raise; a log entry that changes nothing goes through note()."""
 
 from __future__ import annotations
 
@@ -19,6 +20,17 @@ STATES = (
     "failed",
     "skipped",
 )
+# A print started at the printer (Mainsail, the screen) is a human start, so staged jobs may go straight to printing.
+TRANSITIONS: dict[str, frozenset[str]] = {
+    "sliced": frozenset({"staged", "failed", "skipped"}),
+    "staged": frozenset({"awaiting_approval", "approved", "printing", "skipped"}),
+    "awaiting_approval": frozenset({"approved", "staged", "printing", "skipped"}),
+    "approved": frozenset({"staged", "printing", "skipped"}),
+    "printing": frozenset({"done", "failed"}),
+    "done": frozenset(),
+    "failed": frozenset(),
+    "skipped": frozenset(),
+}
 FIELDS = (
     "id",
     "created",
@@ -42,7 +54,19 @@ FIELDS = (
     "finished_at",
     "error",
     "log",
+    "spool_id",
+    "filament_m",
+    "filament_used_mm",
+    "approval_requested_at",
+    "timelapse",
 )
+ADDED_COLUMNS = {
+    "spool_id": "integer",
+    "filament_m": "real",
+    "filament_used_mm": "real",
+    "approval_requested_at": "real",
+    "timelapse": "text",
+}
 
 
 class JobStore:
@@ -55,12 +79,16 @@ class JobStore:
             " est_seconds integer, filament_g real, layers integer, max_z real, warnings text, authorized_by text,"
             " started_at real, finished_at real, error text, log text)"
         )
+        have = {r[1] for r in self._db.execute("pragma table_info(jobs)")}
+        for col, typ in ADDED_COLUMNS.items():
+            if col not in have:
+                self._db.execute(f"alter table jobs add column {col} {typ}")
         self._db.execute("create table if not exists kv (k text primary key, v text)")
         self._db.commit()
 
     def create(self, **kw: Any) -> dict[str, Any]:
         now = time.time()
-        row = {f: None for f in FIELDS}
+        row: dict[str, Any] = {f: None for f in FIELDS}
         row.update(
             {
                 "id": uuid.uuid4().hex[:10],
@@ -98,7 +126,7 @@ class JobStore:
         limit: int = 20,
         states: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        q, args = "select id from jobs where 1=1", []
+        q, args = "select id from jobs where 1=1", list[Any]()
         if printer:
             q += " and printer=?"
             args.append(printer)
@@ -115,21 +143,32 @@ class JobStore:
         if state not in STATES:
             raise ValueError(state)
         job = self.get(job_id)
+        if state not in TRANSITIONS[job["state"]]:
+            raise ValueError(f"job {job_id} is {job['state']}; cannot move to {state}")
+        return self._write(job, state, note, fields)
+
+    def note(self, job_id: str, note: str, **fields: Any) -> dict[str, Any]:
+        """Append to the log (and set fields) without changing state."""
+        job = self.get(job_id)
+        return self._write(job, job["state"], note, fields)
+
+    def _write(
+        self, job: dict[str, Any], state: str, note: str, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        unknown = set(fields) - set(FIELDS)
+        if unknown:
+            raise ValueError(f"unknown job fields {sorted(unknown)}")
+        now = time.time()
         log = job["log"] + [
-            {"ts": time.time(), "from": job["state"], "to": state, "note": note}
+            {"ts": now, "from": job["state"], "to": state, "note": note}
         ]
-        sets = {
-            "state": state,
-            "updated": time.time(),
-            "log": json.dumps(log),
-            **fields,
-        }
+        sets = {"state": state, "updated": now, "log": json.dumps(log), **fields}
         self._db.execute(
             f"update jobs set {','.join(f'{k}=?' for k in sets)} where id=?",
-            [*sets.values(), job_id],
+            [*sets.values(), job["id"]],
         )
         self._db.commit()
-        return self.get(job_id)
+        return self.get(job["id"])
 
     def find_active(self, printer: str) -> dict[str, Any] | None:
         rows = self.list(printer, 1, ("printing",))

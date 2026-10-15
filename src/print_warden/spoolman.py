@@ -24,8 +24,11 @@ class Spoolman:
         r.raise_for_status()
         return self._summary(r.json())
 
-    async def use_weight(self, spool_id: int, grams: float) -> None:
-        await self._c.put(f"/spool/{spool_id}/use", json={"use_weight": grams})
+    async def use_length(self, spool_id: int, mm: float) -> dict[str, Any]:
+        """Deduct filament by length; Spoolman converts to weight with the filament's density and diameter."""
+        r = await self._c.put(f"/spool/{spool_id}/use", json={"use_length": mm})
+        r.raise_for_status()
+        return self._summary(r.json())
 
     @staticmethod
     def _summary(s: dict[str, Any]) -> dict[str, Any]:

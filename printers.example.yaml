@@ -32,6 +32,7 @@ printers:
   wyolax1:
     location: wyola
     moonraker: http://x1.local:7125
+    track_spool_usage: true   # false if this Moonraker's own [spoolman] component already reports usage
     power_device: printer     # Moonraker [power printer] (Sonoff); off between prints, MCU stays on USB power.
                               # Start = power on, FIRMWARE_RESTART until Klipper is ready (two after MCU comm loss), then print.
     cameras:
@@ -55,6 +56,7 @@ home_assistant:
   token_env: HA_BEARER_TOKEN
   verify_tls: false
   notify_service: notify.mobile_app_your_phone   # gets the Start / Skip buttons
+  action_secret_env: HA_ACTION_SECRET            # guards POST /ha/action; the route is off if unset
 
 obico:
   url: http://nas.local:3334
@@ -69,10 +71,14 @@ slicer:
   vendor_dir: /opt/orcaslicer/resources/profiles/Artillery
   house_rules: /opt/slicer/house-rules.json     # tree supports (slim), no brim
 
+policy:
+  approval_ttl_minutes: 15   # a Start tap older than this is refused; the request returns to staged
+
 storage:
   dir: ./data          # events.db + snapshots/
-  keep_days: 14
+  keep_days: 14        # events, snapshots and timelapse frames; rendered timelapses are kept
 
 server:
   host: 0.0.0.0
   port: 8710
+  token_env: PRINT_WARDEN_TOKEN   # bearer token for /mcp and /upload
