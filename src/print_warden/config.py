@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -15,6 +16,14 @@ class Rules:
     heater_deviation_s: float = 90.0
     stall_minutes: float = 10.0
     layer_snapshot: bool = True
+
+
+@dataclass(frozen=True)
+class BedCheck:
+    camera: str = "bed"
+    region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+    threshold: float = 0.002
+    min_agreements: int = 10
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,8 @@ class Printer:
     location: str | None = None
     power_device: str | None = None
     track_spool_usage: bool = True
+    bed_check: BedCheck | None = None
+    auto_start_hours: str | None = None
 
     @property
     def ws_url(self) -> str:
@@ -79,6 +90,24 @@ class Config:
     approval_ttl_minutes: float = 15.0
 
 
+def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
+    if not raw:
+        return None
+    region = tuple(float(v) for v in raw.get("region", (0, 0, 1, 1)))
+    if len(region) != 4 or not (
+        0 <= region[0] < region[2] <= 1 and 0 <= region[1] < region[3] <= 1
+    ):
+        raise ValueError(
+            f"bed_check.region must be [x0, y0, x1, y1] fractions, got {region}"
+        )
+    return BedCheck(
+        camera=str(raw.get("camera", "bed")),
+        region=(region[0], region[1], region[2], region[3]),
+        threshold=float(raw.get("threshold", 0.002)),
+        min_agreements=int(raw.get("min_agreements", 10)),
+    )
+
+
 def load(path: str | Path) -> Config:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     printers: dict[str, Printer] = {}
@@ -104,6 +133,8 @@ def load(path: str | Path) -> Config:
             location=(p.get("location") or None),
             power_device=(p.get("power_device") or None),
             track_spool_usage=bool(p.get("track_spool_usage", True)),
+            bed_check=_bed_check(p.get("bed_check")),
+            auto_start_hours=p.get("auto_start_hours") or None,
         )
     ha = None
     if h := raw.get("home_assistant"):

@@ -150,3 +150,64 @@ def test_model_names():
         server._model_name("evil.3mf")
     with pytest.raises(ValueError):
         server._model_name("../../events.db")
+
+
+@pytest.fixture
+def auto_printer(ready, monkeypatch, tmp_path):
+    import dataclasses
+    import io
+
+    from PIL import Image
+
+    from print_warden import config
+
+    w = server.WATCHERS["testp"]
+    orig = w.p
+    w.p = dataclasses.replace(
+        orig,
+        cameras={"bed": "http://cam"},
+        auto_start=True,
+        auto_start_hours="00:00-23:59",
+        bed_check=config.BedCheck(min_agreements=2),
+    )
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (120, 120, 120)).save(buf, "JPEG")
+
+    async def fetch(url, rotate=0, timeout=8.0, flip_v=False):
+        return buf.getvalue()
+
+    monkeypatch.setattr(server.cameras, "fetch", fetch)
+    yield w
+    w.p = orig
+    if w.reference_path:
+        w.reference_path.unlink(missing_ok=True)
+    server.BED.set_state("testp", "clear", "test teardown")
+
+
+async def test_auto_start_needs_a_record_then_starts(auto_printer, ready):
+    w = auto_printer
+    await w.mark_clear("tap")  # captures the reference
+    j = _staged()
+    res = await server._start(j["id"], "auto", via_auto=True)
+    assert not res["started"] and any("labelled checks" in b for b in res["blockers"])
+    assert ready == []
+
+    await w.mark_clear("tap")
+    await w.mark_clear("tap")
+    res = await server._start(j["id"], "auto", via_auto=True)
+    assert res["started"], res["blockers"]
+    assert "auto: bed check clear" in server.JOBS.get(j["id"])["authorized_by"]
+
+
+async def test_occupied_bed_blocks_every_start(ready):
+    server.BED.set_state("testp", "occupied", "print_complete")
+    try:
+        res = await server._start(_staged()["id"], "chat: go")
+        assert not res["started"] and "bed not cleared" in res["blockers"][0]
+    finally:
+        server.BED.set_state("testp", "clear", "test")
+
+
+async def test_auto_start_off_by_default(ready):
+    res = await server._start(_staged()["id"], "auto", via_auto=True)
+    assert res["blockers"] == ["auto_start is off for testp"]

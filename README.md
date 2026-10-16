@@ -11,7 +11,9 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Action | Who decides |
 |---|---|
 | Slice, stage gcode, snapshots, alerts, work light | the warden, automatically |
+| Mark the bed clear | the operator: the "Bed cleared" phone button, or quoted chat permission (`mark_bed_clear`) |
 | Start a print | the operator: a phone tap (`request_start`) or quoted chat permission (`start_print`), and `policy.can_start` must pass |
+| Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours` |
 | Pause on detected failure | Obico |
 | Cancel a running print, power off | a human |
 
@@ -23,6 +25,23 @@ loaded material matches the job, and the active spool has the job's grams plus 1
 A phone tap answers one `request_start` and is honoured only within `policy.approval_ttl_minutes` (default 15);
 unanswered requests go back to `staged` and the notification is withdrawn. Starts on one printer are serialised, so a
 double tap sends one print.
+
+## Bed-clear check and auto_start
+
+The bed is a recorded fact: a print starting or ending marks it `occupied`, and every start is blocked until a human
+marks it clear (the "Bed cleared" phone button sent after each print, or `mark_bed_clear` with the operator's words).
+
+With `bed_check` configured, the first "Bed cleared" also captures the empty-bed reference from that camera (light on).
+After that, the warden compares the camera to the reference whenever a human knows the answer: ~30 s after a print
+ends (should read occupied) and on every "Bed cleared" (should read clear). The comparison is plain image arithmetic:
+crop to `region`, match brightness per colour channel, count pixels that differ. `score` is the fraction that
+differs; `threshold` (default 0.002) separates clear from occupied. Use `check_bed` to see live scores and tune it,
+and `capture_bed_reference` after changing the build plate (the record starts over).
+
+`auto_start: true` starts a newly staged job without a tap only when the bed is marked clear, a live check reads clear,
+the last `min_agreements` labelled checks all agreed with the operator, and the local time is inside
+`auto_start_hours`. Each unattended start sends an alert with the check's snapshot. A missed small part (a false
+"clear" after a print) breaks the record, so auto_start stops until the check earns it back.
 
 ## Job flow
 
@@ -85,6 +104,7 @@ src/print_warden/
   reconcile.py  settle jobs from Moonraker history after a restart or outage
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
+  bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
   spoolman.py   Spoolman client (materials, remaining weight)

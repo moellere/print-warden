@@ -11,7 +11,8 @@ from typing import Any
 
 import httpx
 
-from . import cameras, moonraker, reconcile, timelapse
+from . import bedcheck, cameras, moonraker, reconcile, timelapse
+from .bedcheck import BedStore, Check
 from .config import Config, Printer
 from .events import Event, EventStore
 from .ha import HAClient
@@ -23,6 +24,7 @@ from .spoolman import Spoolman
 log = logging.getLogger(__name__)
 ALERT_COOLDOWN_S = 300
 FINAL_KINDS = ("print_complete", "print_cancelled", "print_error")
+BED_SETTLE_S = 30
 
 
 def _hm(seconds: float) -> str:
@@ -60,9 +62,11 @@ class PrinterWatcher:
         ha: HAClient | None,
         jobs: JobStore | None = None,
         spoolman: Spoolman | None = None,
+        bed: BedStore | None = None,
     ):
         self.jobs = jobs
         self.spoolman = spoolman
+        self.bed = bed
         self.start_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self.cfg = cfg
@@ -96,6 +100,10 @@ class PrinterWatcher:
             "bed" if "bed" in self.p.cameras else next(iter(self.p.cameras), None)
         )
         if ev.kind == "print_started":
+            if self.bed:
+                self.bed.set_state(
+                    self.p.name, "occupied", f"printing {ev.data.get('filename') or ''}"
+                )
             await self._light(True)
             self.job_dir = (
                 self.cfg.storage_dir
@@ -124,6 +132,9 @@ class PrinterWatcher:
         if ev.kind in FINAL_KINDS:
             await self._light(False)
             self.job_dir = None
+            if self.bed:
+                self.bed.set_state(self.p.name, "occupied", ev.kind)
+                self._spawn(self._after_print())
             used = ev.data.get("filament_used_mm")
             if job:
                 await self.settle_spool(job, used)
@@ -250,6 +261,8 @@ class PrinterWatcher:
                 if state == "failed":
                     fields["error"] = note
             job = self.jobs.transition(j["id"], state, note, **fields)
+            if self.bed and state in ("printing", "done", "failed"):
+                self.bed.set_state(self.p.name, "occupied", note)
             if state in ("done", "failed"):
                 await self.settle_spool(job, used)
                 await self.handle(
@@ -262,6 +275,134 @@ class PrinterWatcher:
                         alert=True,
                     )
                 )
+
+    @property
+    def reference_path(self) -> Path | None:
+        bc = self.p.bed_check
+        if not bc:
+            return None
+        return self.cfg.storage_dir / "reference" / f"{self.p.name}_{bc.camera}.jpg"
+
+    async def _lit_frame(self, cam: str) -> bytes:
+        """A frame with the work light on, as the reference was taken; the light is put back as it was."""
+        prior = None
+        if self.ha and self.p.light:
+            prior = await self.ha.state(self.p.light)
+            if prior != "on":
+                await self.ha.light(self.p.light, True)
+                await asyncio.sleep(2)
+        try:
+            return await cameras.fetch(
+                self.p.cameras[cam],
+                self.p.rotate.get(cam, 0),
+                flip_v=self.p.flip_v.get(cam, False),
+            )
+        finally:
+            if self.ha and self.p.light and prior == "off":
+                await self.ha.light(self.p.light, False)
+
+    async def capture_reference(self) -> Path:
+        bc, ref = self.p.bed_check, self.reference_path
+        if not bc or not ref:
+            raise ValueError(f"{self.p.name} has no bed_check configured")
+        if bc.camera not in self.p.cameras:
+            raise ValueError(
+                f"bed_check camera {bc.camera!r} is not one of {sorted(self.p.cameras)}"
+            )
+        data = await self._lit_frame(bc.camera)
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        ref.write_bytes(data)
+        return ref
+
+    async def check_bed(self, label: str | None = None) -> Check | None:
+        """Compare the bed camera to the empty-bed reference. `label` is what a human knows the bed to be right
+        now; labelled checks are the record auto_start is judged on. None when there is nothing to compare."""
+        bc, ref = self.p.bed_check, self.reference_path
+        if not (bc and ref and ref.exists() and bc.camera in self.p.cameras):
+            return None
+        try:
+            data = await self._lit_frame(bc.camera)
+        except (httpx.HTTPError, OSError, ValueError) as e:
+            log.warning("%s bed check: camera failed: %s", self.p.name, e)
+            return None
+        snap = cameras.save(
+            self.cfg.storage_dir, self.p.name, f"bedcheck-{label or 'adhoc'}", data
+        )
+        sc = bedcheck.score(ref.read_bytes(), data, bc.region)
+        check = Check(
+            time.time(),
+            label,
+            sc,
+            sc <= bc.threshold,
+            str(snap.relative_to(self.cfg.storage_dir)),
+        )
+        if self.bed:
+            self.bed.record(self.p.name, check)
+        return check
+
+    def bed_history(self) -> list[Check]:
+        """Labelled checks taken against the current reference, newest first."""
+        bc, ref = self.p.bed_check, self.reference_path
+        if not (self.bed and bc and ref and ref.exists()):
+            return []
+        since = ref.stat().st_mtime
+        return [
+            c
+            for c in self.bed.labelled(self.p.name, bc.min_agreements * 3)
+            if c.ts >= since
+        ]
+
+    async def mark_clear(self, note: str) -> dict[str, Any]:
+        """A human says the bed is empty. The first time, that frame becomes the reference; afterwards it is a
+        labelled check that the vision verdict is graded against."""
+        if not self.bed:
+            raise ValueError("bed ledger unavailable")
+        if self.status().get("state") in ("printing", "paused"):
+            raise ValueError(f"{self.p.name} is printing; the bed cannot be clear")
+        self.bed.set_state(self.p.name, "clear", note)
+        if self.ha:
+            await self.ha.clear_notification(f"print_warden_bed_{self.p.name}")
+        out: dict[str, Any] = {"printer": self.p.name, "state": "clear"}
+        ref = self.reference_path
+        if ref and not ref.exists() and self.p.bed_check:
+            try:
+                await self.capture_reference()
+                out["reference"] = "captured"
+            except (httpx.HTTPError, OSError, ValueError) as e:
+                out["reference"] = f"capture failed: {e}"
+        elif check := await self.check_bed("clear"):
+            out["check"] = {
+                "score": round(check.score, 4),
+                "clear": check.clear,
+                "agrees": check.agrees,
+            }
+            if not check.clear:
+                await self.handle(
+                    Event(
+                        self.p.name,
+                        "bed_check_disagrees",
+                        "warning",
+                        f"Bed marked clear, but {check.score:.1%} of it differs from the empty-bed reference",
+                        alert=True,
+                        snapshot=check.snapshot,
+                    )
+                )
+        return out
+
+    async def _after_print(self) -> None:
+        """Once the toolhead has parked: a check labelled occupied, and the phone button that clears the bed."""
+        await asyncio.sleep(BED_SETTLE_S)
+        try:
+            await self.check_bed("occupied")
+        except Exception:
+            log.exception("%s post-print bed check", self.p.name)
+        if self.ha:
+            await self.ha.notify_actionable(
+                f"Clear the bed on {self.p.name}",
+                "Tap when the bed is empty. Starts stay blocked until then.",
+                [(f"PRINT_WARDEN_BEDCLEAR_{self.p.name}", "Bed cleared")],
+                tag=f"print_warden_bed_{self.p.name}",
+            )
 
     async def _snap(self, cam: str, into: Path | None, name: str | None) -> Path | None:
         try:
