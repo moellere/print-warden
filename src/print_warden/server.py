@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hmac
 import logging
 import os
@@ -25,7 +26,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import cameras, config, moonraker, policy, retention, slicer
+from . import cameras, config, moonraker, park, policy, retention, slicer
 from .bedcheck import BedStore
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
@@ -232,6 +233,7 @@ async def _auto_gate(w: PrinterWatcher) -> tuple[bool, list[str], str | None]:
         bc.min_agreements,
         w.p.auto_start_hours,
         datetime.now().astimezone(),
+        w.check_skipped,
     )
     return ok, reasons, check.snapshot if check else None
 
@@ -263,6 +265,11 @@ def bed_status(printer: str) -> dict[str, Any]:
         "auto_start": w.p.auto_start,
         "auto_start_hours": w.p.auto_start_hours,
         "in_hours": policy.in_window(w.p.auto_start_hours, datetime.now().astimezone()),
+        "pose": dataclasses.asdict(bc.pose) if bc and bc.pose else None,
+        "at_pose": park.status(w.mr.state.get("toolhead", {}), bc.pose, w.rehomed_z)
+        if bc and bc.pose
+        else None,
+        "rehome_y": bc.rehome_y if bc else False,
     }
 
 
@@ -273,9 +280,7 @@ async def check_bed(printer: str) -> dict[str, Any]:
     w = _w(printer)
     check = await w.check_bed()
     if check is None:
-        raise ValueError(
-            f"{printer}: no bed check possible (bed_check config, camera or reference missing)"
-        )
+        raise ValueError(f"{printer}: no bed check possible: {w.check_skipped}")
     return {
         "score": round(check.score, 4),
         "threshold": w.p.bed_check.threshold if w.p.bed_check else None,
@@ -372,7 +377,14 @@ async def submit_job(
         stl = out / f"{stem}.stl"
         stl.write_bytes(src.read_bytes())
     res = await slicer.slice_stl(
-        CFG.slicer, stl, out, p.machine, p.processes[q], p.filaments[mat], overrides
+        CFG.slicer,
+        stl,
+        out,
+        p.machine,
+        p.processes[q],
+        p.filaments[mat],
+        overrides,
+        park=p.bed_check.pose if p.bed_check else None,
     )
     job = JOBS.create(
         printer=printer,

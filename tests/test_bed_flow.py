@@ -113,3 +113,83 @@ async def test_no_check_without_reference(w, frames):
     w.p = dataclasses.replace(w.p, bed_check=None)
     with pytest.raises(ValueError):
         await w.capture_reference()
+
+
+@pytest.fixture
+def posed(w):
+    w.p = dataclasses.replace(
+        w.p,
+        bed_check=dataclasses.replace(w.p.bed_check, pose=config.Pose(y=220, z=150)),
+    )
+    return w
+
+
+async def test_check_and_reference_need_the_pose(posed, frames):
+    w = posed
+    w.mr.state = {"toolhead": {"homed_axes": "", "position": [0, 30, 160, 0]}}
+    with pytest.raises(ValueError, match="bed-check pose"):
+        await w.capture_reference()
+    w.mr.state = {"toolhead": {"homed_axes": "xyz", "position": [0, 220, 160, 0]}}
+    await w.capture_reference()
+    assert (await w.check_bed()).clear
+    w.mr.state = {"toolhead": {"homed_axes": "", "position": [0, 220, 160, 0]}}
+    assert await w.check_bed() is None
+    assert "steppers released" in w.check_skipped
+    out = await w.mark_clear("tap")
+    assert "steppers released" in out["check"]["skipped"]
+
+
+async def test_rehome_y_moves_only_y_when_idle_and_z_is_high(
+    posed, frames, monkeypatch
+):
+    w = posed
+    w.p = dataclasses.replace(
+        w.p, bed_check=dataclasses.replace(w.p.bed_check, rehome_y=True)
+    )
+    scripts = []
+
+    async def gcode_script(base, script, timeout=120):
+        scripts.append(script)
+        w.mr.state["toolhead"] = {"homed_axes": "y", "position": [0, 220, 160, 0]}
+
+    monkeypatch.setattr(watcher_mod.moonraker, "gcode_script", gcode_script)
+    monkeypatch.setattr(watcher_mod.asyncio, "sleep", _no_sleep)
+    w.mr.state = {
+        "webhooks": {"state": "ready"},
+        "print_stats": {"state": "complete"},
+        "toolhead": {"homed_axes": "", "position": [0, 37, 160, 0]},
+    }
+    ok, why = await w.ensure_pose()
+    assert ok, why
+    assert scripts == ["G28 Y\nG90\nG1 Y220.00 F3000\nM400"]
+    assert w.store.query(min_severity="warning")[0]["kind"] == "bed_rehomed"
+
+    scripts.clear()
+    assert (await w.ensure_pose())[0] and scripts == []
+
+
+async def test_rehome_refused_when_z_is_low_or_printer_busy(posed, frames, monkeypatch):
+    w = posed
+    w.p = dataclasses.replace(
+        w.p, bed_check=dataclasses.replace(w.p.bed_check, rehome_y=True)
+    )
+
+    async def boom(*a, **k):
+        raise AssertionError("must not move")
+
+    monkeypatch.setattr(watcher_mod.moonraker, "gcode_script", boom)
+    w.mr.state = {
+        "webhooks": {"state": "ready"},
+        "print_stats": {"state": "standby"},
+        "toolhead": {"homed_axes": "", "position": [0, 37, 20, 0]},
+    }
+    ok, why = await w.ensure_pose()
+    assert not ok and "last Z is below" in why
+    w.mr.state["print_stats"]["state"] = "printing"
+    w.mr.state["toolhead"]["position"] = [0, 37, 160, 0]
+    ok, why = await w.ensure_pose()
+    assert not ok and "printer is printing" in why
+
+
+async def _no_sleep(_s):
+    return None

@@ -22,7 +22,7 @@ SUBSCRIBE = {
     "webhooks": None,
     "extruder": ["temperature", "target"],
     "heater_bed": ["temperature", "target"],
-    "toolhead": ["homed_axes"],
+    "toolhead": ["homed_axes", "position"],
     "idle_timeout": ["state"],
     "gcode_move": ["gcode_position"],
 }
@@ -139,6 +139,13 @@ async def power(base_url: str, device: str, action: str | None = None) -> str:
             )
         r.raise_for_status()
         return str(r.json().get("result", {}).get(device, "unknown"))
+
+
+async def gcode_script(base_url: str, script: str, timeout: float = 120) -> None:
+    """Run G-code and wait for it to finish. The only caller is the opt-in bed-pose rehome (G28 Y + a Y move)."""
+    async with httpx.AsyncClient(timeout=timeout) as c:
+        r = await c.post(f"{base_url}/printer/gcode/script", params={"script": script})
+        r.raise_for_status()
 
 
 async def history(base_url: str, limit: int = 50) -> list[dict[str, Any]]:

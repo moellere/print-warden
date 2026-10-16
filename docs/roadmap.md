@@ -34,6 +34,8 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
   restarts the record.
 - `auto_start` (per printer, opt-in): bed marked clear + live check clear + last `min_agreements` labelled checks agree
   + inside `auto_start_hours`. Unattended starts alert with the check's snapshot.
+- Bed pose (bed-slingers with a frame camera): warden-sliced jobs park at `bed_check.pose` with steppers held;
+  checks and references only at that pose; opt-in `rehome_y` (Y only, Z never moves).
 
 ## Phase 3 — Queue and scheduling
 
