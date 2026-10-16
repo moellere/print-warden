@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0 and 1 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–2 are complete; the rest are proposals.
 
 ## Phase 0 — Hardening ✅
 
@@ -24,12 +24,16 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
   job orphaned by a crash returns to `staged`.
 - Timelapse frames are rendered to mp4; the completion alert carries actual vs. estimated time, grams and the link.
 
-## Phase 2 — Bed-clear check and `auto_start`
+## Phase 2 — Bed-clear check and `auto_start` ✅
 
-- Bed state as a fact: `occupied` after a print until the operator taps "Bed cleared" or the vision check agrees.
-- Deterministic check: per-camera empty-bed reference, masked bed region, SSIM / pixel-diff threshold. No model.
-- `auto_start` (per printer, opt-in): policy + bed clear + allowed hours + a clean record of tap-approved starts.
-  Unattended starts send an after-the-fact notice.
+- The bed is a recorded fact: a print starting or ending marks it `occupied`; a human clears it ("Bed cleared" phone
+  button or quoted `mark_bed_clear`). Every start is blocked while it is occupied.
+- Deterministic check: empty-bed reference per printer, cropped region, per-channel brightness matching, changed-pixel
+  fraction vs. `threshold`. No model.
+- Every moment a human knows the answer (after a print; on "Bed cleared") produces a labelled check; a new reference
+  restarts the record.
+- `auto_start` (per printer, opt-in): bed marked clear + live check clear + last `min_agreements` labelled checks agree
+  + inside `auto_start_hours`. Unattended starts alert with the check's snapshot.
 
 ## Phase 3 — Queue and scheduling
 

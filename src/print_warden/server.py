@@ -9,6 +9,7 @@ import hmac
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import cameras, config, moonraker, policy, retention, slicer
+from .bedcheck import BedStore
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
 from .ha_events import watch_notification_actions
@@ -38,8 +40,9 @@ STORE = EventStore(CFG.storage_dir / "events.db")
 HA = HAClient(CFG.ha) if CFG.ha else None
 JOBS = JobStore(CFG.storage_dir / "jobs.db")
 SPOOLMAN = Spoolman(CFG.spoolman_url) if CFG.spoolman_url else None
+BED = BedStore(CFG.storage_dir / "bed.db")
 WATCHERS: dict[str, PrinterWatcher] = {
-    n: PrinterWatcher(CFG, p, STORE, HA, JOBS, SPOOLMAN)
+    n: PrinterWatcher(CFG, p, STORE, HA, JOBS, SPOOLMAN, BED)
     for n, p in CFG.printers.items()
 }
 UPLOADS = CFG.storage_dir / "models"
@@ -55,6 +58,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     instructions="Print manager for the 3D printers: slice and stage jobs, start them only with the operator's "
     "permission (phone tap or quoted chat consent), and monitor via Moonraker rules, Obico verdicts and cameras. "
+    "After a print the bed is occupied until the operator clears it; only the operator can say it is clear. "
     "Cancelling a running print and powering off are human actions.",
 )
 
@@ -116,6 +120,8 @@ async def list_printers() -> list[dict[str, Any]]:
                 "qualities": sorted(p.processes),
                 "materials": sorted(p.filaments),
                 "light": p.light,
+                "bed": BED.state(n)["state"],
+                "auto_start": p.auto_start,
             }
         )
     return out
@@ -206,7 +212,99 @@ async def _policy(job: dict[str, Any]) -> tuple[bool, list[str]]:
         material,
         has_power_device=bool(w.p.power_device),
         spool_remaining_g=remaining,
+        bed_state=BED.state(job["printer"])["state"],
     )
+
+
+async def _auto_gate(w: PrinterWatcher) -> tuple[bool, list[str], str | None]:
+    """Everything a tap would otherwise vouch for: a human-cleared bed, a live check that agrees, a clean record of
+    labelled checks, and the allowed hours. Returns (ok, reasons, snapshot of the live check)."""
+    bc = w.p.bed_check
+    if not w.p.auto_start:
+        return False, [f"auto_start is off for {w.p.name}"], None
+    if not bc:
+        return False, [f"{w.p.name} has no bed_check configured"], None
+    check = await w.check_bed()
+    ok, reasons = policy.can_auto_start(
+        BED.state(w.p.name)["state"],
+        check,
+        w.bed_history(),
+        bc.min_agreements,
+        w.p.auto_start_hours,
+        datetime.now().astimezone(),
+    )
+    return ok, reasons, check.snapshot if check else None
+
+
+@mcp.tool()
+def bed_status(printer: str) -> dict[str, Any]:
+    """Bed state (clear / occupied / unknown) and the bed check's record: labelled checks against the current
+    empty-bed reference, how many agreed in a row, and whether auto_start could be considered."""
+    w = _w(printer)
+    hist = w.bed_history()
+    streak = 0
+    for c in hist:
+        if not c.agrees:
+            break
+        streak += 1
+    ref = w.reference_path
+    bc = w.p.bed_check
+    return {
+        **BED.state(printer),
+        "bed_check": bool(bc),
+        "reference_captured_at": ref.stat().st_mtime if ref and ref.exists() else None,
+        "labelled_checks": len(hist),
+        "agreeing_in_a_row": streak,
+        "min_agreements": bc.min_agreements if bc else None,
+        "recent": [
+            {"ts": c.ts, "label": c.label, "score": round(c.score, 4), "clear": c.clear}
+            for c in hist[:5]
+        ],
+        "auto_start": w.p.auto_start,
+        "auto_start_hours": w.p.auto_start_hours,
+        "in_hours": policy.in_window(w.p.auto_start_hours, datetime.now().astimezone()),
+    }
+
+
+@mcp.tool()
+async def check_bed(printer: str) -> dict[str, Any]:
+    """Run the bed check now (unlabelled; it does not change the bed state or the record). Score is the fraction of
+    the bed region that differs from the empty-bed reference."""
+    w = _w(printer)
+    check = await w.check_bed()
+    if check is None:
+        raise ValueError(
+            f"{printer}: no bed check possible (bed_check config, camera or reference missing)"
+        )
+    return {
+        "score": round(check.score, 4),
+        "threshold": w.p.bed_check.threshold if w.p.bed_check else None,
+        "clear": check.clear,
+        "snapshot_url": f"{CFG.public_url}/files/{check.snapshot}",
+    }
+
+
+@mcp.tool()
+async def mark_bed_clear(printer: str, authorized_by: str) -> dict[str, Any]:
+    """Record that the operator has emptied the bed. `authorized_by` must quote the operator saying so. Only a human
+    can know this; never call it on your own inference or from a camera image."""
+    if not authorized_by or len(authorized_by.strip()) < 8:
+        raise ValueError("authorized_by must quote the operator")
+    return await _w(printer).mark_clear(f"chat: {authorized_by.strip()}")
+
+
+@mcp.tool()
+async def capture_bed_reference(printer: str, authorized_by: str) -> dict[str, Any]:
+    """Take a new empty-bed reference (e.g. after swapping the build plate) and mark the bed clear. The check's record
+    restarts from zero against the new reference. `authorized_by` must quote the operator confirming the bed is empty."""
+    if not authorized_by or len(authorized_by.strip()) < 8:
+        raise ValueError("authorized_by must quote the operator")
+    w = _w(printer)
+    ref = await w.capture_reference()
+    BED.set_state(
+        printer, "clear", f"reference captured; chat: {authorized_by.strip()}"
+    )
+    return {"printer": printer, "reference": str(ref.name), "state": "clear"}
 
 
 @mcp.tool()
@@ -310,7 +408,23 @@ async def submit_job(
             alert=False,
         )
     )
-    return _job_public(job)
+    result = _job_public(job)
+    if p.auto_start:
+        try:
+            started = await _start(job["id"], "auto", via_auto=True)
+            result = {
+                **started,
+                "auto_start": {
+                    "started": started["started"],
+                    "blockers": started["blockers"],
+                },
+            }
+        except httpx.HTTPError as e:
+            result["auto_start"] = {
+                "started": False,
+                "blockers": [f"start failed: {e}"],
+            }
+    return result
 
 
 @mcp.tool()
@@ -394,13 +508,22 @@ async def skip_job(job_id: str, reason: str = "") -> dict[str, Any]:
 
 
 async def _start(
-    job_id: str, authorized_by: str, via_tap: bool = False
+    job_id: str, authorized_by: str, via_tap: bool = False, via_auto: bool = False
 ) -> dict[str, Any]:
     """The one start path. The printer's start_lock serialises it, so a second tap or chat consent waits and then
-    finds the job already printing; a tap must answer a request still inside the approval TTL."""
+    finds the job already printing; a tap must answer a request still inside the approval TTL; an unattended start
+    must pass the auto gate as well as the policy."""
     w = _w(JOBS.get(job_id)["printer"])
+    snapshot = None
     async with w.start_lock:
         job = JOBS.get(job_id)
+        if via_auto:
+            auto_ok, why, snapshot = await _auto_gate(w)
+            if not auto_ok:
+                JOBS.note(job_id, f"auto start refused: {'; '.join(why)}")
+                return {**_job_public(job), "started": False, "blockers": why}
+            hist = w.bed_history()
+            authorized_by = f"auto: bed check clear, {len(hist)} labelled checks agree"
         if via_tap:
             refusal = None
             if job["state"] != "awaiting_approval":
@@ -464,9 +587,10 @@ async def _start(
         await HA.clear_notification(f"print_warden_{job_id}")
         await HA.alert(
             job["printer"],
-            "info",
-            "print started",
+            "warning" if via_auto else "info",
+            "print auto-started" if via_auto else "print started",
             f"{job['name']} started ({authorized_by})",
+            f"{CFG.public_url}/files/{snapshot}" if snapshot else None,
         )
     return {**_job_public(job), "started": True, "blockers": []}
 
@@ -485,6 +609,8 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
                 )
         elif verb == "SKIP":
             JOBS.transition(job_id, "skipped", "phone tap")
+        elif verb == "BEDCLEAR":
+            await _w(job_id).mark_clear("phone tap")
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
 

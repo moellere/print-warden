@@ -1,4 +1,7 @@
+from datetime import UTC, datetime
+
 from print_warden import policy
+from print_warden.bedcheck import Check
 
 READY = {"moonraker_connected": True, "klippy": "ready", "state": "standby"}
 
@@ -50,3 +53,66 @@ def test_approval_expiry():
     assert not policy.approval_expired(job, 1000 + 14 * 60, 15)
     assert policy.approval_expired(job, 1000 + 16 * 60, 15)
     assert policy.approval_expired({}, 1000, 15)
+
+
+def test_occupied_bed_blocks():
+    ok, reasons = policy.can_start(_job(), READY, "PLA", bed_state="occupied")
+    assert not ok and "bed not cleared" in reasons[0]
+    assert policy.can_start(_job(), READY, "PLA", bed_state="unknown")[0]
+
+
+def test_in_window():
+    def at(h, m):
+        return datetime(2026, 1, 1, h, m, tzinfo=UTC)
+
+    assert policy.in_window("08:00-22:00", at(9, 0))
+    assert not policy.in_window("08:00-22:00", at(22, 0))
+    assert policy.in_window("22:00-06:00", at(23, 30))
+    assert policy.in_window("22:00-06:00", at(5, 59))
+    assert not policy.in_window("22:00-06:00", at(12, 0))
+    assert not policy.in_window(None, at(12, 0))
+
+
+def _checks(n, agree=True):
+    return [Check(float(i), "clear", 0.0, agree, None) for i in range(n)]
+
+
+NOON = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+LIVE = Check(9.0, None, 0.004, True, None)
+
+
+def test_auto_start_passes_with_clean_record():
+    assert policy.can_auto_start("clear", LIVE, _checks(3), 3, "08:00-22:00", NOON) == (
+        True,
+        [],
+    )
+
+
+def test_auto_start_reasons():
+    ok, reasons = policy.can_auto_start(
+        "occupied",
+        Check(9.0, None, 0.09, False, None),
+        _checks(2),
+        3,
+        "08:00-10:00",
+        NOON,
+    )
+    assert not ok
+    text = " | ".join(reasons)
+    for part in (
+        "bed is occupied",
+        "sees something",
+        "2/3 labelled",
+        "outside auto_start_hours",
+    ):
+        assert part in text
+
+
+def test_one_disagreement_in_window_blocks():
+    hist = _checks(3)
+    hist[1] = Check(1.0, "occupied", 0.001, True, None)
+    ok, reasons = policy.can_auto_start("clear", LIVE, hist, 3, "08:00-22:00", NOON)
+    assert not ok and "disagreed" in reasons[0]
+    assert not policy.can_auto_start("clear", None, _checks(3), 3, "08:00-22:00", NOON)[
+        0
+    ]
