@@ -1,9 +1,11 @@
-"""ASGI app: MCP (Streamable HTTP at /mcp), Obico webhook receiver, snapshot files, health."""
+"""ASGI app: MCP (Streamable HTTP at /mcp), Obico webhook receiver, snapshot files, health.
+With PRINT_WARDEN_TOKEN set, every route except /healthz, /files and the two secret-checked webhooks needs it."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import logging
 import os
 import time
@@ -15,12 +17,14 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import cameras, config, moonraker, policy, slicer
+from . import cameras, config, moonraker, policy, retention, slicer
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
 from .ha_events import watch_notification_actions
@@ -35,10 +39,14 @@ HA = HAClient(CFG.ha) if CFG.ha else None
 JOBS = JobStore(CFG.storage_dir / "jobs.db")
 SPOOLMAN = Spoolman(CFG.spoolman_url) if CFG.spoolman_url else None
 WATCHERS: dict[str, PrinterWatcher] = {
-    n: PrinterWatcher(CFG, p, STORE, HA, JOBS) for n, p in CFG.printers.items()
+    n: PrinterWatcher(CFG, p, STORE, HA, JOBS, SPOOLMAN)
+    for n, p in CFG.printers.items()
 }
 UPLOADS = CFG.storage_dir / "models"
 JOBDIR = CFG.storage_dir / "jobs"
+PUBLIC_DIRS = ("snapshots", "timelapse", "jobs")
+MODEL_SUFFIXES = (".stl", ".scad")
+MAX_MODEL_BYTES = 100 * 1024 * 1024
 
 mcp = FastMCP(
     "print-warden",
@@ -161,7 +169,7 @@ async def send_alert(printer: str, message: str, severity: str = "info") -> bool
 
 def _job_public(job: dict[str, Any]) -> dict[str, Any]:
     j = dict(job)
-    for k in ("preview", "gcode", "stl"):
+    for k in ("preview", "gcode", "stl", "timelapse"):
         if j.get(k):
             j[k + "_url"] = (
                 f"{CFG.public_url}/files/{Path(j[k]).relative_to(CFG.storage_dir)}"
@@ -172,15 +180,33 @@ def _job_public(job: dict[str, Any]) -> dict[str, Any]:
     return j
 
 
-async def _loaded(printer: str) -> str | None:
-    """Material on the printer right now: the active spool's material from Spoolman, else the manual record."""
+async def _spool_facts(printer: str) -> tuple[str | None, float | None]:
+    """Material on the printer right now and grams left: the active spool from Spoolman, else the manual record
+    (remaining weight unknown)."""
     sid = JOBS.kv_get(f"active_spool:{printer}")
     if sid and SPOOLMAN:
         try:
-            return (await SPOOLMAN.spool(int(sid)))["material"]
+            spool = await SPOOLMAN.spool(int(sid))
+            return spool["material"], spool.get("remaining_g")
         except (httpx.HTTPError, KeyError, ValueError) as e:
             log.warning("spoolman lookup failed: %s", e)
-    return JOBS.kv_get(f"loaded_material:{printer}")
+    return JOBS.kv_get(f"loaded_material:{printer}"), None
+
+
+async def _loaded(printer: str) -> str | None:
+    return (await _spool_facts(printer))[0]
+
+
+async def _policy(job: dict[str, Any]) -> tuple[bool, list[str]]:
+    w = _w(job["printer"])
+    material, remaining = await _spool_facts(job["printer"])
+    return policy.can_start(
+        job,
+        w.status(),
+        material,
+        has_power_device=bool(w.p.power_device),
+        spool_remaining_g=remaining,
+    )
 
 
 @mcp.tool()
@@ -260,12 +286,17 @@ async def submit_job(
         preview=str(res.preview) if res.preview else None,
         est_seconds=res.est_seconds,
         filament_g=res.filament_g,
+        filament_m=res.filament_m,
         layers=res.layers,
         max_z=res.max_z,
         warnings=res.warnings,
     )
     remote = f"warden/{job['id']}_{stem}_{mat}.gcode"
-    await moonraker.upload_gcode(p.moonraker, res.gcode, remote)
+    try:
+        await moonraker.upload_gcode(p.moonraker, res.gcode, remote)
+    except httpx.HTTPError as e:
+        JOBS.transition(job["id"], "failed", f"upload failed: {e}", error=str(e))
+        raise
     job = JOBS.transition(
         job["id"], "staged", f"uploaded to {printer} as {remote}", remote_name=remote
     )
@@ -292,30 +323,23 @@ def list_jobs(printer: str | None = None, limit: int = 20) -> list[dict[str, Any
 async def job_status(job_id: str) -> dict[str, Any]:
     """One job with its full transition log and the current start-policy verdict."""
     job = JOBS.get(job_id)
-    st = _w(job["printer"]).status()
-    ok, reasons = policy.can_start(
-        job,
-        st,
-        await _loaded(job["printer"]),
-        has_power_device=bool(_w(job["printer"]).p.power_device),
-    )
+    ok, reasons = await _policy(job)
     return {**_job_public(job), "log": job["log"], "can_start": ok, "blockers": reasons}
 
 
 @mcp.tool()
 async def request_start(job_id: str) -> dict[str, Any]:
     """Ask the operator to start a staged job: sends a phone notification with Start / Skip buttons. The warden starts the
-    print only when Start is tapped and the deterministic policy passes at that moment."""
+    print only when Start is tapped within the approval TTL and the deterministic policy passes at that moment."""
     job = JOBS.get(job_id)
-    st = _w(job["printer"]).status()
-    ok, reasons = policy.can_start(
-        job,
-        st,
-        await _loaded(job["printer"]),
-        has_power_device=bool(_w(job["printer"]).p.power_device),
-    )
+    if job["state"] not in ("staged", "awaiting_approval"):
+        raise ValueError(f"job is {job['state']}; only staged jobs can be offered")
+    ok, reasons = await _policy(job)
     preview = _job_public(job).get("preview_url")
-    body = f"{job['name']} on {job['printer']} — {job['material']} {job['quality']}, est {_job_public(job).get('est_human')}, {job.get('filament_g') or '?'} g"
+    body = (
+        f"{job['name']} on {job['printer']} — {job['material']} {job['quality']}, est {_job_public(job).get('est_human')}, "
+        f"{job.get('filament_g') or '?'} g. Valid {CFG.approval_ttl_minutes:.0f} min."
+    )
     if not ok:
         body += " — BLOCKED: " + "; ".join(reasons)
     sent = bool(
@@ -331,11 +355,14 @@ async def request_start(job_id: str) -> dict[str, Any]:
             tag=f"print_warden_{job_id}",
         )
     )
-    job = JOBS.transition(
-        job_id,
-        "awaiting_approval",
-        "asked via phone notification" if sent else "notification failed",
-    )
+    note = "asked via phone notification" if sent else "notification failed"
+    asked = time.time()
+    if job["state"] == "awaiting_approval":
+        job = JOBS.note(job_id, note, approval_requested_at=asked)
+    else:
+        job = JOBS.transition(
+            job_id, "awaiting_approval", note, approval_requested_at=asked
+        )
     return {
         **_job_public(job),
         "notification_sent": sent,
@@ -354,55 +381,75 @@ async def start_print(job_id: str, authorized_by: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def skip_job(job_id: str, reason: str = "") -> dict[str, Any]:
+async def skip_job(job_id: str, reason: str = "") -> dict[str, Any]:
     """Mark a staged or awaiting job as skipped. Never touches a running print."""
     job = JOBS.get(job_id)
     if job["state"] == "printing":
         raise ValueError(
             "job is printing; cancelling a running print is a human action"
         )
+    if HA and job["state"] == "awaiting_approval":
+        await HA.clear_notification(f"print_warden_{job_id}")
     return _job_public(JOBS.transition(job_id, "skipped", reason or "skipped"))
 
 
-async def _start(job_id: str, authorized_by: str) -> dict[str, Any]:
-    job = JOBS.get(job_id)
-    w = _w(job["printer"])
-    ok, reasons = policy.can_start(
-        job,
-        w.status(),
-        await _loaded(job["printer"]),
-        has_power_device=bool(w.p.power_device),
-    )
-    if not ok:
+async def _start(
+    job_id: str, authorized_by: str, via_tap: bool = False
+) -> dict[str, Any]:
+    """The one start path. The printer's start_lock serialises it, so a second tap or chat consent waits and then
+    finds the job already printing; a tap must answer a request still inside the approval TTL."""
+    w = _w(JOBS.get(job_id)["printer"])
+    async with w.start_lock:
+        job = JOBS.get(job_id)
+        if via_tap:
+            refusal = None
+            if job["state"] != "awaiting_approval":
+                refusal = f"job is {job['state']}, not awaiting approval"
+            elif policy.approval_expired(job, time.time(), CFG.approval_ttl_minutes):
+                refusal = "approval request expired; request_start again"
+                job = JOBS.transition(job_id, "staged", f"tap refused: {refusal}")
+            if refusal:
+                JOBS.note(job_id, f"start refused ({authorized_by}): {refusal}")
+                return {**_job_public(job), "started": False, "blockers": [refusal]}
+        ok, reasons = await _policy(job)
+        if not ok:
+            JOBS.note(job_id, f"start refused ({authorized_by}): {'; '.join(reasons)}")
+            return {**_job_public(job), "started": False, "blockers": reasons}
+        sid = JOBS.kv_get(f"active_spool:{job['printer']}")
         JOBS.transition(
             job_id,
-            job["state"],
-            f"start refused ({authorized_by}): {'; '.join(reasons)}",
+            "approved",
+            authorized_by + (f"; spool {sid}" if sid else ""),
+            authorized_by=authorized_by,
+            spool_id=int(sid) if sid else None,
         )
-        return {**_job_public(job), "started": False, "blockers": reasons}
-    JOBS.transition(job_id, "approved", authorized_by, authorized_by=authorized_by)
-    if sid := JOBS.kv_get(f"active_spool:{job['printer']}"):
-        JOBS.transition(job_id, "approved", f"spool {sid}")
-    if w.p.power_device and w.status().get("klippy") != "ready":
-        up, steps = await moonraker.bring_up(w.p.moonraker, w.p.power_device)
-        JOBS.transition(job_id, "approved" if up else "staged", "; ".join(steps))
-        if not up:
-            if HA:
-                await HA.alert(
-                    job["printer"],
-                    "warning",
-                    "printer would not come up",
-                    "; ".join(steps),
-                )
-            return {
-                **_job_public(JOBS.get(job_id)),
-                "started": False,
-                "blockers": steps,
-            }
-    await moonraker.start_print(w.p.moonraker, job["remote_name"])
-    job = JOBS.transition(
-        job_id, "printing", "print/start sent", started_at=time.time()
-    )
+        try:
+            if w.p.power_device and w.status().get("klippy") != "ready":
+                up, steps = await moonraker.bring_up(w.p.moonraker, w.p.power_device)
+                if not up:
+                    JOBS.transition(job_id, "staged", "; ".join(steps))
+                    if HA:
+                        await HA.alert(
+                            job["printer"],
+                            "warning",
+                            "printer would not come up",
+                            "; ".join(steps),
+                        )
+                    return {
+                        **_job_public(JOBS.get(job_id)),
+                        "started": False,
+                        "blockers": steps,
+                    }
+                JOBS.note(job_id, "; ".join(steps))
+            await moonraker.start_print(w.p.moonraker, job["remote_name"])
+        except httpx.HTTPError as e:
+            JOBS.transition(job_id, "staged", f"start failed: {e}")
+            raise
+        job = JOBS.get(job_id)
+        if job["state"] != "printing":
+            job = JOBS.transition(
+                job_id, "printing", "print/start sent", started_at=time.time()
+            )
     STORE.add(
         Event(
             job["printer"],
@@ -414,6 +461,7 @@ async def _start(job_id: str, authorized_by: str) -> dict[str, Any]:
         )
     )
     if HA:
+        await HA.clear_notification(f"print_warden_{job_id}")
         await HA.alert(
             job["printer"],
             "info",
@@ -427,7 +475,7 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
     verb, _, job_id = action.removeprefix("PRINT_WARDEN_").partition("_")
     try:
         if verb == "START":
-            res = await _start(job_id, "phone tap")
+            res = await _start(job_id, "phone tap", via_tap=True)
             if not res["started"] and HA:
                 await HA.alert(
                     JOBS.get(job_id)["printer"],
@@ -441,16 +489,31 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
         log.warning("HA action %s: %s", action, e)
 
 
+def _model_name(name: str) -> str:
+    base = Path(name.split("?")[0]).name
+    if Path(base).suffix.lower() not in MODEL_SUFFIXES:
+        raise ValueError(f"{name!r}: models must be {' or '.join(MODEL_SUFFIXES)}")
+    return base
+
+
 async def _resolve_model(model: str) -> Path:
     if model.startswith(("http://", "https://")):
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-            r = await c.get(model)
+        name = _model_name(httpx.URL(model).path)
+        buf = bytearray()
+        async with (
+            httpx.AsyncClient(timeout=60, follow_redirects=True) as c,
+            c.stream("GET", model) as r,
+        ):
             r.raise_for_status()
+            async for chunk in r.aiter_bytes():
+                buf += chunk
+                if len(buf) > MAX_MODEL_BYTES:
+                    raise ValueError(f"{model} exceeds {MAX_MODEL_BYTES >> 20} MB")
         UPLOADS.mkdir(parents=True, exist_ok=True)
-        dst = UPLOADS / Path(model).name.split("?")[0]
-        dst.write_bytes(r.content)
+        dst = UPLOADS / name
+        dst.write_bytes(bytes(buf))
         return dst
-    p = UPLOADS / Path(model).name
+    p = UPLOADS / _model_name(model)
     if not p.exists():
         raise FileNotFoundError(
             f"{model} not found; POST it to {CFG.public_url}/upload first"
@@ -459,25 +522,35 @@ async def _resolve_model(model: str) -> Path:
 
 
 async def upload(request: Request) -> JSONResponse:
+    length = request.headers.get("content-length") or "0"
+    if not length.isdigit() or int(length) > MAX_MODEL_BYTES + 65536:
+        return JSONResponse({"error": "file too large"}, status_code=413)
     form = await request.form()
     f = form.get("file")
-    if f is None or not getattr(f, "filename", ""):
+    if not isinstance(f, UploadFile) or not f.filename:
         return JSONResponse(
             {"error": "multipart field 'file' required"}, status_code=400
         )
-    name = Path(f.filename).name
-    if Path(name).suffix.lower() not in (".stl", ".scad", ".3mf"):
-        return JSONResponse({"error": "stl, scad or 3mf only"}, status_code=400)
+    try:
+        name = _model_name(f.filename)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    data = await f.read()
+    if len(data) > MAX_MODEL_BYTES:
+        return JSONResponse({"error": "file too large"}, status_code=413)
     UPLOADS.mkdir(parents=True, exist_ok=True)
-    (UPLOADS / name).write_bytes(await f.read())
+    (UPLOADS / name).write_bytes(data)
     return JSONResponse({"ok": True, "model": name})
 
 
+def _secret_ok(request: Request, secret: str | None) -> bool:
+    """Fail closed: an unset secret disables the route."""
+    given = request.query_params.get("secret") or ""
+    return bool(secret) and hmac.compare_digest(given.encode(), (secret or "").encode())
+
+
 async def ha_action(request: Request) -> JSONResponse:
-    if (
-        CFG.obico_webhook_secret
-        and request.query_params.get("secret") != CFG.obico_webhook_secret
-    ):
+    if not _secret_ok(request, CFG.ha.action_secret if CFG.ha else None):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     payload = await request.json()
     await _on_ha_action(str(payload.get("action", "")), payload)
@@ -485,10 +558,7 @@ async def ha_action(request: Request) -> JSONResponse:
 
 
 async def obico_webhook(request: Request) -> JSONResponse:
-    if (
-        CFG.obico_webhook_secret
-        and request.query_params.get("secret") != CFG.obico_webhook_secret
-    ):
+    if not _secret_ok(request, CFG.obico_webhook_secret):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     payload = await request.json()
     name = (payload.get("printer") or {}).get("name") or ""
@@ -515,11 +585,90 @@ async def health(_: Request) -> JSONResponse:
     )
 
 
+async def expire_approvals(now: float | None = None) -> list[str]:
+    """Return unanswered start requests older than the TTL to staged and withdraw their phone notifications."""
+    now = now or time.time()
+    expired = []
+    for job in JOBS.list(None, 200, ("awaiting_approval",)):
+        w = WATCHERS.get(job["printer"])
+        if (w and w.start_lock.locked()) or not policy.approval_expired(
+            job, now, CFG.approval_ttl_minutes
+        ):
+            continue
+        JOBS.transition(job["id"], "staged", "approval request expired")
+        expired.append(job["id"])
+        if HA:
+            await HA.clear_notification(f"print_warden_{job['id']}")
+    return expired
+
+
+async def housekeeping(interval_s: float = 60) -> None:
+    last_prune = 0.0
+    while True:
+        try:
+            await expire_approvals()
+            if time.time() - last_prune > 86400:
+                last_prune = time.time()
+                rows = STORE.prune(CFG.keep_days)
+                files = await asyncio.to_thread(
+                    retention.prune_files, CFG.storage_dir, CFG.keep_days
+                )
+                log.info("retention: %d events, %d files pruned", rows, files)
+        except Exception:
+            log.exception("housekeeping")
+        await asyncio.sleep(interval_s)
+
+
+class TokenAuth:
+    """Bearer token (or ?token=, for clients that can only set a URL) on everything but the open paths."""
+
+    OPEN = ("/healthz", "/obico/webhook", "/ha/action")
+
+    def __init__(self, app: ASGIApp, token: str | None):
+        self.app = app
+        self.token = (token or "").encode()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self.token or self._open(scope["path"]):
+            await self.app(scope, receive, send)
+            return
+        req = Request(scope)
+        auth = req.headers.get("authorization", "")
+        given = auth[7:] if auth.lower().startswith("bearer ") else ""
+        given = given or req.query_params.get("token", "")
+        if hmac.compare_digest(given.encode(), self.token):
+            await self.app(scope, receive, send)
+            return
+        await JSONResponse({"error": "unauthorized"}, status_code=401)(
+            scope, receive, send
+        )
+
+    def _open(self, path: str) -> bool:
+        return path in self.OPEN or path.startswith("/files/")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
+    for what, ok in (
+        (
+            "PRINT_WARDEN_TOKEN unset: /mcp and /upload are open to the network",
+            CFG.api_token,
+        ),
+        (
+            "OBICO_WEBHOOK_SECRET unset: /obico/webhook is disabled",
+            CFG.obico_webhook_secret,
+        ),
+        (
+            "HA_ACTION_SECRET unset: /ha/action is disabled",
+            CFG.ha and CFG.ha.action_secret,
+        ),
+    ):
+        if not ok:
+            log.warning(what)
     tasks = [
         asyncio.create_task(w.run(), name=f"watch:{n}") for n, w in WATCHERS.items()
     ]
+    tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(
@@ -534,18 +683,25 @@ async def lifespan(app: Starlette):
         await HA.aclose()
 
 
-CFG.storage_dir.mkdir(parents=True, exist_ok=True)
+for _d in PUBLIC_DIRS:
+    (CFG.storage_dir / _d).mkdir(parents=True, exist_ok=True)
+# Only these subtrees are served: the databases and uploaded models never are. /files stays tokenless because the
+# phone fetches notification images by URL.
 app = Starlette(
     routes=[
         Route("/healthz", health),
         Route("/obico/webhook", obico_webhook, methods=["POST"]),
         Route("/upload", upload, methods=["POST"]),
         Route("/ha/action", ha_action, methods=["POST"]),
-        Mount("/files", app=StaticFiles(directory=str(CFG.storage_dir)), name="files"),
+        *(
+            Mount(f"/files/{d}", app=StaticFiles(directory=str(CFG.storage_dir / d)))
+            for d in PUBLIC_DIRS
+        ),
         Mount("/", app=mcp.streamable_http_app()),
     ],
     lifespan=lifespan,
 )
+asgi = TokenAuth(app, CFG.api_token)
 
 
 def main() -> None:
@@ -553,4 +709,4 @@ def main() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    uvicorn.run(app, host=CFG.host, port=CFG.port, log_level="warning")
+    uvicorn.run(asgi, host=CFG.host, port=CFG.port, log_level="warning")

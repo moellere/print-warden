@@ -7,6 +7,6 @@ services:
     volumes:
       - ./printers.yaml:/config/printers.yaml:ro
       - ./data:/app/data
-    env_file: .env          # HA_BEARER_TOKEN, OBICO_WEBHOOK_SECRET
+    env_file: .env          # HA_BEARER_TOKEN, OBICO_WEBHOOK_SECRET, PRINT_WARDEN_TOKEN, HA_ACTION_SECRET
     environment:
       TZ: America/Chicago

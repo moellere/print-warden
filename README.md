@@ -19,7 +19,10 @@ Printers with a `power_device` (the X1's Sonoff) are powered on at start and Kli
 up to three FIRMWARE_RESTARTs before the print command goes out; the tap still gates the whole sequence.
 
 `policy.can_start` is plain Python: Moonraker connected, Klipper ready, printer idle, gcode staged,
-loaded material matches the job. No model is consulted in the gate.
+loaded material matches the job, and the active spool has the job's grams plus 10%. No model is consulted in the gate.
+A phone tap answers one `request_start` and is honoured only within `policy.approval_ttl_minutes` (default 15);
+unanswered requests go back to `staged` and the notification is withdrawn. Starts on one printer are serialised, so a
+double tap sends one print.
 
 ## Job flow
 
@@ -33,17 +36,37 @@ start_print(job_id, authorized_by="the operator said: go ahead and print it")   
 list_spools() / set_active_spool("garagex4", 2)   # Spoolman owns spools; the warden records which one is loaded
 ```
 
+When a print ends the warden deducts the filament Klipper reports from the job's spool in Spoolman (set
+`track_spool_usage: false` on a printer whose Moonraker runs its own `[spoolman]` component), renders the per-layer
+frames into `timelapse.mp4`, and sends the completion alert with actual vs. estimated time, grams and the timelapse link.
+On every Moonraker (re)connect, jobs whose outcome happened while the warden was away are settled from Moonraker's
+print history.
+
 Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS.
+Models are STL or SCAD, up to 100 MB.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
 ## Run
 
 ```
 cp printers.example.yaml printers.yaml   # edit
-printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\n' > .env
-docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppImage + OpenSCAD
+printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
+docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppImage + OpenSCAD + ffmpeg
 curl localhost:8710/healthz
 ```
+
+Access:
+
+| Route | Guard |
+|---|---|
+| `/mcp`, `/upload` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
+| `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
+| `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
+| `/healthz` | open |
+
+Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
+timelapses, job artifacts and uploads are kept.
 
 Obico → Preferences → Notifications → Webhook URL: `http://<host>:8710/obico/webhook?secret=<OBICO_WEBHOOK_SECRET>`.
 Phone buttons come back through HA's websocket event bus (`mobile_app_notification_action`), no HA config needed.
@@ -57,10 +80,22 @@ src/print_warden/
   rules.py      telemetry rules -> events
   watcher.py    per-printer orchestration, snapshots, light, timelapse, job tracking
   slicer.py     OrcaSlicer CLI wrapper, preset flattening, gcode header parsing, OpenSCAD render
-  jobs.py       job ledger (SQLite) with transition log
-  policy.py     can_start()
+  jobs.py       job ledger (SQLite): transition table, transition log
+  policy.py     can_start(), approval_expired()
+  reconcile.py  settle jobs from Moonraker history after a restart or outage
+  retention.py  snapshot / frame pruning
+  timelapse.py  frames -> mp4 (ffmpeg)
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
   spoolman.py   Spoolman client (materials, remaining weight)
   server.py     MCP tools + HTTP routes (/upload, /obico/webhook, /ha/action, /files, /healthz)
 ```
+
+## Develop
+
+```
+uv sync --group dev
+uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src && uv run pytest -q
+```
+
+CI runs the same four on every push and pull request.

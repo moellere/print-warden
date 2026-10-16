@@ -73,6 +73,21 @@ class HAClient:
             log.warning("actionable notify failed: %s", e)
             return False
 
+    async def clear_notification(self, tag: str) -> bool:
+        """Withdraw an actionable notification from the phone (HA companion `clear_notification`)."""
+        if not self.cfg.notify_service:
+            return False
+        domain, service = self.cfg.notify_service.split(".", 1)
+        try:
+            r = await self._c.post(
+                f"/api/services/{domain}/{service}",
+                json={"message": "clear_notification", "data": {"tag": tag}},
+            )
+            return r.status_code < 300
+        except httpx.HTTPError as e:
+            log.warning("clear notification failed: %s", e)
+            return False
+
     async def state(self, entity_id: str) -> str | None:
         try:
             r = await self._c.get(f"/api/states/{entity_id}")

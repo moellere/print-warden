@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 IDLE_STATES = {"standby", "complete", "cancelled", None}
+SPOOL_MARGIN = 1.1
 
 
 def can_start(
@@ -13,6 +14,7 @@ def can_start(
     loaded_material: str | None,
     require_material: bool = True,
     has_power_device: bool = False,
+    spool_remaining_g: float | None = None,
 ) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if job["state"] not in ("staged", "approved", "awaiting_approval"):
@@ -34,4 +36,19 @@ def can_start(
         reasons.append(
             f"loaded material is {loaded_material or 'unknown'}, job needs {job.get('material')}"
         )
+    need = job.get("filament_g")
+    if (
+        spool_remaining_g is not None
+        and need
+        and spool_remaining_g < need * SPOOL_MARGIN
+    ):
+        reasons.append(
+            f"spool has {spool_remaining_g:.0f} g left, job needs {need:.0f} g (+{SPOOL_MARGIN - 1:.0%} margin)"
+        )
     return (not reasons, reasons)
+
+
+def approval_expired(job: dict[str, Any], now: float, ttl_minutes: float) -> bool:
+    """A phone tap answers one request; once the request is older than the TTL the bed may have changed."""
+    asked = job.get("approval_requested_at")
+    return asked is None or now - asked > ttl_minutes * 60

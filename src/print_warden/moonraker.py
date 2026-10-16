@@ -141,6 +141,16 @@ async def power(base_url: str, device: str, action: str | None = None) -> str:
         return str(r.json().get("result", {}).get(device, "unknown"))
 
 
+async def history(base_url: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Recent print history, newest first (Moonraker [history] component)."""
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{base_url}/server/history/list", params={"limit": limit, "order": "desc"}
+        )
+        r.raise_for_status()
+        return list(r.json().get("result", {}).get("jobs") or [])
+
+
 async def klippy_state(base_url: str) -> str:
     async with httpx.AsyncClient(timeout=10) as c:
         r = await c.get(f"{base_url}/server/info")
