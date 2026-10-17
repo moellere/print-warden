@@ -301,18 +301,25 @@ async def run(
 ) -> list[Result]:
     own = client is None
     c = client or httpx.AsyncClient(timeout=10, follow_redirects=True)
+    # Home Assistant gets its own client so `verify_tls: false` reaches the check, as
+    # it does the warden: HA is usually reached by IP with a certificate for its name.
+    ha_c = c
+    if own and cfg.ha and not cfg.ha.verify_tls:
+        ha_c = httpx.AsyncClient(timeout=10, follow_redirects=True, verify=False)
     try:
         results = _local(cfg) + _slicer(cfg)
         for p in cfg.printers.values():
             results += _profiles(cfg, p)
             results += await _printer(c, p)
-        results += await _home_assistant(c, cfg)
+        results += await _home_assistant(ha_c, cfg)
         results += await _spoolman(c, cfg)
         results += await _mqtt(cfg, mqtt_probe)
         return results
     finally:
         if own:
             await c.aclose()
+            if ha_c is not c:
+                await ha_c.aclose()
 
 
 def main(argv: list[str]) -> int:

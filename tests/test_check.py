@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import stat
 
@@ -174,6 +175,30 @@ async def test_missing_optional_pieces_are_warnings(tmp_path, monkeypatch):
     assert {"home assistant", "spoolman", "server"} <= set(warns)
     assert any("OpenSCAD" in d for d in warns.values())
     assert _by_status(results, check.FAIL) == []
+
+
+async def test_home_assistant_check_follows_verify_tls(tmp_path, monkeypatch):
+    real = httpx.AsyncClient
+    made = []
+
+    def client(**kw):
+        made.append(kw.get("verify", True))
+        return real(transport=httpx.MockTransport(_handler()))
+
+    monkeypatch.setattr(check.httpx, "AsyncClient", client)
+
+    async def probe(m):
+        pass
+
+    ha = _cfg(tmp_path).ha
+    for verify in (False, True):
+        made.clear()
+        cfg = _cfg(tmp_path, ha=dataclasses.replace(ha, verify_tls=verify))
+        results = await check.run(cfg, None, probe)
+        assert ("home assistant", "http://ha accepts the token") in _by_status(
+            results, check.OK
+        )
+        assert made == ([True, False] if not verify else [True])
 
 
 def test_main_reports_a_bad_config(tmp_path, capsys):
