@@ -61,6 +61,14 @@ under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, 
 job ended in the failure rates and reasons, and `submit_job` warns when the same geometry failed before with the same
 material, quality and overrides (advisory; it never blocks).
 
+**Calibration towers.** `calibrate(printer, kind)` slices a five-section tower for the spool loaded on the printer and
+queues it like any job (it starts on a tap). `temp` steps the nozzle from 10 °C above the spool's temperature to 10
+below, `flow` the extrusion multiplier from 104 % to 96 %, `pa` Klipper's pressure advance (`bowden=True` for a
+Bowden range). The warden inserts each section's command after slicing, checks temperatures as usual, and puts flow and
+pressure advance back at the end. Afterwards the phone asks which section looked best; the answer is saved on the
+spool in Spoolman (`pw_nozzle_temp`, `pw_flow_ratio`, `pw_pressure_advance`; `record_calibration` from chat) and that
+spool's later jobs are sliced with it.
+
 Upkeep runs hourly and sends each finding to the phone at most once a day, outside quiet hours:
 
 - **Reorder:** a material whose Spoolman stock, minus what the queue still needs, is under
@@ -110,6 +118,13 @@ commanded Z must be at least `pose.z`, and every rehome alerts. Prints the warde
 the last `min_agreements` labelled checks all agreed with the operator, and the local time is inside
 `auto_start_hours`. Each unattended start sends an alert with the check's snapshot. A missed small part (a false
 "clear" after a print) breaks the record, so auto_start stops until the check earns it back.
+
+**Did the part stay on the bed.** Klipper reports a print complete even when the part came off halfway. Once the bed
+camera is calibrated (`calibrate_bed_camera`: the printable area's four corners in a snapshot at the bed-check pose,
+as image fractions), the post-print check also projects where the job's first layer was drawn into the frame. If a
+part is not seen there ("probably failed: 1 of 3 parts not seen..."), or much of the bed away from the parts changed
+(debris, spaghetti), the outcome prompt is re-sent with that hint. The hint is kept on the job (`outcome_hint`); a
+person still decides. `footprint_check(job_id)` runs it on demand. Deterministic image arithmetic, no model.
 
 ## Job flow
 
@@ -169,10 +184,48 @@ OrcaSlicer otherwise picks the Cool Plate temperatures, which in the Artillery p
 
 Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS, ASA, TPU,
 PLA-CF (Artillery Generic profiles; temperature checks cover all six).
-Models are STL, SCAD or 3MF, up to 100 MB. A 3MF project (Orca, Bambu Studio, PrusaSlicer) contributes geometry
-only: `plate` picks one plate per job, the project's own settings and gcode are ignored in favour of the printer's,
-modifier and support-painting volumes are dropped, and a plate with a negative (subtracted) part is refused.
+Models are STL, SCAD or 3MF, up to 100 MB. A 3MF project (Orca, Bambu Studio, PrusaSlicer) is sliced whole, so
+modifiers, negative parts and per-object settings apply, with this printer's machine, process and filament settings
+loaded over it; `plate` picks one plate per job. Before slicing, every gcode setting in the project (`*_gcode`,
+`post_process`) is replaced and embedded gcode dropped, so a downloaded project cannot run its own gcode; if one of
+those settings still reaches the output where the printer profile defines it, the job is blocked. With `copies` or
+`orient` a 3MF is sliced as geometry only.
+**Model pages.** `model` may also be a model page: `model_page(url)` shows its title, author, license and model
+files, and `submit_job(..., model=<page>, file="lid")` prints one of them (`file` is needed when there are several).
+The page, author and license stay on the job (`print_history`). Thingiverse goes through its API and needs an app
+token in `THINGIVERSE_TOKEN` (`intake.thingiverse_token_env` to rename it); Printables goes through the GraphQL
+endpoint its site uses, which is unofficial and may change; any other page is searched for links ending in
+`.stl` / `.3mf` / `.scad`, with `og:title`, the `author` meta and a `rel="license"` link.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
+
+## Printer profiles
+
+Any OrcaSlicer printer works, not only the Artillery set: presets are looked up by name in the warden's own profile
+directory (`slicer.user_dir`, default `<storage>/profiles`), then `slicer.vendor_dir`, then Orca's filament library,
+then every other vendor next to it (`slicer.profiles_root`, default the vendor directory's parent). A preset's parents
+resolve in its own vendor first, as in Orca. `print-warden profiles` sets a printer up:
+
+```
+print-warden profiles vendors                                  # Orca's bundled vendors
+print-warden profiles printers Creality                        # that vendor's printers
+print-warden profiles block "Creality K1 (0.4 nozzle)"         # the printers.yaml slicer block to paste
+print-warden profiles import my-k1.orca_printer "My PETG.json" # your own Orca / Bambu Studio presets or bundles
+print-warden profiles klipper "Voron 350" http://voron.local:7125   # a printer profile from Klipper's config
+```
+
+`block` keys the processes Orca lists as compatible with the printer by quality (`standard`, `draft`, `fine`, ...;
+a repeated name gets its layer height, `standard_0.28`), and picks per material the warden checks your own filament,
+else the vendor's generic one, else Orca's universal one. `import` writes presets (`.json`, `.orca_printer`,
+`.orca_filament`, `.bbscfg`, `.bbsflmt`) to `slicer.user_dir`; a preset whose parent is in neither the bundled
+profiles nor the same import is refused, and a process's `post_process` (a command Orca would run on the warden's
+host) is dropped. `klipper` reads the bed from the stepper limits, the height, nozzle, kinematics, speed and
+acceleration limits and the `PRINT_START`/`START_PRINT` and `PRINT_END`/`END_PRINT` macros (with the parameter names
+the macro reads, e.g. `BED_TEMP` / `EXTRUDER_TEMP`); it inherits Orca's generic Klipper printer for that nozzle, so its
+processes and Orca's universal filaments apply. Without a start macro it heats, homes and draws a purge line; check that
+start gcode before the first print. Then run `print-warden check`.
+
+Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm bed);
+the warden's extents check blocks those jobs. Waive it per job, or import a copy of the printer with your own purge.
 
 ## Run
 
@@ -191,11 +244,15 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
 | `/healthz` | open |
+
+`/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
+progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
+dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
 
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
@@ -211,7 +268,7 @@ src/print_warden/
   moonraker.py  websocket subscriber (read) + upload/start (write, policy-gated)
   rules.py      telemetry rules -> events
   watcher.py    per-printer orchestration, snapshots, light, timelapse, job tracking
-  slicer.py     OrcaSlicer CLI wrapper, preset flattening, gcode header parsing, OpenSCAD render
+  slicer.py     OrcaSlicer CLI wrapper, preset lookup and flattening, gcode header parsing, OpenSCAD render
   jobs.py       job ledger (SQLite): transition table, transition log
   policy.py     can_start(), approval_expired()
   reconcile.py  settle jobs from Moonraker history after a restart or outage
@@ -226,7 +283,13 @@ src/print_warden/
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
   spoolman.py   Spoolman client (materials, remaining weight)
-  server.py     MCP tools + HTTP routes (/upload, /obico/webhook, /ha/action, /files, /healthz)
+  threemf.py    3MF plates to STL, project sanitizing (no project gcode reaches the printer)
+  footprint.py  bed-camera homography, first-layer footprint, part-on-bed verdict
+  calibration.py  temperature / flow / pressure-advance towers and their results
+  intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
+  status.py     the read-only /status page
+  profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
+  server.py     MCP tools + HTTP routes (/upload, /status, /obico/webhook, /ha/action, /files, /healthz)
 ```
 
 ## Develop

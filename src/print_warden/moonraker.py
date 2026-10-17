@@ -22,7 +22,7 @@ SUBSCRIBE = {
     "display_status": None,
     "virtual_sdcard": ["progress", "is_active"],
     "webhooks": None,
-    "extruder": ["temperature", "target"],
+    "extruder": ["temperature", "target", "pressure_advance"],
     "heater_bed": ["temperature", "target"],
     "toolhead": ["homed_axes", "position"],
     "idle_timeout": ["state"],

@@ -1,7 +1,7 @@
 # Roadmap
 
 Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0. Phases 8–12 shipped
-in 0.4.0; their live sign-off is `docs/live-validation.md`.
+in 0.4.0; their live sign-off is `docs/live-validation.md`. Phases 13–18 are the next round.
 
 ## Phase 0 — Hardening ✅
 
@@ -132,3 +132,83 @@ auto_start-gated.
   (api 1 only gains fields); homelab-helper turns them into findings.
 
 Done when: a thermal-runaway shutdown appears in `helper findings list` with its classified cause.
+
+## Phase 13 — Live sign-off
+
+- `docs/live-validation.md` walked on both printers; each failed row becomes an issue and a 0.4.x fix.
+- homelab-helper: a printer removed from the warden resolves its findings (the status lists every printer); a
+  homelab-helper release with the printwarden source when the operator names the version.
+
+Done when: every sign-off row is signed or has an issue.
+
+## Phase 14 — Full 3MF projects ✅ (build)
+
+- A 3MF is sliced as the project (modifiers, negative parts, per-object settings) with the printer's settings loaded
+  over it. Every gcode-bearing setting of the project (`*_gcode`, `post_process`) is replaced by a sentinel and
+  embedded gcode is dropped; a sentinel in the output for a setting the printer profile defines blocks the job.
+- Found by slicing for real: OrcaSlicer 2.4.2 keeps the project's value for gcode settings the printer profile does
+  not define (`file_start_gcode`, the extrusion-role change scripts), so without the sanitizer a project could run
+  its own gcode at file start. Orca crashes on a project with no `project_settings.config`, so it is kept, cleaned.
+- `copies` / `orient` re-arrange the plate and fall back to geometry only.
+
+Done when: a plate with a negative part slices with its hole, and no project gcode reaches the printer.
+
+## Phase 15 — Did the part stay on the bed ✅ (build)
+
+- A one-time bed-camera calibration (four bed corners tapped in a reference image) maps bed coordinates to the image;
+  after a "complete" print, at the parked pose, the footprint the gcode drew is compared with what changed. Nothing
+  there pre-fills the outcome as "probably failed"; a person still confirms. Deterministic, no model.
+- The footprint is Orca's part extrusion on the first layers (`;TYPE:` marks drop the purge line, skirt and prime
+  tower), split into parts by connected region, so one detached part of three is named.
+
+Done when: a removed part is flagged before anyone looks.
+
+## Phase 16 — Per-spool tuning and calibration prints ✅ (build)
+
+- Flow ratio and pressure advance per spool in Spoolman extra fields, applied as filament overrides.
+- `calibrate(printer, spool, kind)` generates a temperature / flow / pressure-advance print; the outcome prompt asks
+  which section was best and records it on the spool.
+- Found by slicing for real: a tower whose sections alternated in width overhung every other section and brought
+  tree supports (97 extra support layers); the tower now only steps inward. Klipper keeps `M221` and pressure
+  advance after a print, so each tower ends by restoring them (the live pressure advance comes from Moonraker).
+
+Done when: a new spool goes from calibration print to tuned settings on the next job without editing a profile.
+
+## Phase 17 — Read-only status page and model intake ✅ (build)
+
+- `/status` (token-guarded): printers, queues, ETAs, bed state, last snapshots, upkeep due. Actions stay on the phone.
+  Snapshots load from the open `/files` route, so the token is not copied into image URLs.
+- A Printables / Thingiverse page URL resolves to its model files, with license and author kept on the job; any
+  other page yields the model files it links. Thingiverse is its v1 API (app token); Printables has no public API, so
+  the warden uses the GraphQL endpoint its site calls. Neither site is reachable from the build container, so both
+  are covered by mocked tests and wait on a live row.
+
+Done when: the page shows both printers live and `submit_job` takes a model page URL.
+
+## Phase 18 — Printer profiles for any printer ✅ (build)
+
+- Use any OrcaSlicer vendor's profiles, not only Artillery: list vendors/printers in Orca's bundled profiles and
+  write the `printers.yaml` slicer block for one.
+- Import a user's own Orca/Bambu printer, process and filament presets (exported `.json` or `.orca_printer` /
+  `.bbscfg` bundles) into a warden profile directory, resolving `inherits` against the bundled vendors.
+- Generate a printer profile from Klipper itself (bed size from `printer.cfg` limits via Moonraker, nozzle, kinematics,
+  start/end macros) on top of a generic base when no vendor profile fits.
+
+Done when: a printer not in the Artillery set is configured from scratch with one command and slices correctly.
+
+Found by slicing for real (OrcaSlicer 2.4.2):
+
+- 465 bundled presets have a file name that is not their `name`, and `fdm_machine_common` and friends exist in many
+  vendors with different contents, so presets are indexed by `name` and a parent resolves in its child's vendor
+  first, then Orca's filament library. All 9,834 instantiated bundled presets resolve.
+- Orca's CLI refuses (rc -17) a machine whose name or `from: User` it cannot match to a bundled printer. A user's
+  preset is therefore passed with `inherits` naming its nearest bundled ancestor, and a process whose compatibility
+  list does not name that printer gets it added (printers.yaml already pairs them).
+- A bundled printer may inherit a sibling (another nozzle); counting the whole chain as the same printer gave a 0.2 mm
+  nozzle the 0.4 mm processes, so only a user's copy matches its bundled parent.
+- Cubicon's bundled filaments set `default_filament_colour` to a string, which aborts Orca's CLI; it is passed as a
+  list.
+- 34 printers sampled across 27 vendors, plus the Creality K1, a profile from a Klipper config and an imported Orca
+  bundle, sliced a cube with the generated block. All but one had no blocker: the Anycubic Kobra 2 Pro's start gcode
+  purges at Y226 on a 220 mm printable area, which the extents check blocks.
+

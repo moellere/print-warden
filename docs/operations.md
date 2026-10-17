@@ -41,6 +41,7 @@ Everything lives under `storage.dir` (`./data` in compose):
 | `reference/` | empty-bed reference images | yes |
 | `jobs/` | per-job STL, gcode, 3mf, preview | optional |
 | `models/` | uploaded models | optional |
+| `profiles/` | imported and generated printer presets (`print-warden profiles`) | yes |
 | `slice-cache/`, `snapshots/`, `timelapse/` | regenerable or pruned | no |
 
 Stop the container (or copy with `sqlite3 jobs.db ".backup ..."`) before copying the databases.

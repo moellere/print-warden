@@ -1,11 +1,32 @@
 """Spoolman client. Spoolman owns spools and materials; the warden only records which spool is on which printer
-(the X4's Moonraker predates the spoolman component, so Moonraker cannot hold the active spool for us)."""
+(the X4's Moonraker predates the spoolman component, so Moonraker cannot hold the active spool for us), and the
+values its calibration towers found, in spool extra fields (`pw_nozzle_temp`, `pw_flow_ratio`,
+`pw_pressure_advance`) it creates on first use."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
+
+TUNING = {
+    "pw_nozzle_temp": ("nozzle_temp", "print-warden nozzle °C"),
+    "pw_flow_ratio": ("flow_ratio", "print-warden flow ratio"),
+    "pw_pressure_advance": ("pressure_advance", "print-warden pressure advance"),
+}
+
+
+def _tuning(extra: dict[str, Any] | None) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for field, (name, _) in TUNING.items():
+        raw = (extra or {}).get(field)
+        try:
+            if raw not in (None, ""):
+                out[name] = float(json.loads(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _price_per_g(s: dict[str, Any], f: dict[str, Any]) -> float | None:
@@ -56,8 +77,27 @@ class Spoolman:
             "price_per_g": _price_per_g(s, f),
             "location": s.get("location"),
             "archived": s.get("archived", False),
+            "tuning": _tuning(s.get("extra")),
             "first_used": s.get("first_used"),
         }
+
+    async def set_tuning(
+        self, spool_id: int, field: str, value: float
+    ) -> dict[str, Any]:
+        """Write one calibration result to the spool, defining the extra field first if Spoolman lacks it."""
+        if field not in TUNING:
+            raise ValueError(f"unknown tuning field {field!r}")
+        r = await self._c.post(
+            f"/field/spool/{field}",
+            json={"name": TUNING[field][1], "field_type": "float"},
+        )
+        if r.status_code >= 500:
+            r.raise_for_status()
+        r = await self._c.patch(
+            f"/spool/{spool_id}", json={"extra": {field: json.dumps(value)}}
+        )
+        r.raise_for_status()
+        return self._summary(r.json())
 
     async def aclose(self) -> None:
         await self._c.aclose()

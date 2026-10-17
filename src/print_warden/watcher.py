@@ -4,6 +4,7 @@ tracking, spool usage, and job reconciliation whenever the Moonraker connection 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime
@@ -14,7 +15,9 @@ import httpx
 
 from . import (
     bedcheck,
+    calibration,
     cameras,
+    footprint,
     moonraker,
     outcome,
     park,
@@ -145,7 +148,7 @@ class PrinterWatcher:
             self.job_dir = None
             if self.bed:
                 self.bed.set_state(self.p.name, "occupied", ev.kind)
-                self._spawn(self._after_print())
+                self._spawn(self._after_print(job, ev.kind))
             used = ev.data.get("filament_used_mm")
             if job and self.ha:
                 self._spawn(self._outcome_prompt(job, ev, cam))
@@ -480,13 +483,33 @@ class PrinterWatcher:
                 )
         return out
 
-    async def _after_print(self) -> None:
-        """Once the toolhead has parked: a check labelled occupied, and the phone button that clears the bed."""
+    async def _after_print(
+        self, job: dict[str, Any] | None = None, kind: str | None = None
+    ) -> None:
+        """Once the toolhead has parked: a check labelled occupied, the footprint check of a completed print (its
+        hint re-sends the outcome prompt), and the phone button that clears the bed."""
         await asyncio.sleep(BED_SETTLE_S)
+        check = None
         try:
-            await self.check_bed("occupied")
+            check = await self.check_bed("occupied")
         except Exception:
             log.exception("%s post-print bed check", self.p.name)
+        if check and job and kind == "print_complete":
+            try:
+                verdict = self.footprint_verdict(job, check)
+            except (OSError, ValueError) as e:
+                log.warning("%s footprint check: %s", self.p.name, e)
+                verdict = None
+            if verdict and verdict.hint and self.ha:
+                await self.ha.notify_actionable(
+                    f"How did {job['name']} turn out?",
+                    f"{self.p.name}: {verdict.hint}. Confirm below.",
+                    outcome.first(job["id"], True),
+                    image=f"{self.cfg.public_url}/files/{check.snapshot}"
+                    if check.snapshot
+                    else None,
+                    tag=outcome.tag(job["id"]),
+                )
         if self.ha:
             await self.ha.notify_actionable(
                 f"Clear the bed on {self.p.name}",
@@ -494,6 +517,34 @@ class PrinterWatcher:
                 [(f"PRINT_WARDEN_BEDCLEAR_{self.p.name}", "Bed cleared")],
                 tag=f"print_warden_bed_{self.p.name}",
             )
+
+    def footprint_verdict(
+        self, job: dict[str, Any], check: Check
+    ) -> footprint.Verdict | None:
+        """The part-on-bed verdict for a finished job against a bed-check frame, recorded on the job; None without a
+        camera calibration, reference or gcode."""
+        raw = self.jobs.kv_get(f"bed_calibration:{self.p.name}") if self.jobs else None
+        ref = self.reference_path
+        if not (raw and ref and ref.exists() and check.snapshot and job.get("gcode")):
+            return None
+        cal = json.loads(raw)
+        bed = tuple(cal["bed"])
+        h = footprint.calibration([tuple(c) for c in cal["corners"]], bed)
+        verdict = footprint.analyse(
+            ref.read_bytes(),
+            (self.cfg.storage_dir / check.snapshot).read_bytes(),
+            h,
+            footprint.first_layer(Path(job["gcode"]).read_text(errors="ignore")),
+            bed,
+        )
+        if self.jobs:
+            self.jobs.note(
+                job["id"],
+                f"footprint check: {verdict.inside:.0%} of the footprint and {verdict.outside:.0%} of the rest "
+                "of the bed changed",
+                outcome_hint=verdict.hint,
+            )
+        return verdict
 
     async def _outcome_prompt(
         self, job: dict[str, Any], ev: Event, cam: str | None
@@ -513,6 +564,16 @@ class PrinterWatcher:
             else None
         )
         completed = ev.kind == "print_complete"
+        cal = job.get("calibration")
+        if cal and completed:
+            await self.ha.notify_actionable(
+                f"Which section of the {cal['kind']} tower looked best?",
+                f"{self.p.name}: sections count from the bottom. The answer is saved to the spool.",
+                calibration.choices(job["id"], cal, 1),
+                image=image,
+                tag=outcome.tag(job["id"]),
+            )
+            return
         await self.ha.notify_actionable(
             f"How did {job['name']} turn out?"
             if completed

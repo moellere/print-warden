@@ -38,9 +38,10 @@ def fake_orca(monkeypatch):
         )
         out_dir = cmd[cmd.index("--outputdir") + 1]
         name = cmd[cmd.index("--export-3mf") + 1]
-        machine = json.loads(
-            Path(cmd[cmd.index("--load-settings") + 1].split(";")[0]).read_text()
-        )
+        machine_path, process_path = cmd[cmd.index("--load-settings") + 1].split(";")
+        machine = json.loads(Path(machine_path).read_text())
+        calls["machine"] = machine
+        calls["process"] = json.loads(Path(process_path).read_text())
         gcode = (
             "; estimated printing time (normal mode) = 1h\n; max_z_height: 12.00\nM104 S210\nM140 S60\nM83\n"
             + calls.get("body", "G1 X10 Y10 E1\nG1 X100 Y120 E1\n")
@@ -182,3 +183,83 @@ async def test_changed_geometry_misses_the_cache(vendor, fake_orca, tmp_path):
             cache_dir=cache,
         )
     assert fake_orca["runs"] == 2
+
+
+async def test_project_mode_slices_the_plate_and_blocks_a_held_over_setting(
+    vendor, fake_orca, tmp_path
+):
+    stl = _binary_stl(tmp_path / "m.stl", 40, 40, 12)
+    project = tmp_path / "m.project.3mf"
+    project.write_bytes(b"x")
+    fake_orca["body"] = "G1 X10 Y10 E1\n; print-warden stripped file_start_gcode\n"
+    res = await slicer.slice_stl(
+        _cfg(vendor),
+        stl,
+        tmp_path / "out",
+        "p",
+        "p",
+        "p",
+        material="PLA",
+        project=project,
+        plate=2,
+    )
+    cmd = fake_orca["cmd"]
+    assert cmd[cmd.index("--slice") + 1] == "2"
+    assert cmd[-1] == str(project)
+    assert res.blockers == []
+    assert any("file_start_gcode" in w for w in res.warnings)
+    fake_orca["body"] = "G1 X10 Y10 E1\n; print-warden stripped machine_end_gcode\n"
+    res = await slicer.slice_stl(
+        _cfg(vendor),
+        stl,
+        tmp_path / "out2",
+        "p",
+        "p",
+        "p",
+        material="PLA",
+        project=project,
+    )
+    assert any("machine_end_gcode reached the gcode" in b for b in res.blockers)
+    with pytest.raises(ValueError, match="geometry"):
+        await slicer.slice_stl(
+            _cfg(vendor),
+            stl,
+            tmp_path / "out3",
+            "p",
+            "p",
+            "p",
+            project=project,
+            copies=2,
+        )
+
+
+async def test_a_user_printer_slices_as_its_bundled_parent(fake_orca, tmp_path):
+    def put(d, kind, preset):
+        (tmp_path / d / kind).mkdir(parents=True, exist_ok=True)
+        (tmp_path / d / kind / f"{preset['name']}.json").write_text(json.dumps(preset))
+
+    put("v", "machine", {
+        "name": "Vendor P", "from": "system", "machine_end_gcode": "M84",
+        "printable_area": ["0x0", "300x0", "300x300", "0x300"], "printable_height": "300",
+    })  # fmt: skip
+    put(
+        "v",
+        "process",
+        {"name": "q", "from": "system", "compatible_printers": ["Vendor P"]},
+    )
+    put("v", "filament", {"name": "f", "from": "system"})
+    put("user", "machine", {"name": "Mine", "from": "User", "inherits": "Vendor P"})
+    put("user", "process", {
+        "name": "my q", "from": "User", "inherits": "q", "compatible_printers": ["Mine"],
+    })  # fmt: skip
+    cfg = SlicerConfig(
+        orca="orca", vendor_dir=str(tmp_path / "v"), user_dir=str(tmp_path / "user")
+    )
+    stl = _binary_stl(tmp_path / "m.stl", 40, 40, 12)
+    await slicer.slice_stl(
+        cfg, stl, tmp_path / "out", "Mine", "my q", "f", material="PLA"
+    )
+    assert fake_orca["machine"]["name"] == "Mine"
+    assert fake_orca["machine"]["inherits"] == "Vendor P"
+    assert fake_orca["machine"]["from"] == "User"
+    assert fake_orca["process"]["compatible_printers"] == ["Mine", "Vendor P"]

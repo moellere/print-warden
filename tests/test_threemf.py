@@ -184,3 +184,52 @@ def test_project_gcode_and_settings_are_not_used(tmp_path):
     res = threemf.to_stl(_project(tmp_path), tmp_path / "p1.stl", 1)
     assert b"M104" not in res.stl.read_bytes()
     assert len(res.stl.read_bytes()) == 84 + 50 * res.triangles
+
+
+def test_sanitize_strips_gcode_settings_and_embedded_gcode(tmp_path):
+    import json
+
+    src = _project(tmp_path)
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr(
+            "Metadata/project_settings.config",
+            json.dumps(
+                {
+                    "machine_start_gcode": "G28\nM104 S300",
+                    "file_start_gcode": "",
+                    "filament_start_gcode": ["M109 S290", ""],
+                    "post_process": ["/bin/rm -rf /"],
+                    "gcode_flavor": "klipper",
+                    "emit_machine_limits_to_gcode": "1",
+                    "layer_height": "0.2",
+                }
+            ),
+        )
+    clean = threemf.sanitize(src, tmp_path / "clean.3mf")
+    with zipfile.ZipFile(clean.path) as z:
+        names = z.namelist()
+        cfg = json.loads(z.read("Metadata/project_settings.config"))
+    assert "Metadata/plate_1.gcode" not in names
+    assert "3D/Objects/a.model" in names
+    assert cfg["machine_start_gcode"] == threemf.SENTINEL + "machine_start_gcode"
+    assert (
+        cfg["filament_start_gcode"] == [threemf.SENTINEL + "filament_start_gcode"] * 2
+    )
+    assert cfg["file_start_gcode"] == ""
+    assert cfg["post_process"] == []
+    assert (
+        cfg["gcode_flavor"],
+        cfg["emit_machine_limits_to_gcode"],
+        cfg["layer_height"],
+    ) == ("klipper", "1", "0.2")
+    assert "machine_start_gcode" in clean.stripped_keys
+    assert threemf.leaked(f"G1 X1\n{threemf.SENTINEL}machine_start_gcode\n") == [
+        "machine_start_gcode"
+    ]
+    assert threemf.leaked("G1 X1\n; machine_start_gcode = G28\n") == []
+
+
+def test_negative_parts_can_be_left_out_for_bounds(tmp_path):
+    src = _project(tmp_path, ("normal_part", "negative_part"))
+    res = threemf.to_stl(src, tmp_path / "p1.stl", 1, allow_negative=True)
+    assert res.triangles == 4

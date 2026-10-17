@@ -74,8 +74,15 @@ FIELDS = (
     "outcome_reason",
     "outcome_by",
     "outcome_at",
+    "outcome_hint",
+    "calibration",
+    "source_url",
+    "source_title",
+    "author",
+    "license",
 )
-JSON_FIELDS = ("warnings", "slice_blockers", "overrides")
+JSON_FIELDS = ("warnings", "slice_blockers", "overrides", "calibration")
+JSON_DEFAULTS = {"overrides": "{}", "calibration": "null"}
 ADDED_COLUMNS = {
     "spool_id": "integer",
     "filament_m": "real",
@@ -96,6 +103,12 @@ ADDED_COLUMNS = {
     "outcome_reason": "text",
     "outcome_by": "text",
     "outcome_at": "real",
+    "outcome_hint": "text",
+    "calibration": "text",
+    "source_url": "text",
+    "source_title": "text",
+    "author": "text",
+    "license": "text",
 }
 
 
@@ -149,7 +162,7 @@ class JobStore:
             raise KeyError(f"no job {job_id}")
         d = dict(zip(FIELDS, r, strict=True))
         for k in JSON_FIELDS:
-            d[k] = json.loads(d[k] or ("{}" if k == "overrides" else "[]"))
+            d[k] = json.loads(d[k] or JSON_DEFAULTS.get(k, "[]"))
         d["offer"] = bool(d["offer"])
         d["log"] = json.loads(d["log"] or "[]")
         return d

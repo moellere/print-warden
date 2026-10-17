@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- 3MF projects are sliced whole (modifiers, negative parts, per-object settings) with the printer's settings over
+  them. Every gcode setting of the project is replaced and embedded gcode dropped first; a replaced setting that still
+  reaches the output where the printer profile defines it blocks the job. `copies` / `orient` keep geometry-only.
+- Part-on-bed check: `calibrate_bed_camera` (four bed corners in the bed camera) lets the post-print check compare
+  where the first layer was drawn with what changed; a missing part or a cluttered bed re-sends the outcome prompt
+  with a hint (also `outcome_hint` on the job, and `footprint_check(job_id)`). Advisory only.
+- Calibration towers: `calibrate(printer, temp|flow|pa)` for the loaded spool; the best section, chosen on the phone
+  or with `record_calibration`, is saved to the spool in Spoolman and applied to its later jobs (flow ratio and
+  pressure advance as filament overrides, temperature in place of Spoolman's). Towers restore flow and pressure
+  advance at the end. The extruder's `pressure_advance` is now read from Moonraker.
+- `/status`: a read-only page (same token as `/mcp`) with every printer's state, progress, bed, queue, latest
+  snapshot and maintenance due, plus filament to reorder or dry; refreshes every 30 s.
+- Model pages: `submit_job` (and `submit_split`) take a Thingiverse (`THINGIVERSE_TOKEN`), Printables or any web
+  page linking model files, with `file` to pick one; `model_page(url)` lists them. Source page, author and license
+  are kept on the job and shown in `print_history`.
+- Printer profiles for any OrcaSlicer printer: presets resolve by name across every bundled vendor (and Orca's
+  filament library), not only `slicer.vendor_dir`, with parents found in their own vendor first. New
+  `print-warden profiles` command: `vendors`, `printers <vendor>`, `block <printer>` (the printers.yaml slicer block),
+  `import <files>` (Orca / Bambu Studio presets and bundles; `post_process` dropped) and `klipper <name> <moonraker>`
+  (a printer profile from Klipper's config). New optional `slicer.user_dir` (default `<storage>/profiles`) and
+  `slicer.profiles_root`.
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 

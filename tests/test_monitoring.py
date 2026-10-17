@@ -226,3 +226,42 @@ async def test_outcome_prompt_after_a_print(w):
     _, actions, image, _ = w.ha.prompts[-1]
     assert actions[0].endswith(":adhesion")
     assert image is None
+
+
+def test_footprint_verdict_is_recorded_on_the_job(w, tmp_path):
+    import json
+
+    from print_warden.bedcheck import Check
+    from tests.test_footprint import BED, CORNERS, _frame, _square_gcode
+
+    w.p = dataclasses.replace(w.p, bed_check=config.BedCheck(camera="nozzle"))
+    w.reference_path.parent.mkdir(parents=True, exist_ok=True)
+    w.reference_path.write_bytes(_frame())
+    gcode = tmp_path / "j.gcode"
+    gcode.write_text(_square_gcode(100, 100, 140, 140))
+    job = _printing_job(w.jobs)
+    job = w.jobs.note(job["id"], "test", gcode=str(gcode))
+    snap = tmp_path / "snapshots" / "after.jpg"
+    snap.parent.mkdir(parents=True, exist_ok=True)
+    snap.write_bytes(_frame())
+    check = Check(0.0, "occupied", 0.0, True, "snapshots/after.jpg")
+    assert w.footprint_verdict(job, check) is None
+    w.jobs.kv_set("bed_calibration:p", json.dumps({"corners": CORNERS, "bed": BED}))
+    verdict = w.footprint_verdict(job, check)
+    assert verdict.hint.startswith("probably failed")
+    assert w.jobs.get(job["id"])["outcome_hint"] == verdict.hint
+
+
+async def test_a_finished_tower_asks_for_the_best_section(w):
+    from print_warden import calibration
+
+    job = _printing_job(w.jobs)
+    job = w.jobs.note(
+        job["id"],
+        "t",
+        calibration=calibration.spec("temp", calibration.values("temp", 200), 3),
+    )
+    await w._outcome_prompt(job, Event("p", "print_complete", "info", ""), None)
+    title, actions, _, _ = w.ha.prompts[-1]
+    assert title.startswith("Which section of the temp tower")
+    assert actions[0] == f"PRINT_WARDEN_CALIB_{job['id']}:1"

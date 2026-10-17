@@ -16,7 +16,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
    Expect: estimates, a preview URL that opens, no blockers, the job `staged`.
 2. Upload a `.3mf` exported from Orca, Bambu Studio and PrusaSlicer (one each, at least one with two plates);
    `submit_job(..., plate=2)`. Expect: the plate's objects only, a warning naming the plates, no project gcode in
-   the job's gcode (its start gcode is the printer profile's).
+   the job's gcode (its start gcode is the printer profile's). One with a negative part (a hole cut by a volume):
+   the hole is in the print.
 3. A model larger than the bed. Expect: refused before slicing, with the axis that does not fit.
 
 ## 2. Start, watch, finish
@@ -36,6 +37,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 10. After a print the bed is `occupied`; `request_start` for the next job is blocked.
 11. Remove the part, tap **Bed cleared**. Expect: a labelled check recorded; the next queued job is offered.
 12. Leave the part on and run `check_bed`. Expect: not clear, with the changed fraction.
+    With `calibrate_bed_camera` done: `footprint_check(job_id)` with the part on reads no hint; take the part off
+    and run it again: "probably failed: 1 of 1 part(s) not seen".
 
 ## 4. Stop and recover
 
@@ -75,6 +78,35 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 24. With `policy.cheap_power` and the price above `max_price`: a long job is not offered (`advance_queue` says why);
     when the price drops, it is offered within the hour.
 
+## 9. Calibration
+
+26. `set_active_spool`, then `calibrate(printer, "temp")`; tap Start. Expect: the tower changes temperature at 8, 16,
+    24 and 32 mm (the console shows `M104`), the phone asks which section looked best; pick one; Spoolman shows
+    `pw_nozzle_temp` on the spool and the next job's warnings say its nozzle temperature came from the spool.
+27. `calibrate(printer, "flow")` then a normal print: `M221` is back at 100 % (`M221` without arguments in the
+    console reports it).
+
+## 10. Status page and model pages
+
+28. Open `http://<host>:8720/status?token=…` on a phone and a desktop while one printer prints. Expect: both printers,
+    the printing one with progress and a finish time, the queue with estimates, the latest snapshot; without the
+    token, 401.
+29. `model_page("https://www.thingiverse.com/thing:<id>")` with `THINGIVERSE_TOKEN` set, then
+    `submit_job(printer, <same url>, "PLA", file=<one of them>)`. Expect: the file is the one named and
+    `print_history` shows the page, author and license.
+30. The same with a `https://www.printables.com/model/<id>-…` page. If it fails with "unofficial", Printables changed
+    its API: open an issue with the error.
+
+## 11. Printer profiles
+
+31. On the warden host, `print-warden profiles klipper "<name>" http://<printer>:7125`, paste the printed block into a
+    test printer entry (or replace the slicer block of one printer in a copy of printers.yaml), `print-warden check`,
+    then slice and print a 20 mm cube from it. Expect: the bed size and height in the written preset match
+    `printer.cfg`, the gcode starts with your `PRINT_START` macro and its temperatures, and the cube prints.
+32. Export a printer or filament preset from OrcaSlicer (File → Export → Export Preset Bundle), then
+    `print-warden profiles import <bundle>` and slice with the printed block. Expect: the job's gcode carries your
+    preset's settings (e.g. its nozzle temperature).
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -105,3 +137,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 23 | submit_split shares copies; each share tap-started | | |
 | 24 | Cheap-power hold, offered when the price drops | | |
 | 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | |
+| 26 | Temperature tower → section saved to the spool and used | | |
+| 27 | Flow tower leaves the printer at 100 % | | |
+| 28 | `/status` shows both printers live; 401 without the token | | |
+| 29 | Thingiverse page → named file printed, license on the job | | |
+| 30 | Printables page → named file printed, license on the job | | |
+| 31 | Profile from Klipper: block, check, a cube printed | | |
+| 32 | Imported Orca preset bundle sliced with its settings | | |
