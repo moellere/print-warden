@@ -13,6 +13,8 @@ from typing import Any
 import httpx
 import websockets
 
+from .rules import watched_object
+
 log = logging.getLogger(__name__)
 
 SUBSCRIBE = {
@@ -31,8 +33,9 @@ Listener = Callable[[dict[str, Any], str | None], Awaitable[None]]
 
 
 class MoonrakerClient:
-    def __init__(self, ws_url: str, listener: Listener):
+    def __init__(self, ws_url: str, listener: Listener, http_base: str | None = None):
         self.ws_url = ws_url
+        self.http_base = http_base
         self.listener = listener
         self.state: dict[str, Any] = {}
         self.connected = False
@@ -52,7 +55,9 @@ class MoonrakerClient:
                     self.connected = True
                     log.info("connected %s", self.ws_url)
                     await self._rpc(
-                        ws, "printer.objects.subscribe", {"objects": SUBSCRIBE}
+                        ws,
+                        "printer.objects.subscribe",
+                        {"objects": await self._objects()},
                     )
                     async for raw in ws:
                         msg = json.loads(raw)
@@ -77,7 +82,7 @@ class MoonrakerClient:
                                 await self._rpc(
                                     ws,
                                     "printer.objects.subscribe",
-                                    {"objects": SUBSCRIBE},
+                                    {"objects": await self._objects()},
                                 )
             except (TimeoutError, OSError, websockets.WebSocketException) as e:
                 log.warning("moonraker %s: %s", self.ws_url, e)
@@ -86,6 +91,22 @@ class MoonrakerClient:
                     self.connected = False
                     await self.listener(self.state, "transport_lost")
             await asyncio.sleep(5)
+
+    async def _objects(self) -> dict[str, Any]:
+        """The fixed subscription plus whatever fans, runout and temperature sensors this printer has."""
+        objs: dict[str, Any] = dict(SUBSCRIBE)
+        if not self.http_base:
+            return objs
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(f"{self.http_base}/printer/objects/list")
+                r.raise_for_status()
+                names = r.json().get("result", {}).get("objects") or []
+        except (httpx.HTTPError, ValueError) as e:
+            log.info("objects/list unavailable (%s); fixed subscription only", e)
+            return objs
+        objs.update({n: None for n in names if watched_object(n)})
+        return objs
 
     async def _rpc(self, ws: Any, method: str, params: dict[str, Any]) -> None:
         self._id += 1
@@ -139,6 +160,18 @@ async def power(base_url: str, device: str, action: str | None = None) -> str:
             )
         r.raise_for_status()
         return str(r.json().get("result", {}).get(device, "unknown"))
+
+
+async def cancel_print(base_url: str) -> None:
+    """Cancel the running print. Only called for an operator's Cancel tap on a notification bound to that job."""
+    async with httpx.AsyncClient(timeout=30) as c:
+        (await c.post(f"{base_url}/printer/print/cancel")).raise_for_status()
+
+
+async def resume_print(base_url: str) -> None:
+    """Resume a paused print. Only called for an operator's Resume tap on a notification bound to that job."""
+    async with httpx.AsyncClient(timeout=30) as c:
+        (await c.post(f"{base_url}/printer/print/resume")).raise_for_status()
 
 
 async def gcode_script(base_url: str, script: str, timeout: float = 120) -> None:

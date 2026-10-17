@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–4 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–5 are complete; the rest are proposals.
 
 ## Phase 0 — Hardening ✅
 
@@ -60,12 +60,13 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
   High Temp Plate (Orca's default Cool Plate gave PLA a 35°C bed).
 - Not done: multi-plate 3mf projects (`.3mf` uploads stay refused).
 
-## Phase 5 — Monitoring depth
+## Phase 5 — Monitoring depth ✅
 
-- Rules: part fan stopped while commanded, runout sensor, MCU/chamber over-temp, classified Klipper shutdown reasons.
-- First-layer check-in at layer 2–3 with "Looks good / Cancel" buttons.
-- Actionable Obico pauses (Resume / Cancel taps — a tap is a human decision).
-- Alert routing: quiet hours for info/warning, critical always through.
+- Rules over discovered objects: fan stall (tachometer fans), filament runout, board/host and configured temperature
+  limits; Klipper shutdowns classified with a hint.
+- First-layer check-in at a configurable layer (Looks good / Cancel print) and Resume / Cancel on Obico pauses, both
+  bound to the job and refused if another file is printing. Cancel and resume are tap-only; no MCP tool.
+- Alert routing: quiet hours for info/warning (critical always), configurable cooldown.
 
 ## Phase 6 — History and insight
 

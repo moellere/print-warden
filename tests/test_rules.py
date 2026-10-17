@@ -73,3 +73,143 @@ def test_layer_from_z_ignores_hops():
             if e.kind == "layer_changed":
                 layers.append(e.data["layer"])
     assert layers == [1, 2]
+
+
+import pytest
+
+from print_warden.rules import classify_shutdown, watched_object
+
+
+@pytest.mark.parametrize(
+    "msg,cause",
+    [
+        ("Heater extruder not heating at expected rate", "heater_not_heating"),
+        ("MCU 'mcu' shutdown: ADC out of range", "thermistor_out_of_range"),
+        ("Lost communication with MCU 'mcu'", "mcu_comm_lost"),
+        ("MCU 'mcu' shutdown: Timer too close", "mcu_timing"),
+        ("TMC 'stepper_x' reports error: GSTAT: reset=1", "tmc_driver_error"),
+        ("something new", "unknown"),
+    ],
+)
+def test_classify_shutdown(msg, cause):
+    assert classify_shutdown(msg)[0] == cause
+
+
+def test_shutdown_event_carries_the_cause():
+    r = RuleEngine("p", Rules())
+    st = {"webhooks": {"state_message": "MCU 'mcu' shutdown: ADC out of range"}}
+    ev = r.evaluate(st, "notify_klippy_shutdown", now=1000)[0]
+    assert ev.data["cause"] == "thermistor_out_of_range" and "thermistor" in ev.message
+
+
+def test_watched_objects():
+    assert all(
+        watched_object(n)
+        for n in (
+            "fan",
+            "heater_fan hotend_fan",
+            "filament_switch_sensor runout",
+            "temperature_sensor mcu",
+        )
+    )
+    assert not any(
+        watched_object(n) for n in ("fan_feedback", "extruder", "heater_bed")
+    )
+
+
+def _printing(**objs):
+    return {**_st("printing"), **objs}
+
+
+def test_fan_stall_needs_a_tachometer_and_time():
+    r = RuleEngine("p", Rules(fan_stall_s=10))
+    r.evaluate(_st("standby"), None, now=1000)
+    assert "fan_stalled" not in _kinds(
+        r.evaluate(_printing(fan={"speed": 1.0, "rpm": None}), None, now=1001)
+    )
+    stalled = {"fan": {"speed": 0.8, "rpm": 0}}
+    r.evaluate(_printing(**stalled), None, now=1002)
+    assert "fan_stalled" not in _kinds(r.evaluate(_printing(**stalled), None, now=1008))
+    assert "fan_stalled" in _kinds(r.evaluate(_printing(**stalled), None, now=1013))
+    assert "fan_stalled" not in _kinds(r.evaluate(_printing(**stalled), None, now=1030))
+    r.evaluate(_printing(fan={"speed": 0.8, "rpm": 5000}), None, now=1031)
+    r.evaluate(_printing(**stalled), None, now=1032)
+    assert "fan_stalled" in _kinds(r.evaluate(_printing(**stalled), None, now=1050))
+
+
+def test_runout_fires_on_the_edge_only():
+    r = RuleEngine("p", Rules())
+    r.evaluate(_st("standby"), None, now=1000)
+    s = "filament_switch_sensor runout"
+    r.evaluate(
+        _printing(**{s: {"filament_detected": True, "enabled": True}}), None, now=1001
+    )
+    evs = r.evaluate(
+        _printing(**{s: {"filament_detected": False, "enabled": True}}), None, now=1002
+    )
+    assert "filament_runout" in _kinds(evs)
+    evs = r.evaluate(
+        _printing(**{s: {"filament_detected": False, "enabled": True}}), None, now=1003
+    )
+    assert "filament_runout" not in _kinds(evs)
+    r2 = RuleEngine("p", Rules())
+    r2.evaluate(_st("standby"), None, now=1000)
+    r2.evaluate(
+        _printing(**{s: {"filament_detected": True, "enabled": False}}), None, now=1001
+    )
+    evs = r2.evaluate(
+        _printing(**{s: {"filament_detected": False, "enabled": False}}), None, now=1002
+    )
+    assert "filament_runout" not in _kinds(evs)
+
+
+def test_board_and_configured_temperature_limits():
+    r = RuleEngine("p", Rules(temp_limits={"chamber": 45}))
+    mcu = "temperature_sensor mcu_temp"
+    chamber = "temperature_sensor chamber"
+    other = "temperature_sensor enclosure"
+    hot = {
+        mcu: {"temperature": 80},
+        chamber: {"temperature": 50},
+        other: {"temperature": 90},
+    }
+    evs = r.evaluate({**_st("standby"), **hot}, None, now=1000)
+    assert sorted(e.data["sensor"] for e in evs if e.kind == "over_temperature") == [
+        chamber,
+        mcu,
+    ]
+    assert not r.evaluate({**_st("standby"), **hot}, None, now=1001)
+    r.evaluate({**_st("standby"), mcu: {"temperature": 72}}, None, now=1002)
+    assert (
+        r.evaluate({**_st("standby"), mcu: {"temperature": 76}}, None, now=1003) == []
+    )
+    r.evaluate({**_st("standby"), mcu: {"temperature": 60}}, None, now=1004)
+    assert _kinds(
+        r.evaluate({**_st("standby"), mcu: {"temperature": 76}}, None, now=1005)
+    ) == ["over_temperature"]
+
+
+def test_first_layer_check_once_per_print():
+    r = RuleEngine("p", Rules(first_layer_check=2))
+    r.evaluate(_st("standby"), None, now=1000)
+
+    def layer(n, now):
+        return r.evaluate(
+            _printing(print_stats={"state": "printing", "info": {"current_layer": n}}),
+            None,
+            now=now,
+        )
+
+    r.evaluate(_st("printing"), None, now=1001)
+    assert "first_layer_check" not in _kinds(layer(1, 1002))
+    assert "first_layer_check" in _kinds(layer(2, 1003))
+    assert "first_layer_check" not in _kinds(layer(3, 1004))
+    assert RuleEngine("p", Rules(first_layer_check=0)).rules.first_layer_check == 0
+
+
+def test_first_layer_check_not_sent_late_after_a_restart():
+    r = RuleEngine("p", Rules(first_layer_check=2))
+    st = {"print_stats": {"state": "printing", "info": {"current_layer": 150}}}
+    r.evaluate(st, "snapshot", now=1000)
+    st = {"print_stats": {"state": "printing", "info": {"current_layer": 151}}}
+    assert "first_layer_check" not in _kinds(r.evaluate(st, None, now=1001))

@@ -41,6 +41,10 @@ printers:
       heater_deviation_s: 90
       stall_minutes: 10
       layer_snapshot: true
+      first_layer_check: 2   # layer at which the phone asks "first layers look right?" (0 = off)
+      fan_stall_s: 10        # fans with a tachometer: commanded on but < fan_min_rpm this long -> critical
+      temp_limits:           # sensor name (with or without "temperature_sensor ") -> °C; mcu/host sensors default to 75
+        chamber: 60
 
   wyolax1:
     location: wyola
@@ -84,6 +88,10 @@ slicer:
   vendor_dir: /opt/orcaslicer/resources/profiles/Artillery
   house_rules: /opt/slicer/house-rules.json     # tree supports (slim), no brim
   blocking_warnings: ["empty layer", "floating", "out of the plate", "outside the plate"]   # Orca log text that blocks a job
+
+alerts:
+  quiet_hours: "23:00-07:00"   # info/warning alerts and the first-layer prompt are held; critical always goes out
+  cooldown_s: 300              # minimum gap between repeats of the same alert kind
 
 policy:
   approval_ttl_minutes: 15   # a Start tap older than this is refused; the request returns to staged

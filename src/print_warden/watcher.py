@@ -6,12 +6,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from . import bedcheck, cameras, moonraker, park, reconcile, timelapse
+from . import bedcheck, cameras, moonraker, park, policy, reconcile, timelapse
 from .bedcheck import BedStore, Check
 from .config import Config, Printer
 from .events import Event, EventStore
@@ -22,7 +23,6 @@ from .rules import RuleEngine
 from .spoolman import Spoolman
 
 log = logging.getLogger(__name__)
-ALERT_COOLDOWN_S = 300
 FINAL_KINDS = ("print_complete", "print_cancelled", "print_error")
 BED_SETTLE_S = 30
 
@@ -76,7 +76,7 @@ class PrinterWatcher:
         self.store = store
         self.ha = ha
         self.rules = RuleEngine(printer.name, printer.rules)
-        self.mr = MoonrakerClient(printer.ws_url, self._on_update)
+        self.mr = MoonrakerClient(printer.ws_url, self._on_update, printer.moonraker)
         self.light_prior: str | None = None
         self.job_dir: Path | None = None
         self.last_alert: dict[str, float] = {}
@@ -152,6 +152,12 @@ class PrinterWatcher:
         self.store.add(ev)
         if ev.alert and not deferred:
             await self._alert(ev)
+        if ev.kind == "first_layer_check":
+            self._spawn(self._first_layer_prompt(ev))
+        elif ev.kind == "obico_failure" and (
+            (ev.data.get("obico") or {}).get("event") or {}
+        ).get("print_paused"):
+            self._spawn(self._pause_prompt(ev))
 
     def _track_job(self, ev: Event) -> dict[str, Any] | None:
         if not self.jobs:
@@ -461,6 +467,51 @@ class PrinterWatcher:
                 tag=f"print_warden_bed_{self.p.name}",
             )
 
+    async def _first_layer_prompt(self, ev: Event) -> None:
+        """A look at the first layers with Looks good / Cancel buttons bound to the printing job. Skipped in quiet
+        hours and for prints the warden did not start a job for."""
+        job = self.jobs.find_active(self.p.name) if self.jobs else None
+        if not (self.ha and job) or self.quiet():
+            return
+        cam = (
+            "nozzle" if "nozzle" in self.p.cameras else next(iter(self.p.cameras), None)
+        )
+        snap = await self._snap(cam, None, None) if cam else None
+        image = (
+            f"{self.cfg.public_url}/files/{snap.relative_to(self.cfg.storage_dir)}"
+            if snap
+            else None
+        )
+        await self.ha.notify_actionable(
+            f"First layers on {self.p.name}",
+            f"{job['name']} is at layer {ev.data.get('layer')}. Does it look right?",
+            [
+                (f"PRINT_WARDEN_FIRSTLAYER_{job['id']}", "Looks good"),
+                (f"PRINT_WARDEN_CANCEL_{job['id']}", "Cancel print"),
+            ],
+            image=image,
+            tag=f"print_warden_fl_{job['id']}",
+        )
+
+    async def _pause_prompt(self, ev: Event) -> None:
+        """Obico paused the print: offer Resume / Cancel, bound to the job, regardless of quiet hours."""
+        job = self.jobs.find_active(self.p.name) if self.jobs else None
+        if not (self.ha and job):
+            return
+        image = ev.data.get("img_url") or (
+            f"{self.cfg.public_url}/files/{ev.snapshot}" if ev.snapshot else None
+        )
+        await self.ha.notify_actionable(
+            f"Obico paused {self.p.name}",
+            f"{job['name']}: {ev.message}. Resume only if the print is fine.",
+            [
+                (f"PRINT_WARDEN_RESUME_{job['id']}", "Resume"),
+                (f"PRINT_WARDEN_CANCEL_{job['id']}", "Cancel print"),
+            ],
+            image=image,
+            tag=f"print_warden_pause_{job['id']}",
+        )
+
     async def _snap(self, cam: str, into: Path | None, name: str | None) -> Path | None:
         try:
             data = await cameras.fetch(
@@ -478,13 +529,17 @@ class PrinterWatcher:
             return path
         return cameras.save(self.cfg.storage_dir, self.p.name, cam, data)
 
+    def quiet(self) -> bool:
+        return policy.in_window(self.cfg.quiet_hours, datetime.now().astimezone())
+
     async def _alert(self, ev: Event) -> None:
+        """Critical always goes out; info and warning respect the per-kind cooldown and quiet hours."""
         if not self.ha:
             return
         now = time.time()
-        if (
-            ev.severity != "critical"
-            and now - self.last_alert.get(ev.kind, 0) < ALERT_COOLDOWN_S
+        if ev.severity != "critical" and (
+            self.quiet()
+            or now - self.last_alert.get(ev.kind, 0) < self.cfg.alert_cooldown_s
         ):
             return
         self.last_alert[ev.kind] = now

@@ -8,6 +8,68 @@ from typing import Any
 from .config import Rules
 from .events import Event
 
+FAN_PREFIXES = ("fan", "heater_fan ", "controller_fan ", "fan_generic ")
+RUNOUT_PREFIXES = ("filament_switch_sensor ", "filament_motion_sensor ")
+TEMP_PREFIXES = ("temperature_sensor ", "temperature_fan ")
+BOARD_HINTS = ("mcu", "host", "raspberry", "rpi", "pi_temp", "cpu")
+BOARD_LIMIT_C = 75.0
+TEMP_HYSTERESIS_C = 5.0
+
+# Klipper shutdown messages -> (cause, what to check). First match wins; checked in order.
+SHUTDOWN_CAUSES: tuple[tuple[str, str, str], ...] = (
+    (
+        "thermal runaway",
+        "thermal_runaway",
+        "a heater ran away from its target: check the thermistor and heater",
+    ),
+    (
+        "not heating at expected rate",
+        "heater_not_heating",
+        "heater or thermistor fault, or a draft; check wiring",
+    ),
+    (
+        "adc out of range",
+        "thermistor_out_of_range",
+        "thermistor open or shorted: check its wiring and connector",
+    ),
+    (
+        "lost communication with mcu",
+        "mcu_comm_lost",
+        "USB/serial link to a board dropped: check cable and power",
+    ),
+    (
+        "timer too close",
+        "mcu_timing",
+        "the host or MCU fell behind: check host load and USB",
+    ),
+    (
+        "tmc",
+        "tmc_driver_error",
+        "a stepper driver reported an error: check motor wiring and driver cooling",
+    ),
+    (
+        "move out of range",
+        "move_out_of_range",
+        "a move went past an axis limit: check the gcode or homing",
+    ),
+)
+
+
+def classify_shutdown(message: str) -> tuple[str, str]:
+    low = message.lower()
+    for needle, cause, hint in SHUTDOWN_CAUSES:
+        if needle in low:
+            return cause, hint
+    return "unknown", "see Klipper's log for the shutdown reason"
+
+
+def watched_object(name: str) -> bool:
+    """Objects the rules read beyond the fixed subscription: fans, runout sensors, temperature sensors."""
+    return name == "fan" or name.startswith(
+        FAN_PREFIXES[1:] + RUNOUT_PREFIXES + TEMP_PREFIXES
+    )
+
+
 FINAL = {
     "complete": ("print_complete", "info"),
     "cancelled": ("print_cancelled", "warning"),
@@ -32,6 +94,11 @@ class RuleEngine:
         self.z_layer: int = 0
         self.unreachable_since: float | None = None
         self.unreachable_alerted = False
+        self.fan_since: dict[str, float] = {}
+        self.fan_alerted: set[str] = set()
+        self.runout_prev: dict[str, bool] = {}
+        self.hot_alerted: set[str] = set()
+        self.first_layer_sent = False
 
     def _ev(
         self, kind: str, severity: str, message: str, alert: bool = True, **data: Any
@@ -90,11 +157,15 @@ class RuleEngine:
                 )
             )
         elif signal == "notify_klippy_shutdown":
+            msg = st.get("webhooks", {}).get("state_message", "") or ""
+            cause, hint = classify_shutdown(msg)
             out.append(
                 self._ev(
                     "klippy_shutdown",
                     "critical",
-                    f"Klipper shutdown: {st.get('webhooks', {}).get('state_message', '')[:200]}",
+                    f"Klipper shutdown ({cause.replace('_', ' ')}): {hint}. {msg[:200]}",
+                    cause=cause,
+                    state_message=msg[:500],
                 )
             )
         elif signal == "notify_klippy_ready":
@@ -133,9 +204,12 @@ class RuleEngine:
                 )
         self.prev_state = state
 
+        out.extend(self._temperatures(st))
         if state == "printing":
             out.extend(self._heaters(st, now))
             out.extend(self._stall(st, now))
+            out.extend(self._fans(st, now))
+            out.extend(self._runout(st))
             layer = (ps.get("info") or {}).get("current_layer")
             if not isinstance(layer, int):
                 layer = self._layer_from_z(st)
@@ -151,6 +225,101 @@ class RuleEngine:
                     )
                 )
                 self.prev_layer = layer
+                check = self.rules.first_layer_check
+                if check and check <= layer <= check + 2 and not self.first_layer_sent:
+                    self.first_layer_sent = True
+                    out.append(
+                        self._ev(
+                            "first_layer_check",
+                            "info",
+                            f"Layer {layer} reached: check the first layers",
+                            alert=False,
+                            layer=layer,
+                            filename=fn,
+                        )
+                    )
+        return out
+
+    def _fans(self, st: dict[str, Any], now: float) -> list[Event]:
+        """A fan commanded on whose tachometer reads ~0. Fans without a tachometer report rpm None and are skipped."""
+        out = []
+        for name, d in st.items():
+            if not (
+                name == "fan" or name.startswith(FAN_PREFIXES[1:])
+            ) or not isinstance(d, dict):
+                continue
+            rpm, speed = d.get("rpm"), d.get("speed") or 0
+            if rpm is None or speed < 0.3 or rpm >= self.rules.fan_min_rpm:
+                self.fan_since.pop(name, None)
+                self.fan_alerted.discard(name)
+                continue
+            since = self.fan_since.setdefault(name, now)
+            if now - since > self.rules.fan_stall_s and name not in self.fan_alerted:
+                self.fan_alerted.add(name)
+                out.append(
+                    self._ev(
+                        "fan_stalled",
+                        "critical",
+                        f"{name} commanded {speed:.0%} but reads {rpm:.0f} rpm for {now - since:.0f}s",
+                        fan=name,
+                        speed=speed,
+                        rpm=rpm,
+                    )
+                )
+        return out
+
+    def _runout(self, st: dict[str, Any]) -> list[Event]:
+        out = []
+        for name, d in st.items():
+            if (
+                not name.startswith(RUNOUT_PREFIXES)
+                or not isinstance(d, dict)
+                or not d.get("enabled", True)
+            ):
+                continue
+            detected = d.get("filament_detected")
+            if detected is None:
+                continue
+            if self.runout_prev.get(name) and not detected:
+                out.append(
+                    self._ev(
+                        "filament_runout",
+                        "warning",
+                        f"{name.split(' ', 1)[-1]} lost filament (Klipper pauses if the sensor is set to)",
+                        sensor=name,
+                    )
+                )
+            self.runout_prev[name] = bool(detected)
+        return out
+
+    def _temperatures(self, st: dict[str, Any]) -> list[Event]:
+        """Board/host sensors over BOARD_LIMIT_C, or any sensor over its rules.temp_limits entry; once until it cools."""
+        out = []
+        for name, d in st.items():
+            if not name.startswith(TEMP_PREFIXES) or not isinstance(d, dict):
+                continue
+            temp = d.get("temperature")
+            limit = self.rules.temp_limits.get(
+                name, self.rules.temp_limits.get(name.split(" ", 1)[-1])
+            )
+            if limit is None and any(h in name.lower() for h in BOARD_HINTS):
+                limit = BOARD_LIMIT_C
+            if temp is None or limit is None:
+                continue
+            if temp > limit and name not in self.hot_alerted:
+                self.hot_alerted.add(name)
+                out.append(
+                    self._ev(
+                        "over_temperature",
+                        "warning",
+                        f"{name.split(' ', 1)[-1]} at {temp:.0f}°C, over its {limit:.0f}°C limit",
+                        sensor=name,
+                        temperature=temp,
+                        limit=limit,
+                    )
+                )
+            elif temp < limit - TEMP_HYSTERESIS_C:
+                self.hot_alerted.discard(name)
         return out
 
     def _layer_from_z(self, st: dict[str, Any]) -> int | None:
@@ -175,6 +344,10 @@ class RuleEngine:
         self.last_progress = None
         self.stall_alerted = False
         self.prev_layer = None
+        self.fan_since.clear()
+        self.fan_alerted.clear()
+        self.runout_prev.clear()
+        self.first_layer_sent = False
 
     def _heaters(self, st: dict[str, Any], now: float) -> list[Event]:
         """Flag a heater that drifts after it has settled at its target. Heat-up, cool-down and target changes
