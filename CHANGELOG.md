@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 3MF projects: `.3mf` uploads and URLs are accepted; `submit_job(plate=N)` slices one plate as geometry only (the
+  project's settings and gcode are ignored), dropping modifier volumes and refusing negative parts.
 - Presence-based quiet hours: `alerts.quiet_entity` and `alerts.quiet_states` mute info/warning alerts and the
   first-layer prompt while a Home Assistant entity is in one of those states; an unreadable entity never mutes.
 

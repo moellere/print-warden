@@ -93,7 +93,7 @@ the last `min_agreements` labelled checks all agreed with the operator, and the 
 ## Job flow
 
 ```
-curl -F file=@part.stl http://nas.local:8710/upload           # or a .scad
+curl -F file=@part.stl http://nas.local:8710/upload           # or a .scad / .3mf
 submit_job(printer="garagex4", model="part.stl", material="PETG", quality="standard", copies=1)
    -> checks the model fits, slices (tree supports, no brim), checks the gcode, uploads it to Moonraker as
       warden/<job>_<name>_<mat>.gcode and queues it; printer may be a location ("wyola")
@@ -138,7 +138,9 @@ OrcaSlicer otherwise picks the Cool Plate temperatures, which in the Artillery p
 
 Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS, ASA, TPU,
 PLA-CF (Artillery Generic profiles; temperature checks cover all six).
-Models are STL or SCAD, up to 100 MB.
+Models are STL, SCAD or 3MF, up to 100 MB. A 3MF project (Orca, Bambu Studio, PrusaSlicer) contributes geometry
+only: `plate` picks one plate per job, the project's own settings and gcode are ignored in favour of the printer's,
+modifier and support-painting volumes are dropped, and a plate with a negative (subtracted) part is refused.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
 ## Run

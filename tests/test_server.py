@@ -32,7 +32,7 @@ def test_mcp_and_upload_need_the_token(client):
 def test_upload_with_token(client):
     r = client.post("/upload", files={"file": ("a.stl", b"solid")}, headers=AUTH)
     assert r.json() == {"ok": True, "model": "a.stl"}
-    r = client.post("/upload?token=test-token", files={"file": ("a.3mf", b"x")})
+    r = client.post("/upload?token=test-token", files={"file": ("a.obj", b"x")})
     assert r.status_code == 400
 
 
@@ -147,7 +147,7 @@ async def test_expire_approvals():
 def test_model_names():
     assert server._model_name("/x/y/part.STL?dl=1") == "part.STL"
     with pytest.raises(ValueError):
-        server._model_name("evil.3mf")
+        server._model_name("evil.obj")
     with pytest.raises(ValueError):
         server._model_name("../../events.db")
 
