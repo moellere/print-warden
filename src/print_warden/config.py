@@ -19,11 +19,22 @@ class Rules:
 
 
 @dataclass(frozen=True)
+class Pose:
+    """Where the bed and gantry sit for every bed check: Y (and optionally X) exactly, Z at least this high."""
+
+    y: float
+    z: float
+    x: float | None = None
+
+
+@dataclass(frozen=True)
 class BedCheck:
     camera: str = "bed"
     region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
     threshold: float = 0.002
     min_agreements: int = 10
+    pose: Pose | None = None
+    rehome_y: bool = False
 
 
 @dataclass(frozen=True)
@@ -100,11 +111,23 @@ def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
         raise ValueError(
             f"bed_check.region must be [x0, y0, x1, y1] fractions, got {region}"
         )
+    pose = None
+    if pr := raw.get("pose"):
+        pose = Pose(
+            y=float(pr["y"]),
+            z=float(pr["z"]),
+            x=float(pr["x"]) if pr.get("x") is not None else None,
+        )
+    rehome = bool(raw.get("rehome_y", False))
+    if rehome and not pose:
+        raise ValueError("bed_check.rehome_y needs bed_check.pose")
     return BedCheck(
         camera=str(raw.get("camera", "bed")),
         region=(region[0], region[1], region[2], region[3]),
         threshold=float(raw.get("threshold", 0.002)),
         min_agreements=int(raw.get("min_agreements", 10)),
+        pose=pose,
+        rehome_y=rehome,
     )
 
 

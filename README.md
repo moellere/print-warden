@@ -38,6 +38,15 @@ crop to `region`, match brightness per colour channel, count pixels that differ.
 differs; `threshold` (default 0.002) separates clear from occupied. Use `check_bed` to see live scores and tune it,
 and `capture_bed_reference` after changing the build plate (the record starts over).
 
+On a bed-slinger with a frame-mounted camera the bed's Y position changes the picture, so set `bed_check.pose`. The
+warden then edits the end gcode of every job it slices: a park block (Z up to at least `pose.z` and clear of the part,
+bed to `pose.y`) goes in before the stepper-off line, and the `M84`/`M18` lines are dropped so the steppers hold the
+bed until Klipper's `idle_timeout` releases them (raise `idle_timeout` if you clear beds later than its default
+10 min). Checks and reference captures run only while the toolhead is homed at the pose; otherwise the check reports
+"not at the bed-check pose" and records nothing, and auto_start refuses. With `rehome_y: true` an idle printer whose
+steppers were released is brought back with `G28 Y` and a Y move (X too if the pose sets it); Z never moves, the last
+commanded Z must be at least `pose.z`, and every rehome alerts. Prints the warden did not slice have no park block.
+
 `auto_start: true` starts a newly staged job without a tap only when the bed is marked clear, a live check reads clear,
 the last `min_agreements` labelled checks all agreed with the operator, and the local time is inside
 `auto_start_hours`. Each unattended start sends an alert with the check's snapshot. A missed small part (a false
@@ -105,6 +114,7 @@ src/print_warden/
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)
+  park.py       bed-check pose: end-gcode park at slice time, pose test, opt-in Y rehome
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
   spoolman.py   Spoolman client (materials, remaining weight)

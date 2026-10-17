@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .config import SlicerConfig
+from . import park as parking
+from .config import Pose, SlicerConfig
 
 
 @dataclass
@@ -110,15 +111,19 @@ async def slice_stl(
     process: str,
     filament: str,
     overrides: dict[str, Any] | None = None,
+    park: Pose | None = None,
 ) -> SliceResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     vendor = Path(cfg.vendor_dir)
     house = json.loads(Path(cfg.house_rules).read_text()) if cfg.house_rules else {}
     tmp = Path(tempfile.mkdtemp(prefix="slice-"))
     try:
-        (tmp / "machine.json").write_text(
-            json.dumps(flatten(vendor, "machine", machine))
-        )
+        machine_cfg = flatten(vendor, "machine", machine)
+        if park:
+            machine_cfg["machine_end_gcode"] = parking.prepare_end_gcode(
+                str(machine_cfg.get("machine_end_gcode") or "")
+            )
+        (tmp / "machine.json").write_text(json.dumps(machine_cfg))
         (tmp / "process.json").write_text(
             json.dumps(
                 flatten(vendor, "process", process, {**house, **(overrides or {})})
@@ -160,6 +165,15 @@ async def slice_stl(
             if not gcodes:
                 raise RuntimeError(f"no gcode inside 3mf: {log[-2000:]}")
             text = z.read(gcodes[0]).decode(errors="ignore")
+            park_warnings: list[str] = []
+            if park:
+                height = machine_cfg.get("printable_height")
+                text, park_warnings = parking.apply(
+                    text,
+                    park,
+                    parse_gcode_header(text).get("max_z"),
+                    float(height) if height else None,
+                )
             gcode = out_dir / f"{name}.gcode"
             gcode.write_text(text)
             preview = None
@@ -173,7 +187,10 @@ async def slice_stl(
                     preview.write_bytes(z.read(cand))
                     break
         meta = parse_gcode_header(text)
-        warnings = [ln.strip() for ln in log.splitlines() if "warn" in ln.lower()][:10]
+        warnings = (
+            park_warnings
+            + [ln.strip() for ln in log.splitlines() if "warn" in ln.lower()][:10]
+        )
         return SliceResult(
             gcode,
             threemf,

@@ -80,6 +80,7 @@ def can_auto_start(
     min_agreements: int,
     hours: str | None,
     now: datetime,
+    skipped: str | None = None,
 ) -> tuple[bool, list[str]]:
     """The extra gate for starting without a tap. `history` is labelled checks, newest first; the check's
     record must be clean for the last `min_agreements` times a human knew the answer."""
@@ -87,7 +88,9 @@ def can_auto_start(
     if bed_state != "clear":
         reasons.append(f"bed is {bed_state}; a human has to mark it clear first")
     if current is None:
-        reasons.append("no bed check (camera or empty-bed reference missing)")
+        reasons.append(
+            f"no bed check: {skipped or 'camera or empty-bed reference missing'}"
+        )
     elif not current.clear:
         reasons.append(
             f"bed check sees something: {current.score:.1%} of the bed differs"

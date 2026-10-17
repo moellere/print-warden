@@ -16,6 +16,9 @@ printers:
       region: [0.1, 0.15, 0.9, 0.95]   # x0, y0, x1, y1 as fractions of the frame: just the build plate
       threshold: 0.002       # fraction of the region that may differ and still read clear; tune with check_bed
       min_agreements: 10     # labelled checks in a row that must agree before auto_start may act
+      pose: {y: 220, z: 150}   # bed-slinger + frame camera: where the bed sits for every check. Warden-sliced jobs
+                               # park here (Z only ever higher) and leave steppers on; read Y from Mainsail
+      rehome_y: false        # true: if steppers were released, G28 Y and move back to pose.y (Z never moves)
     auto_start: false        # true: start newly staged jobs without a tap when the bed check allows it
     auto_start_hours: "08:00-22:00"    # local time; unattended starts only inside this window
     slicer:                  # OrcaSlicer preset names from the Artillery vendor directory

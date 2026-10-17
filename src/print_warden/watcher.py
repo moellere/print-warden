@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from . import bedcheck, cameras, moonraker, reconcile, timelapse
+from . import bedcheck, cameras, moonraker, park, reconcile, timelapse
 from .bedcheck import BedStore, Check
 from .config import Config, Printer
 from .events import Event, EventStore
@@ -67,6 +67,8 @@ class PrinterWatcher:
         self.jobs = jobs
         self.spoolman = spoolman
         self.bed = bed
+        self.check_skipped: str | None = None
+        self.rehomed_z: float | None = None
         self.start_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self.cfg = cfg
@@ -301,6 +303,47 @@ class PrinterWatcher:
             if self.ha and self.p.light and prior == "off":
                 await self.ha.light(self.p.light, False)
 
+    async def ensure_pose(self) -> tuple[bool, str]:
+        """Is the bed where the reference was taken? With rehome_y, an idle printer whose steppers were released is
+        brought back by homing Y (and X if the pose sets it) and moving there; Z is never moved."""
+        bc = self.p.bed_check
+        if not bc or not bc.pose:
+            return True, "no pose configured"
+        th = self.mr.state.get("toolhead", {})
+        if "z" in (th.get("homed_axes") or ""):
+            self.rehomed_z = None
+        ok, why = park.status(th, bc.pose, self.rehomed_z)
+        if ok or not bc.rehome_y:
+            return ok, why
+        st = self.status()
+        pos = th.get("position") or []
+        if st.get("klippy") != "ready" or st.get("state") in ("printing", "paused"):
+            return (
+                False,
+                f"{why}; not rehoming: printer is {st.get('state') or st.get('klippy')}",
+            )
+        if len(pos) < 3 or pos[2] < bc.pose.z - park.TOLERANCE_MM:
+            return False, f"{why}; not rehoming: last Z is below the pose"
+        try:
+            await moonraker.gcode_script(self.p.moonraker, park.rehome_script(bc.pose))
+        except httpx.HTTPError as e:
+            return False, f"{why}; rehome failed: {e}"
+        self.rehomed_z = float(pos[2])
+        await asyncio.sleep(1)
+        ok, why = park.status(
+            self.mr.state.get("toolhead", {}), bc.pose, self.rehomed_z
+        )
+        await self.handle(
+            Event(
+                self.p.name,
+                "bed_rehomed",
+                "warning",
+                f"Homed Y and moved the bed to the check pose (Z untouched at {pos[2]:.0f}): {why}",
+                alert=True,
+            )
+        )
+        return ok, why
+
     async def capture_reference(self) -> Path:
         bc, ref = self.p.bed_check, self.reference_path
         if not bc or not ref:
@@ -309,6 +352,9 @@ class PrinterWatcher:
             raise ValueError(
                 f"bed_check camera {bc.camera!r} is not one of {sorted(self.p.cameras)}"
             )
+        at_pose, why = await self.ensure_pose()
+        if not at_pose:
+            raise ValueError(f"not at the bed-check pose: {why}")
         data = await self._lit_frame(bc.camera)
         ref.parent.mkdir(parents=True, exist_ok=True)
         ref.write_bytes(data)
@@ -318,12 +364,21 @@ class PrinterWatcher:
         """Compare the bed camera to the empty-bed reference. `label` is what a human knows the bed to be right
         now; labelled checks are the record auto_start is judged on. None when there is nothing to compare."""
         bc, ref = self.p.bed_check, self.reference_path
+        self.check_skipped = None
         if not (bc and ref and ref.exists() and bc.camera in self.p.cameras):
+            self.check_skipped = (
+                "bed_check config, camera or empty-bed reference missing"
+            )
+            return None
+        at_pose, why = await self.ensure_pose()
+        if not at_pose:
+            self.check_skipped = f"not at the bed-check pose: {why}"
             return None
         try:
             data = await self._lit_frame(bc.camera)
         except (httpx.HTTPError, OSError, ValueError) as e:
             log.warning("%s bed check: camera failed: %s", self.p.name, e)
+            self.check_skipped = f"camera failed: {e}"
             return None
         snap = cameras.save(
             self.cfg.storage_dir, self.p.name, f"bedcheck-{label or 'adhoc'}", data
@@ -370,7 +425,9 @@ class PrinterWatcher:
                 out["reference"] = "captured"
             except (httpx.HTTPError, OSError, ValueError) as e:
                 out["reference"] = f"capture failed: {e}"
-        elif check := await self.check_bed("clear"):
+        elif (check := await self.check_bed("clear")) is None:
+            out["check"] = {"skipped": self.check_skipped}
+        else:
             out["check"] = {
                 "score": round(check.score, 4),
                 "clear": check.clear,
