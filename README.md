@@ -46,6 +46,23 @@ the tap only acts if that job is still the one printing (same file on the printe
 later print. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt; critical alerts and
 Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
+## History and Home Assistant
+
+Every finished job records Klipper's actual print time, the grams used (Klipper's filament length scaled by the
+slicer's grams per metre) and, when Spoolman has a price for the spool (spool price / initial weight, else the
+filament's), the cost. `printer_stats(days=90)` reports estimate accuracy per printer and quality, failure rates by
+printer / material / quality with the commonest reasons, and prints, hours, grams and cost per month;
+`print_history(printer, days, state)` lists the jobs behind it.
+
+Each printer's ETA correction is the median actual/estimate ratio of its last 20 completed prints (once there are 3,
+clamped to 0.5–2×). It is applied wherever an estimate is used: routing, `finish_window`, notifications and
+`est_human` ("1h 12m (Orca 1h 0m)").
+
+With `home_assistant.publish_entities` (default on) the warden keeps `sensor.print_warden_<printer>_{state, progress,
+finish, queue, bed, material}` up to date through HA's REST states API, using the token it already has: changes every
+30 s, everything every 5 min (HA forgets REST-set states on restart). These entities have no unique_id, so they cannot
+be renamed or assigned to an area in the HA UI; MQTT discovery would allow that but needs a broker.
+
 ## Bed-clear check and auto_start
 
 The bed is a recorded fact: a print starting or ending marks it `occupied`, and every start is blocked until a human
@@ -163,6 +180,8 @@ src/print_warden/
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)
+  stats.py      estimate accuracy, ETA correction, failure rates, monthly usage
+  ha_entities.py  per-printer HA sensors (REST states API)
   checks.py     slice checks: model fit, gcode extents, temperatures, blocking Orca warnings
   park.py       bed-check pose: end-gcode park at slice time, pose test, opt-in Y rehome
   ha.py         alert webhook, actionable notifications, light control

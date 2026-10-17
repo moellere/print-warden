@@ -73,6 +73,20 @@ class HAClient:
             log.warning("actionable notify failed: %s", e)
             return False
 
+    async def set_state(
+        self, entity_id: str, state: str, attributes: dict[str, Any]
+    ) -> bool:
+        """Create or update an entity through HA's REST states API."""
+        try:
+            r = await self._c.post(
+                f"/api/states/{entity_id}",
+                json={"state": state, "attributes": attributes},
+            )
+            return r.status_code < 300
+        except httpx.HTTPError as e:
+            log.warning("set_state %s: %s", entity_id, e)
+            return False
+
     async def clear_notification(self, tag: str) -> bool:
         """Withdraw an actionable notification from the phone (HA companion `clear_notification`)."""
         if not self.cfg.notify_service:

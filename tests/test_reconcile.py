@@ -20,24 +20,26 @@ def test_completed_in_history():
             "status": "completed",
             "start_time": 1010,
             "filament_used": 500.0,
+            "print_duration": 3000.0,
         },
     ]
     assert decide(_job("printing"), {"state": "standby"}, hist) == (
         "done",
         "completed while the warden was away (history)",
         500.0,
+        3000.0,
     )
 
 
 def test_cancelled_in_history_fails():
     hist = [{"filename": REMOTE, "status": "cancelled", "start_time": 1010}]
-    state, note, _ = decide(_job("printing"), {"state": "standby"}, hist)
+    state, note, _, _ = decide(_job("printing"), {"state": "standby"}, hist)
     assert state == "failed" and "cancelled" in note
 
 
 def test_older_run_of_same_file_is_ignored():
     hist = [{"filename": REMOTE, "status": "completed", "start_time": 10}]
-    state, note, _ = decide(_job("printing"), {"state": "standby"}, hist)
+    state, note, _, _ = decide(_job("printing"), {"state": "standby"}, hist)
     assert state == "failed" and "unknown" in note
 
 

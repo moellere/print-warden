@@ -102,7 +102,8 @@ async def test_no_deduction_when_tracking_disabled(tmp_path):
     )
     j = jobs.create(printer="p", name="part", spool_id=4)
     await w.settle_spool(j, 100.0)
-    assert calls == [] and jobs.get(j["id"])["filament_used_mm"] == 100.0
+    assert not any(path.endswith("/use") for path, _ in calls)
+    assert jobs.get(j["id"])["filament_used_mm"] == 100.0
 
 
 async def test_reconcile_skips_pending_while_a_start_holds_the_lock(tmp_path):
@@ -117,3 +118,32 @@ async def test_reconcile_skips_pending_while_a_start_holds_the_lock(tmp_path):
     assert jobs.get(j["id"])["state"] == "approved"
     await w.reconcile_jobs()
     assert jobs.get(j["id"])["state"] == "staged"
+
+
+async def test_outcome_records_duration_grams_and_cost(tmp_path):
+    cfg, p = _cfg(tmp_path)
+    jobs = JobStore(tmp_path / "jobs.db")
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            json={
+                "id": 4,
+                "remaining_weight": 900,
+                "price": 20.0,
+                "initial_weight": 1000,
+                "filament": {"material": "PLA"},
+            },
+        )
+
+    sm = Spoolman("http://spoolman")
+    sm._c = httpx.AsyncClient(
+        base_url="http://spoolman/api/v1", transport=httpx.MockTransport(handler)
+    )
+    w = PrinterWatcher(cfg, p, EventStore(tmp_path / "e.db"), None, jobs, sm)
+    j = jobs.create(printer="p", name="part", spool_id=4, filament_g=20, filament_m=6)
+    await w.settle_spool(j, 3000.0, 3600.0)
+    got = jobs.get(j["id"])
+    assert got["print_duration_s"] == 3600.0
+    assert got["grams_used"] == pytest.approx(10.0)
+    assert got["cost"] == pytest.approx(0.2)

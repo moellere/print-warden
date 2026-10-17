@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–5 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–6 are complete; the rest are proposals.
 
 ## Phase 0 — Hardening ✅
 
@@ -68,11 +68,16 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
   bound to the job and refused if another file is printing. Cancel and resume are tap-only; no MCP tool.
 - Alert routing: quiet hours for info/warning (critical always), configurable cooldown.
 
-## Phase 6 — History and insight
+## Phase 6 — History and insight ✅
 
-- `print_history` / `printer_stats`: estimate accuracy (and ETA correction), failure rate by material/quality/printer,
-  grams and cost per month.
-- HA entities via MQTT discovery: state, progress, ETA, queue length, bed state.
+- Jobs record actual print time, grams and cost (Spoolman price); prints settled after a restart take them from
+  Moonraker's history.
+- `printer_stats`: estimate accuracy per printer/quality, failure rates and reasons by printer/material/quality,
+  monthly prints/hours/grams/cost. `print_history` lists the jobs.
+- ETA correction per printer (median of recent actual/estimate, ≥3 prints, clamped) used in routing, finish_window
+  and notifications.
+- HA entities per printer via the REST states API (state, progress, finish, queue, bed, material).
+- Not done: MQTT discovery (entities with unique_id); the REST approach needs no broker.
 
 ## Phase 7 — Packaging and ecosystem
 

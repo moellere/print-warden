@@ -93,6 +93,7 @@ class HomeAssistant:
     verify_tls: bool = False
     notify_service: str | None = None
     action_secret: str | None = None
+    publish_entities: bool = True
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ def load(path: str | Path) -> Config:
             action_secret=os.environ.get(
                 h.get("action_secret_env", "HA_ACTION_SECRET")
             ),
+            publish_entities=bool(h.get("publish_entities", True)),
         )
     ob = raw.get("obico") or {}
     st = raw.get("storage") or {}

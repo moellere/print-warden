@@ -470,3 +470,66 @@ async def test_resume_only_when_paused(clean_queues, control):
 async def test_no_mcp_tool_can_cancel_or_resume():
     names = [t.name for t in await server.mcp.list_tools()]
     assert not [n for n in names if "cancel" in n or "resume" in n or "control" in n]
+
+
+def _finished(printer, est, actual, **kw):
+    j = server.JOBS.create(
+        printer=printer,
+        name="h",
+        material="PLA",
+        quality="standard",
+        est_seconds=est,
+        **kw,
+    )
+    for st in ("staged", "printing", "done"):
+        j = server.JOBS.transition(j["id"], st)
+    return server.JOBS.note(j["id"], "test", print_duration_s=actual)
+
+
+def test_corrected_estimates_once_a_printer_has_history(clean_queues):
+    server._CORRECTIONS.clear()
+    for _ in range(3):
+        _finished("testq", 3600, 4320)
+    job = server.JOBS.create(printer="testq", name="next", est_seconds=3600)
+    pub = server._job_public(job)
+    assert (
+        pub["est_corrected_seconds"] == 4320
+        and pub["est_human"] == "1h 12m (Orca 1h 0m)"
+    )
+    stats_ = server.printer_stats()
+    assert stats_["eta_correction"]["testq"] == 1.2
+    assert any(r["printer"] == "testq" for r in stats_["estimate_accuracy"])
+    assert server.print_history("testq")[0]["print_duration_s"] == 4320
+    assert all(
+        r["state"] == "failed" for r in server.print_history("testq", state="failed")
+    )
+    server._CORRECTIONS.clear()
+
+
+async def test_entities_publish_changes_only(clean_queues, monkeypatch):
+    sent = []
+
+    async def set_state(entity, state, attrs):
+        sent.append((entity, state))
+        return True
+
+    monkeypatch.setattr(server.HA, "set_state", set_state)
+    import dataclasses
+
+    monkeypatch.setattr(
+        server,
+        "CFG",
+        dataclasses.replace(
+            server.CFG, ha=dataclasses.replace(server.CFG.ha, token="t")
+        ),
+    )
+    server._PUBLISHED.clear()
+    _ready_printer("testp")
+    _ready_printer("testq")
+    first = await server.publish_entities(force=True)
+    assert first == 12 and ("sensor.print_warden_testp_state", "standby") in sent
+    assert await server.publish_entities() == 0
+    server.WATCHERS["testp"].mr.connected = False
+    sent.clear()
+    assert await server.publish_entities() == 1
+    assert sent == [("sensor.print_warden_testp_state", "offline")]
