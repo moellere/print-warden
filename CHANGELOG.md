@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+Phases 8–12. **Upgrade note:** the default port is now 8720; a config that sets `server.port` is unaffected.
+Everything else new is optional.
 
 - **Default port is now 8720** (was 8710, which homelab-helper's status endpoint also uses). A config with
   `server.port: 8710` (as the example had) is unaffected; one relying on the default must set it or move its HA
