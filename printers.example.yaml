@@ -36,6 +36,10 @@ printers:
         ASA: Artillery Generic ASA
         TPU: Artillery Generic TPU
         PLA-CF: Artillery Generic PLA-CF
+    maintenance:             # reminders with a Done button; also sensor.print_warden_<printer>_maint_<item> (% used)
+      nozzle: {every_hours: 300}
+      lubrication: {every_hours: 200}
+      belts: {every_days: 90}
     rules:
       heater_deviation_c: 8
       heater_deviation_s: 90
@@ -95,6 +99,12 @@ slicer:
   vendor_dir: /opt/orcaslicer/resources/profiles/Artillery
   house_rules: /opt/slicer/house-rules.json     # tree supports (slim), no brim
   blocking_warnings: ["empty layer", "floating", "out of the plate", "outside the plate"]   # Orca log text that blocks a job
+
+upkeep:
+  reorder_below_g: 200          # alert when a material's Spoolman stock minus the queue drops under this
+  dry_after_days:               # loaded spools of these materials, open (or last dried) longer than this
+    TPU: 7
+    PETG: 30
 
 alerts:
   quiet_hours: "23:00-07:00"   # info/warning alerts and the first-layer prompt are held; critical always goes out

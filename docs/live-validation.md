@@ -59,6 +59,13 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 19. homelab-helper: `helper discover printwarden --persist` lists the printers; power one off and re-run; a
     `printer-offline` finding opens; power it on and re-run; it resolves.
 
+## 7. Upkeep
+
+20. Set a maintenance item to `{every_hours: 0.1}` and finish a print: within the hour the phone gets "<item> is
+    due" with **Done**; tap it; `upkeep_status` shows it reset and the `maint_<item>` sensor reads 0.
+21. Set `upkeep.reorder_below_g` above a material's stock: the reorder alert arrives once, and not again that day.
+22. A loaded TPU spool first used more than `dry_after_days` ago: the drying reminder; **Dried** resets it.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -83,3 +90,6 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 17 | Quiet entity off → warnings resume | | |
 | 18 | MQTT device, rename survives HA restart, unavailable when stopped | | |
 | 19 | homelab-helper `printer-offline` opens and resolves | | |
+| 20 | Maintenance due → Done resets it and the sensor | | |
+| 21 | Reorder alert once a day | | |
+| 22 | Drying reminder → Dried resets it | | |

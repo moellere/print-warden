@@ -11,6 +11,10 @@
 - Print outcomes: the end photo with Good / Failed (and a reason) after every print, or `label_print` from chat;
   labels win in `printer_stats`, appear in `print_history` / `model_history`, and `submit_job` warns when the same
   model failed before with the same settings. New job columns are added on start-up.
+- Upkeep: hourly reorder (Spoolman stock minus the queue under `upkeep.reorder_below_g`), drying
+  (`upkeep.dry_after_days`, **Dried** button) and per-printer `maintenance` items (hours or days, **Done** button,
+  `maint_<item>` entities); at most one phone alert per finding a day, never in quiet hours. MCP: `upkeep_status`,
+  `record_maintenance_done`, `record_spool_dried`.
 
 ## 0.3.0
 

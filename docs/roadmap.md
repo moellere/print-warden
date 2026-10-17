@@ -110,7 +110,7 @@ Done when: every sign-off row is signed on both printers, or has an issue.
 
 Done when: failure rates by material and quality come from labelled outcomes.
 
-## Phase 10 — Filament and maintenance
+## Phase 10 — Filament and maintenance ✅ (build)
 
 - Reorder alert: remaining grams per material across Spoolman against what the queue needs.
 - Drying reminders for hygroscopic materials by how long a spool has been open.

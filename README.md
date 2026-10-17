@@ -61,6 +61,19 @@ under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, 
 job ended in the failure rates and reasons, and `submit_job` warns when the same geometry failed before with the same
 material, quality and overrides (advisory; it never blocks).
 
+Upkeep runs hourly and sends each finding to the phone at most once a day, outside quiet hours:
+
+- **Reorder:** a material whose Spoolman stock, minus what the queue still needs, is under
+  `upkeep.reorder_below_g`.
+- **Drying:** a loaded spool of a material in `upkeep.dry_after_days` that has been open (or since it was last dried)
+  longer than that. The **Dried** button records it.
+- **Maintenance:** per printer, `maintenance: {nozzle: {every_hours: 300}, belts: {every_days: 90}}`. Hours are the
+  print time since the item was last done. **Done** resets it, as does `record_maintenance_done` from chat. Each item
+  is a `sensor.print_warden_<printer>_maint_<item>` showing the share of its interval used. A new item starts
+  counting when it is first seen.
+
+`upkeep_status` shows all three.
+
 Each printer's ETA correction is the median actual/estimate ratio of its last 20 completed prints (once there are 3,
 clamped to 0.5–2×). It is applied wherever an estimate is used: routing, `finish_window`, notifications and
 `est_human` ("1h 12m (Orca 1h 0m)").

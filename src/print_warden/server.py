@@ -41,6 +41,7 @@ from . import (
     slicer,
     stats,
     threemf,
+    upkeep,
 )
 from .bedcheck import BedStore
 from .events import Event, EventStore
@@ -1021,6 +1022,15 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             JOBS.note(job_id, "first layers look good (phone tap)")
         elif verb == "OUTCOME":
             await _on_outcome_tap(job_id)
+        elif verb == "MAINT":
+            printer, _, item = job_id.partition(":")
+            record_maintenance(printer, item, "phone tap")
+            if HA:
+                await HA.clear_notification(_upkeep_tag(f"maint:{printer}:{item}"))
+        elif verb == "DRIED":
+            record_dried(int(job_id), "phone tap")
+            if HA:
+                await HA.clear_notification(_upkeep_tag(f"dry:{job_id}"))
         elif verb in ("CANCEL", "RESUME"):
             res = await print_control(job_id, verb.lower(), "phone tap")
             if not res["done"] and HA:
@@ -1293,6 +1303,157 @@ def _print_left_s(name: str) -> float | None:
     return elapsed * (100 - pct) / pct if pct > 5 else None
 
 
+UPKEEP_REPEAT_S = 86400
+
+
+def _maintenance(printer: str, now: float | None = None) -> list[dict[str, Any]]:
+    """The printer's maintenance items; an item seen for the first time starts counting now."""
+    now = now or time.time()
+    items = _w(printer).p.maintenance
+    resets: dict[str, float] = {}
+    for item in items:
+        key = f"maint_reset:{printer}:{item}"
+        if (v := JOBS.kv_get(key)) is None:
+            JOBS.kv_set(key, str(now))
+            v = str(now)
+        resets[item] = float(v)
+    if not items:
+        return []
+    jobs = JOBS.since(min(resets.values()) - 30 * 86400, printer)
+    return upkeep.maintenance(printer, items, jobs, resets, now)
+
+
+def record_maintenance(printer: str, item: str, done_by: str) -> dict[str, Any]:
+    if item not in _w(printer).p.maintenance:
+        raise ValueError(f"{printer} has no maintenance item {item!r}")
+    JOBS.kv_set(f"maint_reset:{printer}:{item}", str(time.time()))
+    JOBS.kv_set(f"upkeep_alerted:maint:{printer}:{item}", "0")
+    STORE.add(Event(printer, "maintenance_done", "info", f"{item} done ({done_by})"))
+    return next(m for m in _maintenance(printer) if m["item"] == item)
+
+
+def record_dried(spool_id: int, done_by: str) -> dict[str, Any]:
+    JOBS.kv_set(f"dried:{spool_id}", str(time.time()))
+    JOBS.kv_set(f"upkeep_alerted:dry:{spool_id}", "0")
+    return {"spool_id": spool_id, "dried_by": done_by}
+
+
+async def upkeep_report(now: float | None = None) -> dict[str, Any]:
+    """Reorder, drying and maintenance findings; Spoolman's part is skipped (with the reason) when it cannot be read."""
+    now = now or time.time()
+    out: dict[str, Any] = {
+        "reorder": [],
+        "drying": [],
+        "maintenance": [m for n in WATCHERS for m in _maintenance(n, now)],
+    }
+    if SPOOLMAN:
+        try:
+            spools = await SPOOLMAN.spools()
+            queued = JOBS.list(None, 500, upkeep.QUEUED)
+            out["reorder"] = upkeep.reorder(spools, queued, CFG.upkeep.reorder_below_g)
+            by_id = {s["id"]: s for s in spools}
+            loaded = {
+                n: by_id[int(sid)]
+                for n in WATCHERS
+                if (sid := JOBS.kv_get(f"active_spool:{n}")) and int(sid) in by_id
+            }
+            dried = {
+                s["id"]: float(v)
+                for s in loaded.values()
+                if (v := JOBS.kv_get(f"dried:{s['id']}"))
+            }
+            out["drying"] = upkeep.drying(loaded, dried, CFG.upkeep.dry_after_days, now)
+        except httpx.HTTPError as e:
+            out["spoolman_error"] = str(e) or type(e).__name__
+    return out
+
+
+def _upkeep_tag(key: str) -> str:
+    return "print_warden_upkeep_" + "".join(c if c.isalnum() else "_" for c in key)
+
+
+async def upkeep_alerts(now: float | None = None) -> int:
+    """Send each finding to the phone at most once a day, never in quiet hours. Returns how many were sent."""
+    now = now or time.time()
+    if not HA or (WATCHERS and await next(iter(WATCHERS.values())).quiet()):
+        return 0
+    report = await upkeep_report(now)
+    items: list[tuple[str, str, str, list[tuple[str, str]]]] = []
+    for r in report["reorder"]:
+        items.append(
+            (
+                f"reorder:{r['material']}",
+                f"{r['material']} is running low",
+                (
+                    f"{r['remaining_g']} g left across spools, {r['queued_g']} g queued: "
+                    f"{r['after_queue_g']} g after the queue."
+                ),
+                [],
+            )
+        )
+    for d in report["drying"]:
+        items.append(
+            (
+                f"dry:{d['spool_id']}",
+                f"Dry the {d['material']} on {d['printer']}",
+                (
+                    f"Spool {d['spool_id']} ({d['name'] or d['material']}) has been open "
+                    f"{d['days_open']} days (dry every {d['dry_after_days']:g})."
+                ),
+                [(f"PRINT_WARDEN_DRIED_{d['spool_id']}", "Dried")],
+            )
+        )
+    for m in report["maintenance"]:
+        if m["due"]:
+            items.append(
+                (
+                    f"maint:{m['printer']}:{m['item']}",
+                    f"{m['printer']}: {m['item']} is due",
+                    f"{m['hours']} h printed / {m['days']} days since it was last done.",
+                    [(f"PRINT_WARDEN_MAINT_{m['printer']}:{m['item']}", "Done")],
+                )
+            )
+    sent = 0
+    for key, title, message, actions in items:
+        last = float(JOBS.kv_get(f"upkeep_alerted:{key}") or 0)
+        if now - last < UPKEEP_REPEAT_S:
+            continue
+        await HA.notify_actionable(title, message, actions, tag=_upkeep_tag(key))
+        JOBS.kv_set(f"upkeep_alerted:{key}", str(now))
+        sent += 1
+    return sent
+
+
+async def upkeep_loop(interval_s: float = 3600) -> None:
+    while True:
+        try:
+            await upkeep_alerts()
+        except Exception:
+            log.exception("upkeep")
+        await asyncio.sleep(interval_s)
+
+
+@mcp.tool()
+async def upkeep_status() -> dict[str, Any]:
+    """Filament and maintenance: materials whose Spoolman stock minus the queue is under upkeep.reorder_below_g,
+    loaded spools due for drying (upkeep.dry_after_days), and each printer's maintenance items with hours/days since
+    they were last done and whether they are due."""
+    return await upkeep_report()
+
+
+@mcp.tool()
+def record_maintenance_done(printer: str, item: str, done_by: str) -> dict[str, Any]:
+    """Record that a maintenance item (from the printer's `maintenance` config) was just done; its counter restarts.
+    A record, not an action: nothing on the printer changes. `done_by` names who did it."""
+    return record_maintenance(printer, item, done_by)
+
+
+@mcp.tool()
+def record_spool_dried(spool_id: int, done_by: str) -> dict[str, Any]:
+    """Record that a spool was just dried; its drying reminder restarts. `done_by` names who did it."""
+    return record_dried(spool_id, done_by)
+
+
 def _entity_rows() -> dict[str, tuple[str, list[ha_entities.Row]]]:
     """printer -> (slug, its entity rows), for whichever transport publishes them."""
     now = datetime.now().astimezone()
@@ -1308,6 +1469,7 @@ def _entity_rows() -> dict[str, tuple[str, list[ha_entities.Row]]]:
                 BED.state(name)["state"],
                 JOBS.kv_get(f"loaded_material:{name}"),
                 now,
+                _maintenance(name),
             ),
         )
         for name, w in WATCHERS.items()
@@ -1400,6 +1562,7 @@ async def lifespan(app: Starlette):
     ]
     tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
     tasks.append(asyncio.create_task(entity_loop(), name="ha-entities"))
+    tasks.append(asyncio.create_task(upkeep_loop(), name="upkeep"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(

@@ -5,7 +5,7 @@ import uuid
 import pytest
 from starlette.testclient import TestClient
 
-from print_warden import server
+from print_warden import server, upkeep
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -618,3 +618,48 @@ def test_failed_before_warns_only_for_the_same_settings():
     assert server._failed_before(h, "PETG", "draft", {}) == []
     hist = server._history(h)
     assert (hist["done"], hist["failed"]) == (1, 1)
+
+
+async def test_upkeep_alerts_once_a_day_and_a_tap_resets(monkeypatch):
+    import dataclasses
+
+    w = server.WATCHERS["testp"]
+    monkeypatch.setattr(
+        w,
+        "p",
+        dataclasses.replace(
+            w.p, maintenance=upkeep.parse_maintenance({"belts": {"every_days": 1}})
+        ),
+    )
+    sent, cleared = [], []
+
+    async def notify(title, message, actions, image=None, tag=None):
+        sent.append((tag, [a for a, _ in actions]))
+        return True
+
+    async def clear(tag):
+        cleared.append(tag)
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    monkeypatch.setattr(server, "SPOOLMAN", None)
+    now = time.time()
+    server.JOBS.kv_set("maint_reset:testp:belts", str(now - 2 * 86400))
+    server.JOBS.kv_set("upkeep_alerted:maint:testp:belts", "0")
+    assert await server.upkeep_alerts(now) == 1
+    tag, actions = sent[-1]
+    assert actions == ["PRINT_WARDEN_MAINT_testp:belts"]
+    assert await server.upkeep_alerts(now + 3600) == 0
+    await server._on_ha_action("PRINT_WARDEN_MAINT_testp:belts", {})
+    assert cleared == [tag]
+    (belts,) = [m for m in server._maintenance("testp") if m["item"] == "belts"]
+    assert not belts["due"]
+    rows = {
+        e: st
+        for _, printer_rows in server._entity_rows().values()
+        for e, st, _ in printer_rows
+    }
+    assert rows["sensor.print_warden_testp_maint_belts"] == "0"
+    with pytest.raises(ValueError):
+        server.record_maintenance("testp", "flux capacitor", "x")
