@@ -1,5 +1,5 @@
-"""Storage retention: snapshots and timelapse frames older than keep_days are deleted. Rendered timelapse videos,
-job artifacts and uploaded models are kept."""
+"""Storage retention: snapshots, timelapse frames and slice-cache entries untouched for keep_days are deleted (a cache
+hit refreshes its entry). Rendered timelapse videos, job artifacts and uploaded models are kept."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from pathlib import Path
 def prune_files(root: Path, keep_days: int, now: float | None = None) -> int:
     cutoff = (now or time.time()) - keep_days * 86400
     removed = 0
-    for sub, pattern in (("snapshots", "*"), ("timelapse", "*.jpg")):
+    for sub, pattern in (
+        ("snapshots", "*"),
+        ("timelapse", "*.jpg"),
+        ("slice-cache", "*"),
+    ):
         base = root / sub
         if not base.is_dir():
             continue

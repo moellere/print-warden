@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–3 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–4 are complete; the rest are proposals.
 
 ## Phase 0 — Hardening ✅
 
@@ -48,12 +48,17 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - `copies=N` (`--clone-objects` + `--arrange`) and `orient` (`--orient`).
 - Not done: presence-based quiet hours from Home Assistant (time windows only for now).
 
-## Phase 4 — Slicing quality
+## Phase 4 — Slicing quality ✅
 
-- Slice cache keyed by model hash + presets + house rules + overrides.
-- Per-model memory of overrides and outcomes.
-- TPU / ASA; per-spool temperatures from Spoolman extra fields.
-- Multi-plate 3mf projects.
+- Slice cache keyed by geometry + final machine/process/filament settings + copies/orient/park + Orca binary.
+- Per-model memory: geometry hash and overrides on every job; `model_history` and `submit_job`'s `history` show
+  earlier settings and outcomes (advisory only).
+- Per-spool temperatures from Spoolman (`settings_extruder_temp`, `settings_bed_temp`) as filament overrides.
+- ASA, TPU, PLA-CF alongside PLA/PETG/ABS.
+- Found by running OrcaSlicer 2.4.2 for real: the temperature check now judges the highest temperature set (the
+  Artillery start gcode preheats to 140°C), extrusion counts only from a known position, and the house rules pick the
+  High Temp Plate (Orca's default Cool Plate gave PLA a 35°C bed).
+- Not done: multi-plate 3mf projects (`.3mf` uploads stay refused).
 
 ## Phase 5 — Monitoring depth
 

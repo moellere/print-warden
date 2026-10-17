@@ -64,8 +64,11 @@ FIELDS = (
     "queue_pos",
     "offer",
     "copies",
+    "model_hash",
+    "overrides",
+    "orient",
 )
-JSON_FIELDS = ("warnings", "slice_blockers")
+JSON_FIELDS = ("warnings", "slice_blockers", "overrides")
 ADDED_COLUMNS = {
     "spool_id": "integer",
     "filament_m": "real",
@@ -76,6 +79,9 @@ ADDED_COLUMNS = {
     "queue_pos": "real",
     "offer": "integer",
     "copies": "integer",
+    "model_hash": "text",
+    "overrides": "text",
+    "orient": "integer",
 }
 
 
@@ -111,7 +117,7 @@ class JobStore:
         row.update(kw)
         row["queue_pos"] = row["queue_pos"] if row["queue_pos"] is not None else now
         for k in JSON_FIELDS:
-            if isinstance(row.get(k), list):
+            if isinstance(row.get(k), list | dict):
                 row[k] = json.dumps(row[k])
         self._db.execute(
             f"insert into jobs ({','.join(FIELDS)}) values ({','.join('?' * len(FIELDS))})",
@@ -129,7 +135,7 @@ class JobStore:
             raise KeyError(f"no job {job_id}")
         d = dict(zip(FIELDS, r, strict=True))
         for k in JSON_FIELDS:
-            d[k] = json.loads(d[k] or "[]")
+            d[k] = json.loads(d[k] or ("{}" if k == "overrides" else "[]"))
         d["offer"] = bool(d["offer"])
         d["log"] = json.loads(d["log"] or "[]")
         return d
@@ -192,6 +198,15 @@ class JobStore:
         ids = self._db.execute(
             "select id from jobs where printer=? and state='staged' order by queue_pos, created",
             (printer,),
+        )
+        return [self.get(r[0]) for r in ids]
+
+    def by_model(
+        self, model_hash: str, limit: int = 20
+    ) -> builtins.list[dict[str, Any]]:
+        ids = self._db.execute(
+            "select id from jobs where model_hash=? order by created desc limit ?",
+            (model_hash, limit),
         )
         return [self.get(r[0]) for r in ids]
 

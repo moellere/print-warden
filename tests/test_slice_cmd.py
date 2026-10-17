@@ -32,6 +32,10 @@ def fake_orca(monkeypatch):
 
     async def exec_(*cmd, **kw):
         calls["cmd"] = cmd
+        calls["runs"] = calls.get("runs", 0) + 1
+        calls["filament"] = json.loads(
+            Path(cmd[cmd.index("--load-filaments") + 1]).read_text()
+        )
         out_dir = cmd[cmd.index("--outputdir") + 1]
         name = cmd[cmd.index("--export-3mf") + 1]
         machine = json.loads(
@@ -129,3 +133,52 @@ async def test_park_still_applies(vendor, fake_orca, tmp_path):
     )
     gcode = res.gcode.read_text()
     assert "G1 Y200.00" in gcode and "\nM84" not in gcode
+
+
+async def test_identical_slices_come_from_the_cache(vendor, fake_orca, tmp_path):
+    stl = _binary_stl(tmp_path / "m.stl", 40, 40, 12)
+    cache = tmp_path / "cache"
+
+    async def go(out, **kw):
+        return await slicer.slice_stl(
+            _cfg(vendor),
+            stl,
+            tmp_path / out,
+            "p",
+            "p",
+            "p",
+            material="PLA",
+            cache_dir=cache,
+            **kw,
+        )
+
+    first = await go("a")
+    again = await go("b")
+    assert fake_orca["runs"] == 1 and not first.cached and again.cached
+    assert again.gcode.read_text() == first.gcode.read_text()
+    assert (
+        again.gcode.parent == tmp_path / "b" and again.est_seconds == first.est_seconds
+    )
+
+    hot = await go("c", filament_overrides={"nozzle_temperature": ["215"]})
+    assert fake_orca["runs"] == 2 and not hot.cached
+    assert fake_orca["filament"]["nozzle_temperature"] == ["215"]
+    await go("d", copies=2)
+    assert fake_orca["runs"] == 3
+
+
+async def test_changed_geometry_misses_the_cache(vendor, fake_orca, tmp_path):
+    cache = tmp_path / "cache"
+    for i, dims in enumerate(((40, 40, 12), (41, 40, 12))):
+        stl = _binary_stl(tmp_path / "m.stl", *dims)
+        await slicer.slice_stl(
+            _cfg(vendor),
+            stl,
+            tmp_path / f"o{i}",
+            "p",
+            "p",
+            "p",
+            material="PLA",
+            cache_dir=cache,
+        )
+    assert fake_orca["runs"] == 2

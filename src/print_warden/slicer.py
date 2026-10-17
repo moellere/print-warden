@@ -4,7 +4,9 @@ cannot resolve `inherits`), house rules are applied last, and the gcode is pulle
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -31,6 +33,7 @@ class SliceResult:
     warnings: list[str] = field(default_factory=list)
     log_tail: str = ""
     blockers: list[str] = field(default_factory=list)
+    cached: bool = False
 
 
 def _load_named(vendor: Path, kind: str, name: str) -> dict[str, Any]:
@@ -105,6 +108,89 @@ async def render_scad(
     return out.decode(errors="ignore")[-1500:]
 
 
+CACHE_VERSION = 1
+
+
+def _orca_identity(orca: str) -> str:
+    """Path, size and mtime of the slicer binary, so an upgraded Orca never serves a stale cached slice."""
+    try:
+        st = Path(orca).stat()
+        return f"{orca}:{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return orca
+
+
+def cache_key(
+    stl_bytes: bytes,
+    configs: tuple[dict[str, Any], dict[str, Any], dict[str, Any]],
+    extra: dict[str, Any],
+) -> str:
+    h = hashlib.sha256()
+    h.update(hashlib.sha256(stl_bytes).digest())
+    h.update(
+        json.dumps(
+            [CACHE_VERSION, configs, extra], sort_keys=True, default=str
+        ).encode()
+    )
+    return h.hexdigest()[:32]
+
+
+def _from_cache(entry: Path, out_dir: Path, name: str) -> SliceResult | None:
+    try:
+        meta = json.loads((entry / "result.json").read_text())
+    except (OSError, ValueError):
+        return None
+    paths: dict[str, Path | None] = {}
+    for kind, suffix in (("gcode", ".gcode"), ("threemf", ".3mf"), ("preview", ".png")):
+        src = entry / f"slice{suffix}"
+        if src.exists():
+            dst = out_dir / f"{name}{suffix}"
+            shutil.copyfile(src, dst)
+            os.utime(src)
+            paths[kind] = dst
+        else:
+            paths[kind] = None
+    gcode, threemf = paths["gcode"], paths["threemf"]
+    if gcode is None or threemf is None:
+        return None
+    os.utime(entry / "result.json")
+    return SliceResult(
+        gcode,
+        threemf,
+        paths["preview"],
+        meta.get("est_seconds"),
+        meta.get("filament_g"),
+        meta.get("filament_m"),
+        meta.get("layers"),
+        meta.get("max_z"),
+        meta.get("warnings") or [],
+        "(from slice cache)",
+        meta.get("blockers") or [],
+        cached=True,
+    )
+
+
+def _to_cache(entry: Path, res: SliceResult) -> None:
+    entry.mkdir(parents=True, exist_ok=True)
+    for src, suffix in (
+        (res.gcode, ".gcode"),
+        (res.threemf, ".3mf"),
+        (res.preview, ".png"),
+    ):
+        if src and src.exists():
+            shutil.copyfile(src, entry / f"slice{suffix}")
+    fields = (
+        "est_seconds",
+        "filament_g",
+        "filament_m",
+        "layers",
+        "max_z",
+        "warnings",
+        "blockers",
+    )
+    (entry / "result.json").write_text(json.dumps({f: getattr(res, f) for f in fields}))
+
+
 async def slice_stl(
     cfg: SlicerConfig,
     stl: Path,
@@ -117,37 +203,53 @@ async def slice_stl(
     material: str = "",
     copies: int = 1,
     orient: bool = False,
+    filament_overrides: dict[str, Any] | None = None,
+    cache_dir: Path | None = None,
 ) -> SliceResult:
     """Raises ValueError before slicing when the model cannot fit; problems found in the sliced gcode come back as
-    `blockers`, which keep the job from starting."""
+    `blockers`, which keep the job from starting. With `cache_dir`, an identical request (same model bytes, same
+    final machine/process/filament settings, copies, orient, park pose and Orca binary) reuses the earlier slice."""
     out_dir.mkdir(parents=True, exist_ok=True)
     vendor = Path(cfg.vendor_dir)
     house = json.loads(Path(cfg.house_rules).read_text()) if cfg.house_rules else {}
+    if copies < 1 or copies > 50:
+        raise ValueError("copies must be 1-50")
+    machine_cfg = flatten(vendor, "machine", machine)
+    if not orient and (
+        problems := checks.fit_problems(checks.stl_bounds(stl), machine_cfg, copies)
+    ):
+        raise ValueError(
+            f"{stl.name} cannot be printed on {machine}: " + "; ".join(problems)
+        )
+    if park:
+        machine_cfg["machine_end_gcode"] = parking.prepare_end_gcode(
+            str(machine_cfg.get("machine_end_gcode") or "")
+        )
+    process_cfg = flatten(vendor, "process", process, {**house, **(overrides or {})})
+    filament_cfg = flatten(vendor, "filament", filament, filament_overrides)
+    name = stl.stem
+    entry = None
+    if cache_dir:
+        key = cache_key(
+            stl.read_bytes(),
+            (machine_cfg, process_cfg, filament_cfg),
+            {
+                "copies": copies,
+                "orient": orient,
+                "park": park,
+                "material": material.upper(),
+                "blocking": cfg.blocking_warnings,
+                "orca": _orca_identity(cfg.orca),
+            },
+        )
+        entry = cache_dir / key
+        if hit := _from_cache(entry, out_dir, name):
+            return hit
     tmp = Path(tempfile.mkdtemp(prefix="slice-"))
     try:
-        machine_cfg = flatten(vendor, "machine", machine)
-        if copies < 1 or copies > 50:
-            raise ValueError("copies must be 1-50")
-        if not orient and (
-            problems := checks.fit_problems(checks.stl_bounds(stl), machine_cfg, copies)
-        ):
-            raise ValueError(
-                f"{stl.name} cannot be printed on {machine}: " + "; ".join(problems)
-            )
-        if park:
-            machine_cfg["machine_end_gcode"] = parking.prepare_end_gcode(
-                str(machine_cfg.get("machine_end_gcode") or "")
-            )
         (tmp / "machine.json").write_text(json.dumps(machine_cfg))
-        (tmp / "process.json").write_text(
-            json.dumps(
-                flatten(vendor, "process", process, {**house, **(overrides or {})})
-            )
-        )
-        (tmp / "filament.json").write_text(
-            json.dumps(flatten(vendor, "filament", filament))
-        )
-        name = stl.stem
+        (tmp / "process.json").write_text(json.dumps(process_cfg))
+        (tmp / "filament.json").write_text(json.dumps(filament_cfg))
         cmd = [
             "xvfb-run",
             "-a",
@@ -213,7 +315,7 @@ async def slice_stl(
             park_warnings
             + [ln.strip() for ln in log.splitlines() if "warn" in ln.lower()][:10]
         )
-        return SliceResult(
+        res = SliceResult(
             gcode,
             threemf,
             preview,
@@ -226,5 +328,8 @@ async def slice_stl(
             log[-800:],
             blockers,
         )
+        if entry is not None:
+            _to_cache(entry, res)
+        return res
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

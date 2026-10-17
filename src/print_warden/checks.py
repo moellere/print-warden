@@ -16,6 +16,7 @@ MATERIAL_TEMPS: dict[str, tuple[int, int, int, int]] = {
     "ABS": (225, 275, 80, 115),
     "ASA": (225, 275, 80, 115),
     "TPU": (200, 250, 0, 70),
+    "PLA-CF": (190, 240, 0, 75),
 }
 EDGE_TOLERANCE_MM = 1.0
 _MOVE = re.compile(r"^G[01]\s", re.IGNORECASE)
@@ -77,8 +78,10 @@ def fit_problems(
 
 
 def gcode_facts(text: str) -> dict[str, Any]:
-    """Extrusion extents and the temperatures the gcode sets (ignoring the 0s that switch heaters off)."""
-    x = y = 0.0
+    """Extrusion extents and the temperatures the gcode sets (ignoring the 0s that switch heaters off). Extrusion only
+    counts once the head has been sent to a known XY: a prime before the first move is at an unknown position."""
+    x: float | None = None
+    y: float | None = None
     e = 0.0
     relative_e = False
     ext: list[float] | None = None
@@ -108,7 +111,7 @@ def gcode_facts(text: str) -> dict[str, Any]:
                 de = axes["E"] if relative_e else axes["E"] - e
                 if not relative_e:
                     e = axes["E"]
-                if de > 0:
+                if de > 0 and x is not None and y is not None:
                     ext = (
                         [x, y, x, y]
                         if ext is None
@@ -136,16 +139,16 @@ def gcode_problems(
             )
     rng = MATERIAL_TEMPS.get(material.upper())
     if rng:
+        # Start gcode sets lower temperatures on the way up (a 140°C probing preheat, a nozzle wait while the bed
+        # heats), so the printing temperature is the highest one the file sets.
         nmin, nmax, bmin, bmax = rng
-        bad_n = [t for t in facts["nozzle"] if not nmin <= t <= nmax]
-        bad_b = [t for t in facts["bed"] if not bmin <= t <= bmax]
-        if bad_n:
+        if facts["nozzle"] and not nmin <= max(facts["nozzle"]) <= nmax:
             out.append(
-                f"nozzle {bad_n[0]:.0f}°C is outside {material} range {nmin}-{nmax}°C"
+                f"nozzle {max(facts['nozzle']):.0f}°C is outside {material} range {nmin}-{nmax}°C"
             )
-        if bad_b:
+        if facts["bed"] and not bmin <= max(facts["bed"]) <= bmax:
             out.append(
-                f"bed {bad_b[0]:.0f}°C is outside {material} range {bmin}-{bmax}°C"
+                f"bed {max(facts['bed']):.0f}°C is outside {material} range {bmin}-{bmax}°C"
             )
     return out
 
