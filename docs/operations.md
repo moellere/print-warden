@@ -5,17 +5,22 @@
 ```
 cp printers.example.yaml printers.yaml                     # edit: printers, cameras, presets, HA, Spoolman
 printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
+docker compose run --rm print-warden print-warden check   # 0 failed before going further
 docker compose up -d                                       # builds locally, or set image: in compose.yml
-curl -s localhost:8710/healthz | jq
+curl -s localhost:8720/healthz | jq
 ```
 
 To run a released image instead of building, replace `build: .` in `compose.yml` with
 `image: ghcr.io/moellere/print-warden:v0.3.0` (or `:latest`).
 
-MCP clients connect to `http://<host>:8710/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
+MCP clients connect to `http://<host>:8720/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
 `?token=...` for clients that only take a URL.
 
 ## First-run checklist
+
+`print-warden check [printers.yaml]` resolves every Orca profile and asks Moonraker, the cameras, Home Assistant
+(token, notify service, lights, quiet entity), Spoolman and the MQTT broker whether they answer; it changes nothing
+and exits 1 if anything fails. Then walk `docs/live-validation.md` for what only a real printer can show.
 
 - `list_printers` shows every printer `moonraker_connected: true` and the material you expect.
 - `set_active_spool` for each printer if you use Spoolman.

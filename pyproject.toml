@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-print-warden = "print_warden.server:main"
+print-warden = "print_warden.cli:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Default port is now 8720** (was 8710, which homelab-helper's status endpoint also uses). A config with
+  `server.port: 8710` (as the example had) is unaffected; one relying on the default must set it or move its HA
+  webhook, Obico webhook and MCP URLs to 8720. `compose.yml` and the image's `EXPOSE` follow.
+- `print-warden check [config]`: resolves the Orca profiles and asks Moonraker, cameras, Home Assistant, Spoolman and
+  the broker whether they answer, read-only; exit 1 on any failure.
+- `docs/live-validation.md`: the runbook and sign-off table for the real printers.
+
 ## 0.3.0
 
 The three items the roadmap left open. Every new setting is optional; a 0.2.0 config runs unchanged.
