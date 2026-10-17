@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
+  HA reached by IP with a certificate for its name.
+
 ## 0.4.0
 
 Phases 8–12. **Upgrade note:** the default port is now 8720; a config that sets `server.port` is unaffected.
