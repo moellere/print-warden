@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+Phases 13–18. No config changes are required: new job columns are added on start-up, and every new setting is
+optional. Some slices are re-run once rather than served from `slice-cache/`, because the settings passed to Orca
+now carry the printer's compatibility.
 
 - 3MF projects are sliced whole (modifiers, negative parts, per-object settings) with the printer's settings over
   them. Every gcode setting of the project is replaced and embedded gcode dropped first; a replaced setting that still
