@@ -9,7 +9,8 @@ Each phase lists what it delivers and when it is done. Phases 0–7 are complete
 - `PRINT_WARDEN_TOKEN` guards `/mcp` and `/upload`; `/ha/action` has its own `HA_ACTION_SECRET`; both webhooks fail closed.
 - Daily retention: events, snapshots and timelapse frames older than `keep_days`.
 - Job ledger enforces a transition table; log-only entries use `note()`.
-- `.3mf` uploads are refused (they were sliced as STL); model fetches by URL are capped at 100 MB and must be STL/SCAD.
+- `.3mf` uploads were refused (they were sliced as STL; see Phase 4 for how 3MF is read now); model fetches by URL are
+  capped at 100 MB.
 
 Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webhooks 403 without their secret.
 
@@ -58,7 +59,8 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - Found by running OrcaSlicer 2.4.2 for real: the temperature check now judges the highest temperature set (the
   Artillery start gcode preheats to 140°C), extrusion counts only from a known position, and the house rules pick the
   High Temp Plate (Orca's default Cool Plate gave PLA a 35°C bed).
-- Not done: multi-plate 3mf projects (`.3mf` uploads stay refused).
+- 3MF projects (after 0.2.0): geometry only, one plate per job (`plate=N`); the project's settings and gcode are
+  ignored, modifier volumes dropped, negative parts refused.
 
 ## Phase 5 — Monitoring depth ✅
 

@@ -38,6 +38,7 @@ from . import (
     retention,
     slicer,
     stats,
+    threemf,
 )
 from .bedcheck import BedStore
 from .events import Event, EventStore
@@ -61,7 +62,7 @@ WATCHERS: dict[str, PrinterWatcher] = {
 UPLOADS = CFG.storage_dir / "models"
 JOBDIR = CFG.storage_dir / "jobs"
 PUBLIC_DIRS = ("snapshots", "timelapse", "jobs")
-MODEL_SUFFIXES = (".stl", ".scad")
+MODEL_SUFFIXES = (".stl", ".scad", ".3mf")
 MAX_MODEL_BYTES = 100 * 1024 * 1024
 
 mcp = FastMCP(
@@ -426,10 +427,12 @@ async def submit_job(
     orient: bool = False,
     offer: bool = True,
     use_spool_temps: bool = True,
+    plate: int = 1,
 ) -> dict[str, Any]:
     """Slice a model and stage the gcode on a printer (not started). `printer` is a printer name or a location
     ("covington", "wyola"): the warden routes to the printer there with the right material loaded. `model` is a file name previously
-    POSTed to /upload (STL or SCAD) or an http(s) URL. `overrides` are OrcaSlicer process keys applied after the
+    POSTed to /upload (STL, SCAD or 3MF) or an http(s) URL. A 3MF project contributes its geometry only: `plate` picks
+    the plate (one job per plate), and the project's own settings and gcode are ignored in favour of this printer's. `overrides` are OrcaSlicer process keys applied after the
     house rules (tree supports, no brim). `copies` arranges that many on one plate; `orient` lets Orca pick the
     orientation. The model is checked against the bed before slicing and the gcode after (extents, temperatures for
     the material); problems become blockers. With `offer` the job joins the printer's queue and is offered (phone tap,
@@ -448,11 +451,18 @@ async def submit_job(
         )
     src = await _resolve_model(model)
     stem = (name or src.stem).replace(" ", "_")
+    if src.suffix.lower() == ".3mf" and plate != 1 and not name:
+        stem += f"_plate{plate}"
     out = JOBDIR / printer / f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}"
     out.mkdir(parents=True, exist_ok=True)
+    plate_warnings: list[str] = []
     if src.suffix.lower() == ".scad":
         stl = out / f"{stem}.stl"
         await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
+    elif src.suffix.lower() == ".3mf":
+        stl = out / f"{stem}.stl"
+        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
+        plate_warnings = conv.warnings
     else:
         stl = out / f"{stem}.stl"
         stl.write_bytes(src.read_bytes())
@@ -489,7 +499,7 @@ async def submit_job(
         filament_m=res.filament_m,
         layers=res.layers,
         max_z=res.max_z,
-        warnings=([temp_note] if temp_note else []) + res.warnings,
+        warnings=([temp_note] if temp_note else []) + plate_warnings + res.warnings,
         slice_blockers=res.blockers,
         copies=copies,
         offer=offer,
@@ -712,7 +722,9 @@ def model_history(model: str) -> dict[str, Any]:
     except KeyError:
         path = UPLOADS / _model_name(model)
         if path.suffix.lower() != ".stl" or not path.exists():
-            raise ValueError(f"{model!r} is not a job id or an uploaded STL") from None
+            raise ValueError(
+                f"{model!r} is not a job id or an uploaded STL (look up a 3MF or SCAD model by job id)"
+            ) from None
         h = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
     if not h:
         return {"model_hash": None, "jobs": []}
