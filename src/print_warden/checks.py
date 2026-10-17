@@ -20,7 +20,8 @@ MATERIAL_TEMPS: dict[str, tuple[int, int, int, int]] = {
 }
 EDGE_TOLERANCE_MM = 1.0
 _MOVE = re.compile(r"^G[01]\s", re.IGNORECASE)
-_AXIS = re.compile(r"([XYZE])(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+# Orca writes small values without a leading zero ("E.62349", "E-.8").
+AXIS = re.compile(r"([XYZE])(-?(?:\d+(?:\.\d*)?|\.\d+))", re.IGNORECASE)
 _TEMP = re.compile(r"^(M10[49]|M1[49]0)\b.*?\bS(\d+(?:\.\d+)?)", re.IGNORECASE)
 
 
@@ -97,7 +98,7 @@ def gcode_facts(text: str) -> dict[str, Any]:
         elif up.startswith("M82"):
             relative_e = False
         elif up.startswith("G92"):
-            for k, v in _AXIS.findall(line):
+            for k, v in AXIS.findall(line):
                 if k.upper() == "E":
                     e = float(v)
         elif m := _TEMP.match(line):
@@ -105,7 +106,7 @@ def gcode_facts(text: str) -> dict[str, Any]:
             if t > 0:
                 (nozzle if m[1].upper() in ("M104", "M109") else bed).append(t)
         elif _MOVE.match(line):
-            axes = {k.upper(): float(v) for k, v in _AXIS.findall(line)}
+            axes = {k.upper(): float(v) for k, v in AXIS.findall(line)}
             x, y = axes.get("X", x), axes.get("Y", y)
             if "E" in axes:
                 de = axes["E"] if relative_e else axes["E"] - e

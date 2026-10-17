@@ -89,3 +89,17 @@ def test_preheat_and_bed_wait_temperatures_do_not_block():
 def test_prime_before_the_first_move_has_no_position():
     facts = checks.gcode_facts("M83\nG1 E10 F300\nG1 X20 Y30 E1\n")
     assert facts["extents"] == (20, 30, 20, 30)
+
+
+def test_values_without_a_leading_zero_count():
+    """Orca writes "E.62349" and "E-.8"; those moves extrude (or retract) like any other."""
+    facts = checks.gcode_facts(
+        "M83\nG1 X10 Y10\nG1 X320 Y10 E.62349\nG1 E-.8\nG1 X5 Y5 E.5\n"
+    )
+    assert facts["extents"] == (5, 5, 320, 10)
+    assert checks.AXIS.findall("G1 X.5 Y-.25 E1. Z12") == [
+        ("X", ".5"),
+        ("Y", "-.25"),
+        ("E", "1."),
+        ("Z", "12"),
+    ]

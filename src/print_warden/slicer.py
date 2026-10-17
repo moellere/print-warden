@@ -18,6 +18,7 @@ from typing import Any
 from . import checks
 from . import park as parking
 from .config import Pose, SlicerConfig
+from .preview import render as render_preview
 
 
 @dataclass
@@ -306,6 +307,13 @@ async def slice_stl(
                     preview = out_dir / f"{name}.png"
                     preview.write_bytes(z.read(cand))
                     break
+        if preview is None:
+            try:
+                preview = render_preview(
+                    text, checks.bed_rect(machine_cfg), out_dir / f"{name}.png"
+                )
+            except (ValueError, OSError):
+                preview = None
         meta = parse_gcode_header(text)
         blockers = checks.gcode_problems(
             checks.gcode_facts(text), machine_cfg, material

@@ -149,6 +149,9 @@ docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppIm
 curl localhost:8710/healthz
 ```
 
+Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
+`docs/operations.md`; releases: `docs/releasing.md`; changes: `CHANGELOG.md`.
+
 Access:
 
 | Route | Guard |
@@ -183,6 +186,7 @@ src/print_warden/
   stats.py      estimate accuracy, ETA correction, failure rates, monthly usage
   ha_entities.py  per-printer HA sensors (REST states API)
   checks.py     slice checks: model fit, gcode extents, temperatures, blocking Orca warnings
+  preview.py    job preview drawn from the gcode (top-down extrusion on the bed outline)
   park.py       bed-check pose: end-gcode park at slice time, pose test, opt-in Y rehome
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
