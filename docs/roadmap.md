@@ -126,7 +126,7 @@ Done when: a low spool or an overdue service raises one alert, and a tap clears 
 Done when: a 10-copy job on two idle printers finishes in about half the time, every start still tap- or
 auto_start-gated.
 
-## Phase 12 — Deeper homelab-helper integration
+## Phase 12 — Deeper homelab-helper integration ✅ (build, warden side)
 
 - Warden events (Klipper shutdowns, repeated failures, overdue maintenance) in the status contract as an added field
   (api 1 only gains fields); homelab-helper turns them into findings.

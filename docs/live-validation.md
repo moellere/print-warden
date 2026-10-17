@@ -58,6 +58,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     rename and the states survive. Stop the warden: the entities go unavailable.
 19. homelab-helper: `helper discover printwarden --persist` lists the printers; power one off and re-run; a
     `printer-offline` finding opens; power it on and re-run; it resolves.
+25. Force a shutdown (`M112` in the console): `/healthz` shows `last_shutdown.cause`; `helper discover printwarden
+    --persist` opens a Klipper finding naming the cause; `FIRMWARE_RESTART` and re-run: it resolves.
 
 ## 7. Upkeep
 
@@ -102,3 +104,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 22 | Drying reminder → Dried resets it | | |
 | 23 | submit_split shares copies; each share tap-started | | |
 | 24 | Cheap-power hold, offered when the price drops | | |
+| 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | |

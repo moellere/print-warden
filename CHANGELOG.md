@@ -17,6 +17,8 @@
   `record_maintenance_done`, `record_spool_dried`.
 - `submit_split`: copies spread over printers with the material loaded, timed per printer, each share an ordinary
   job. `policy.cheap_power` holds offers of long prints while a price entity reads above `max_price`.
+- `/healthz` (still api 1, fields added): `last_shutdown` (classified cause, until Klipper is ready again),
+  `outcomes_7d` and `maintenance_due`, for homelab-helper's findings.
 
 ## 0.3.0
 

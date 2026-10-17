@@ -65,5 +65,14 @@ added to existing databases). Read `CHANGELOG.md` first: some releases change de
 ## Status contract
 
 `GET /healthz` (no token) returns, with `"api": 1`, the version and per printer `connected`, `klippy`, `state`,
-`progress_pct`, `finishes_in_s`, `bed`, `queue` and `last_update_s_ago`. `ok` is true when every printer is
-connected. Fields are only added within an api version; it never carries file names, job names or URLs.
+`progress_pct`, `finishes_in_s`, `bed`, `queue` and `last_update_s_ago`, and since 0.4:
+
+- `last_shutdown`: `{cause, hint, s_ago}` for a Klipper shutdown in the last week that Klipper has not been ready
+  since. `cause` is the classification (`thermal_runaway`, `heater_not_heating`, `thermistor_out_of_range`,
+  `mcu_comm_lost`, `mcu_timing`, `tmc_driver_error`, ..., `unknown`) and `hint` its fixed advice; never the raw
+  message.
+- `outcomes_7d`: `{prints, failed}`, with labels winning over how the job ended.
+- `maintenance_due`: the names of the printer's maintenance items that are due.
+
+`ok` is true when every printer is connected. Fields are only added within an api version; it never carries file
+names, job names or URLs. homelab-helper's `printwarden` source turns these into findings.

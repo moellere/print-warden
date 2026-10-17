@@ -39,6 +39,7 @@ from . import (
     park,
     policy,
     retention,
+    rules,
     schedule,
     slicer,
     stats,
@@ -1345,9 +1346,38 @@ async def obico_webhook(request: Request) -> JSONResponse:
 HEALTH_API = 1
 
 
+def _last_shutdown(printer: str, now: float) -> dict[str, Any] | None:
+    """The classified cause of a Klipper shutdown in the last week that Klipper has not been ready since."""
+    for ev in STORE.query(printer, since=now - 7 * 86400, limit=200):
+        if ev["kind"] == "klippy_ready":
+            return None
+        if ev["kind"] == "klippy_shutdown":
+            cause = (ev.get("data") or {}).get("cause") or "unknown"
+            return {
+                "cause": cause,
+                "hint": rules.SHUTDOWN_HINTS.get(cause, rules.UNKNOWN_HINT),
+                "s_ago": round(now - ev["ts"]),
+            }
+    return None
+
+
+def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
+    finished = [
+        j
+        for j in JOBS.since(now - 7 * 86400, printer)
+        if j["state"] in ("done", "failed")
+    ]
+    return {
+        "prints": len(finished),
+        "failed": sum(1 for j in finished if outcome.failed(j)),
+    }
+
+
 def health_report() -> dict[str, Any]:
     """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
-    within an api version; no file names, job names or URLs."""
+    within an api version; no file names, job names or URLs. Added after 0.3.0: `last_shutdown` (classified cause of
+    a shutdown Klipper has not recovered from), `outcomes_7d` and `maintenance_due`."""
+    now = time.time()
     printers = {}
     for n, w in WATCHERS.items():
         st = w.status()
@@ -1363,6 +1393,9 @@ def health_report() -> dict[str, Any]:
             "bed": BED.state(n)["state"],
             "queue": len(JOBS.queue(n)),
             "last_update_s_ago": st.get("last_update_s_ago"),
+            "last_shutdown": _last_shutdown(n, now),
+            "outcomes_7d": _outcomes_7d(n, now),
+            "maintenance_due": [m["item"] for m in _maintenance(n, now) if m["due"]],
         }
     return {
         "ok": all(p["connected"] for p in printers.values()),

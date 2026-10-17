@@ -6,6 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from print_warden import server, upkeep
+from print_warden.events import Event
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -549,8 +550,39 @@ def test_healthz_contract(client):
         "bed",
         "queue",
         "last_update_s_ago",
+        "last_shutdown",
+        "outcomes_7d",
+        "maintenance_due",
     }
     assert "filename" not in str(body)
+
+
+def test_healthz_reports_an_unrecovered_shutdown_by_cause_only():
+    server.STORE.add(
+        Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
+    )
+    assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
+    server.STORE.add(
+        Event(
+            "testq",
+            "klippy_shutdown",
+            "critical",
+            "Klipper shutdown (thermal runaway): check the heater. secret.gcode",
+            {
+                "cause": "thermal_runaway",
+                "state_message": "Heater extruder not heating at expected rate",
+            },
+        )
+    )
+    p = server.health_report()["printers"]["testq"]
+    assert p["last_shutdown"]["cause"] == "thermal_runaway"
+    assert "thermistor" in p["last_shutdown"]["hint"]
+    assert "secret" not in str(p)
+    assert "Heater" not in str(p)
+    server.STORE.add(
+        Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
+    )
+    assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
 
 
 def _labelled_job(state="done", **kw):
