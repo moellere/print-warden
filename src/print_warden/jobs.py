@@ -67,6 +67,9 @@ FIELDS = (
     "model_hash",
     "overrides",
     "orient",
+    "print_duration_s",
+    "grams_used",
+    "cost",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides")
 ADDED_COLUMNS = {
@@ -82,6 +85,9 @@ ADDED_COLUMNS = {
     "model_hash": "text",
     "overrides": "text",
     "orient": "integer",
+    "print_duration_s": "real",
+    "grams_used": "real",
+    "cost": "real",
 }
 
 
@@ -209,6 +215,16 @@ class JobStore:
             (model_hash, limit),
         )
         return [self.get(r[0]) for r in ids]
+
+    def since(
+        self, ts: float, printer: str | None = None
+    ) -> builtins.list[dict[str, Any]]:
+        """Jobs created since `ts`, oldest first."""
+        q, args = "select id from jobs where created>=?", list[Any]([ts])
+        if printer:
+            q += " and printer=?"
+            args.append(printer)
+        return [self.get(r[0]) for r in self._db.execute(q + " order by created", args)]
 
     def find_active(self, printer: str) -> dict[str, Any] | None:
         rows = self.list(printer, 1, ("printing",))

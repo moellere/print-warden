@@ -8,6 +8,17 @@ from typing import Any
 import httpx
 
 
+def _price_per_g(s: dict[str, Any], f: dict[str, Any]) -> float | None:
+    """The spool's price over its initial weight, else the filament's list price over its weight."""
+    for price, weight in (
+        (s.get("price"), s.get("initial_weight")),
+        (f.get("price"), f.get("weight")),
+    ):
+        if price and weight:
+            return float(price) / float(weight)
+    return None
+
+
 class Spoolman:
     def __init__(self, url: str):
         self._c = httpx.AsyncClient(base_url=url.rstrip("/") + "/api/v1", timeout=10)
@@ -42,6 +53,7 @@ class Spoolman:
             "extruder_temp": f.get("settings_extruder_temp"),
             "bed_temp": f.get("settings_bed_temp"),
             "remaining_g": s.get("remaining_weight"),
+            "price_per_g": _price_per_g(s, f),
             "location": s.get("location"),
             "archived": s.get("archived", False),
         }

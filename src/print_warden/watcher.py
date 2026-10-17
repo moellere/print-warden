@@ -139,7 +139,7 @@ class PrinterWatcher:
                 self._spawn(self._after_print())
             used = ev.data.get("filament_used_mm")
             if job:
-                await self.settle_spool(job, used)
+                await self.settle_spool(job, used, ev.data.get("print_duration"))
                 if ev.kind == "print_complete":
                     ev.message = completion_summary(
                         job, ev.data.get("print_duration") or 0, used
@@ -189,23 +189,40 @@ class PrinterWatcher:
                 )
         return None
 
-    async def settle_spool(self, job: dict[str, Any], used_mm: float | None) -> None:
-        """Record what the print consumed and deduct it from the job's spool. Never raises."""
-        if used_mm is None or not self.jobs:
+    async def settle_spool(
+        self,
+        job: dict[str, Any],
+        used_mm: float | None,
+        duration_s: float | None = None,
+    ) -> None:
+        """Record what the print took (time, filament, grams, cost) and deduct it from the job's spool. Never raises."""
+        if not self.jobs:
             return
+        fields: dict[str, Any] = {}
+        if duration_s:
+            fields["print_duration_s"] = float(duration_s)
+        if used_mm is None:
+            if fields:
+                self.jobs.note(job["id"], f"printed {duration_s:.0f} s", **fields)
+            return
+        grams = used_grams(job, used_mm)
+        fields.update(filament_used_mm=used_mm, grams_used=grams)
         sid = job.get("spool_id")
-        if not (self.spoolman and self.p.track_spool_usage and sid):
-            self.jobs.note(
-                job["id"], f"used {used_mm:.0f} mm", filament_used_mm=used_mm
-            )
-            return
-        try:
-            spool = await self.spoolman.use_length(int(sid), used_mm)
-            note = f"spool {sid}: -{used_mm:.0f} mm, {spool.get('remaining_g') or 0:.0f} g left"
-        except (httpx.HTTPError, KeyError, ValueError) as e:
-            log.warning("%s spool %s deduction failed: %s", self.p.name, sid, e)
-            note = f"spool {sid} deduction of {used_mm:.0f} mm failed: {e}"
-        self.jobs.note(job["id"], note, filament_used_mm=used_mm)
+        spool: dict[str, Any] | None = None
+        note = f"used {used_mm:.0f} mm"
+        if self.spoolman and sid:
+            try:
+                if self.p.track_spool_usage:
+                    spool = await self.spoolman.use_length(int(sid), used_mm)
+                    note = f"spool {sid}: -{used_mm:.0f} mm, {spool.get('remaining_g') or 0:.0f} g left"
+                else:
+                    spool = await self.spoolman.spool(int(sid))
+            except (httpx.HTTPError, KeyError, ValueError) as e:
+                log.warning("%s spool %s failed: %s", self.p.name, sid, e)
+                note = f"spool {sid} update for {used_mm:.0f} mm failed: {e}"
+        if spool and grams is not None and spool.get("price_per_g"):
+            fields["cost"] = round(grams * spool["price_per_g"], 2)
+        self.jobs.note(job["id"], note, **fields)
 
     async def _finish_timelapse(
         self, frames: Path, job: dict[str, Any] | None, deferred: Event | None
@@ -260,7 +277,7 @@ class PrinterWatcher:
             verdict = reconcile.decide(j, st, history or [])
             if not verdict:
                 continue
-            state, note, used = verdict
+            state, note, used, duration = verdict
             fields: dict[str, Any] = {}
             if state == "printing":
                 fields["started_at"] = time.time()
@@ -272,7 +289,7 @@ class PrinterWatcher:
             if self.bed and state in ("printing", "done", "failed"):
                 self.bed.set_state(self.p.name, "occupied", note)
             if state in ("done", "failed"):
-                await self.settle_spool(job, used)
+                await self.settle_spool(job, used, duration)
                 await self.handle(
                     Event(
                         self.p.name,

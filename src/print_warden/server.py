@@ -27,7 +27,17 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import cameras, config, moonraker, park, policy, retention, slicer
+from . import (
+    cameras,
+    config,
+    ha_entities,
+    moonraker,
+    park,
+    policy,
+    retention,
+    slicer,
+    stats,
+)
 from .bedcheck import BedStore
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
@@ -82,16 +92,9 @@ def _eta_free_s(name: str) -> float | None:
         return None
     left = 0.0
     if st.get("state") in ("printing", "paused"):
-        active = JOBS.find_active(name)
-        elapsed = (st.get("print_duration_min") or 0) * 60
-        pct = st.get("progress_pct") or 0
-        if active and active.get("est_seconds"):
-            left = max(0.0, active["est_seconds"] - elapsed)
-        elif pct > 5:
-            left = elapsed * (100 - pct) / pct
-        else:
-            left = 3600.0
-    return left + sum(j.get("est_seconds") or 0 for j in JOBS.queue(name))
+        rest = _print_left_s(name)
+        left = 3600.0 if rest is None else rest
+    return left + sum(_corrected_est(j) for j in JOBS.queue(name))
 
 
 async def _resolve_printer(
@@ -213,8 +216,34 @@ def _job_public(job: dict[str, Any]) -> dict[str, Any]:
             )
     j.pop("log", None)
     if j.get("est_seconds"):
-        j["est_human"] = f"{j['est_seconds'] // 3600}h {j['est_seconds'] % 3600 // 60}m"
+        corrected = _corrected_est(j)
+        j["est_corrected_seconds"] = corrected
+        j["est_human"] = _hm(corrected) + (
+            f" (Orca {_hm(j['est_seconds'])})" if corrected != j["est_seconds"] else ""
+        )
     return j
+
+
+def _hm(seconds: float) -> str:
+    m = round(seconds / 60)
+    return f"{m // 60}h {m % 60}m"
+
+
+_CORRECTIONS: dict[str, tuple[float, float]] = {}
+
+
+def _correction(printer: str) -> float:
+    """This printer's estimate correction from its last 90 days of completed prints (cached for a minute)."""
+    hit = _CORRECTIONS.get(printer)
+    if hit and time.time() - hit[1] < 60:
+        return hit[0]
+    factor = stats.correction(JOBS.since(time.time() - 90 * 86400, printer), printer)
+    _CORRECTIONS[printer] = (factor, time.time())
+    return factor
+
+
+def _corrected_est(job: dict[str, Any]) -> float:
+    return round((job.get("est_seconds") or 0) * _correction(job["printer"]))
 
 
 async def _spool_facts(printer: str) -> tuple[str | None, float | None]:
@@ -268,7 +297,7 @@ async def _auto_gate(
         w.check_skipped,
     )
     if not policy.finish_ok(
-        w.p.finish_window, datetime.now().astimezone(), job.get("est_seconds")
+        w.p.finish_window, datetime.now().astimezone(), _corrected_est(job)
     ):
         ok = False
         reasons.append(f"would finish outside finish_window ({w.p.finish_window})")
@@ -714,6 +743,50 @@ def model_history(model: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def print_history(
+    printer: str | None = None, days: int = 30, state: str | None = None
+) -> list[dict[str, Any]]:
+    """Finished and running jobs from the last `days`, newest first: settings, estimate (Orca's and corrected),
+    actual print time, grams, cost and how it ended."""
+    rows = JOBS.since(time.time() - days * 86400, printer)
+    keep = (
+        "id",
+        "created",
+        "printer",
+        "name",
+        "material",
+        "quality",
+        "copies",
+        "state",
+        "est_seconds",
+        "print_duration_s",
+        "grams_used",
+        "cost",
+        "error",
+        "started_at",
+        "finished_at",
+    )
+    wanted = (state,) if state else ("printing", "done", "failed")
+    return [{k: j.get(k) for k in keep} for j in reversed(rows) if j["state"] in wanted]
+
+
+@mcp.tool()
+def printer_stats(days: int = 90) -> dict[str, Any]:
+    """From the last `days` of jobs: how Orca's estimates compare with real print times (and the correction each
+    printer's ETAs now use), failure rates by printer / material / quality with the commonest reasons, and prints,
+    hours, grams and cost per month."""
+    rows = JOBS.since(time.time() - days * 86400)
+    return {
+        "estimate_accuracy": stats.estimate_accuracy(rows),
+        "eta_correction": {n: _correction(n) for n in WATCHERS},
+        "by_printer": stats.outcomes(rows, "printer"),
+        "by_material": stats.outcomes(rows, "material"),
+        "by_quality": stats.outcomes(rows, "quality"),
+        "monthly": stats.monthly(rows),
+    }
+
+
+@mcp.tool()
 def list_jobs(printer: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
     """Recent jobs, newest first, with state (sliced/staged/awaiting_approval/approved/printing/done/failed/skipped)."""
     return [_job_public(j) for j in JOBS.list(printer, limit)]
@@ -742,11 +815,9 @@ async def request_start(job_id: str) -> dict[str, Any]:
     )
     window = _w(job["printer"]).p.finish_window
     if window and not policy.finish_ok(
-        window, datetime.now().astimezone(), job.get("est_seconds")
+        window, datetime.now().astimezone(), _corrected_est(job)
     ):
-        done = datetime.now().astimezone() + timedelta(
-            seconds=job.get("est_seconds") or 0
-        )
+        done = datetime.now().astimezone() + timedelta(seconds=_corrected_est(job))
         body += f" Finishes ~{done:%H:%M}, outside {window}."
     if not ok:
         body += " — BLOCKED: " + "; ".join(reasons)
@@ -1089,6 +1160,64 @@ async def housekeeping(interval_s: float = 60) -> None:
         await asyncio.sleep(interval_s)
 
 
+_PUBLISHED: dict[str, tuple[str, dict[str, Any]]] = {}
+_PUBLISHED_AT = 0.0
+REPUBLISH_S = 300
+
+
+def _print_left_s(name: str) -> float | None:
+    w = WATCHERS[name]
+    st = w.status()
+    if st.get("state") not in ("printing", "paused"):
+        return None
+    active = JOBS.find_active(name)
+    elapsed = (st.get("print_duration_min") or 0) * 60
+    pct = st.get("progress_pct") or 0
+    if active and active.get("est_seconds"):
+        return max(0.0, _corrected_est(active) - elapsed)
+    return elapsed * (100 - pct) / pct if pct > 5 else None
+
+
+async def publish_entities(force: bool = False) -> int:
+    """Push each printer's HA entities; only what changed, plus everything every REPUBLISH_S (HA forgets REST-set
+    states when it restarts). Returns how many were sent."""
+    global _PUBLISHED_AT
+    if not (HA and CFG.ha and CFG.ha.publish_entities and CFG.ha.token):
+        return 0
+    force = force or time.time() - _PUBLISHED_AT > REPUBLISH_S
+    sent = 0
+    for name, w in WATCHERS.items():
+        st = w.status()
+        rows = ha_entities.printer_entities(
+            name,
+            st,
+            JOBS.find_active(name),
+            _print_left_s(name),
+            len(JOBS.queue(name)),
+            BED.state(name)["state"],
+            JOBS.kv_get(f"loaded_material:{name}"),
+            datetime.now().astimezone(),
+        )
+        for entity, state, attrs in rows:
+            if not force and _PUBLISHED.get(entity) == (state, attrs):
+                continue
+            if await HA.set_state(entity, state, attrs):
+                _PUBLISHED[entity] = (state, attrs)
+                sent += 1
+    if force:
+        _PUBLISHED_AT = time.time()
+    return sent
+
+
+async def entity_loop(interval_s: float = 30) -> None:
+    while True:
+        try:
+            await publish_entities()
+        except Exception:
+            log.exception("publish entities")
+        await asyncio.sleep(interval_s)
+
+
 class TokenAuth:
     """Bearer token (or ?token=, for clients that can only set a URL) on everything but the open paths."""
 
@@ -1139,6 +1268,7 @@ async def lifespan(app: Starlette):
         asyncio.create_task(w.run(), name=f"watch:{n}") for n, w in WATCHERS.items()
     ]
     tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
+    tasks.append(asyncio.create_task(entity_loop(), name="ha-entities"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(
