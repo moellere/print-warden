@@ -70,6 +70,10 @@ FIELDS = (
     "print_duration_s",
     "grams_used",
     "cost",
+    "outcome",
+    "outcome_reason",
+    "outcome_by",
+    "outcome_at",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides")
 ADDED_COLUMNS = {
@@ -88,6 +92,10 @@ ADDED_COLUMNS = {
     "print_duration_s": "real",
     "grams_used": "real",
     "cost": "real",
+    "outcome": "text",
+    "outcome_reason": "text",
+    "outcome_by": "text",
+    "outcome_at": "real",
 }
 
 

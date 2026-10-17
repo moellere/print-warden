@@ -5,17 +5,22 @@
 ```
 cp printers.example.yaml printers.yaml                     # edit: printers, cameras, presets, HA, Spoolman
 printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
+docker compose run --rm print-warden print-warden check   # 0 failed before going further
 docker compose up -d                                       # builds locally, or set image: in compose.yml
-curl -s localhost:8710/healthz | jq
+curl -s localhost:8720/healthz | jq
 ```
 
 To run a released image instead of building, replace `build: .` in `compose.yml` with
 `image: ghcr.io/moellere/print-warden:v0.3.0` (or `:latest`).
 
-MCP clients connect to `http://<host>:8710/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
+MCP clients connect to `http://<host>:8720/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
 `?token=...` for clients that only take a URL.
 
 ## First-run checklist
+
+`print-warden check [printers.yaml]` resolves every Orca profile and asks Moonraker, the cameras, Home Assistant
+(token, notify service, lights, quiet entity), Spoolman and the MQTT broker whether they answer; it changes nothing
+and exits 1 if anything fails. Then walk `docs/live-validation.md` for what only a real printer can show.
 
 - `list_printers` shows every printer `moonraker_connected: true` and the material you expect.
 - `set_active_spool` for each printer if you use Spoolman.
@@ -60,5 +65,14 @@ added to existing databases). Read `CHANGELOG.md` first: some releases change de
 ## Status contract
 
 `GET /healthz` (no token) returns, with `"api": 1`, the version and per printer `connected`, `klippy`, `state`,
-`progress_pct`, `finishes_in_s`, `bed`, `queue` and `last_update_s_ago`. `ok` is true when every printer is
-connected. Fields are only added within an api version; it never carries file names, job names or URLs.
+`progress_pct`, `finishes_in_s`, `bed`, `queue` and `last_update_s_ago`, and since 0.4:
+
+- `last_shutdown`: `{cause, hint, s_ago}` for a Klipper shutdown in the last week that Klipper has not been ready
+  since. `cause` is the classification (`thermal_runaway`, `heater_not_heating`, `thermistor_out_of_range`,
+  `mcu_comm_lost`, `mcu_timing`, `tmc_driver_error`, ..., `unknown`) and `hint` its fixed advice; never the raw
+  message.
+- `outcomes_7d`: `{prints, failed}`, with labels winning over how the job ended.
+- `maintenance_due`: the names of the printer's maintenance items that are due.
+
+`ok` is true when every printer is connected. Fields are only added within an api version; it never carries file
+names, job names or URLs. homelab-helper's `printwarden` source turns these into findings.

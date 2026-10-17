@@ -1,10 +1,12 @@
 import asyncio
 import time
+import uuid
 
 import pytest
 from starlette.testclient import TestClient
 
-from print_warden import server
+from print_warden import server, upkeep
+from print_warden.events import Event
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -548,5 +550,240 @@ def test_healthz_contract(client):
         "bed",
         "queue",
         "last_update_s_ago",
+        "last_shutdown",
+        "outcomes_7d",
+        "maintenance_due",
     }
     assert "filename" not in str(body)
+
+
+def test_healthz_reports_an_unrecovered_shutdown_by_cause_only():
+    server.STORE.add(
+        Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
+    )
+    assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
+    server.STORE.add(
+        Event(
+            "testq",
+            "klippy_shutdown",
+            "critical",
+            "Klipper shutdown (thermal runaway): check the heater. secret.gcode",
+            {
+                "cause": "thermal_runaway",
+                "state_message": "Heater extruder not heating at expected rate",
+            },
+        )
+    )
+    p = server.health_report()["printers"]["testq"]
+    assert p["last_shutdown"]["cause"] == "thermal_runaway"
+    assert "thermistor" in p["last_shutdown"]["hint"]
+    assert "secret" not in str(p)
+    assert "Heater" not in str(p)
+    server.STORE.add(
+        Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
+    )
+    assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
+
+
+def _labelled_job(state="done", **kw):
+    j = server.JOBS.create(
+        printer="testp", name="part", material="PLA", quality="draft", **kw
+    )
+    for s in ("staged", "printing", state):
+        j = server.JOBS.transition(j["id"], s)
+    return j
+
+
+async def test_outcome_taps_label_the_job(monkeypatch):
+    prompts, cleared = [], []
+
+    async def notify(title, message, actions, image=None, tag=None):
+        prompts.append([a for a, _ in actions])
+        return True
+
+    async def clear(tag):
+        cleared.append(tag)
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    j = _labelled_job()
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:failed", {})
+    assert server.JOBS.get(j["id"])["outcome"] == "failed"
+    assert prompts[-1][0].endswith(":adhesion")
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:more", {})
+    assert prompts[-1][0].endswith(":layer_shift")
+    assert server.JOBS.get(j["id"])["outcome_reason"] is None
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:layer_shift", {})
+    got = server.JOBS.get(j["id"])
+    assert (got["outcome"], got["outcome_reason"], got["outcome_by"]) == (
+        "failed",
+        "layer_shift",
+        "phone tap",
+    )
+    assert cleared == [f"print_warden_outcome_{j['id']}"]
+
+
+def test_label_print_tool_and_its_limits():
+    j = _labelled_job("failed", error="print_cancelled")
+    out = server.label_print(j["id"], "good", "Enoch in chat")
+    assert out["outcome"] == "good"
+    with pytest.raises(ValueError):
+        server.label_print(j["id"], "failed", "x", reason="gremlins")
+    running = server.JOBS.create(printer="testp", name="r")
+    server.JOBS.transition(running["id"], "staged")
+    with pytest.raises(ValueError, match="only finished"):
+        server.label_print(running["id"], "good", "x")
+    server.JOBS.transition(running["id"], "skipped")
+
+
+def test_failed_before_warns_only_for_the_same_settings():
+    h = "feedc0de" + uuid.uuid4().hex[:8]
+    bad = _labelled_job(model_hash=h, overrides={})
+    server.label_job(bad["id"], "failed", "adhesion", "test")
+    _labelled_job(model_hash=h, overrides={"brim_width": "5"})
+    warn = server._failed_before(h, "PLA", "draft", {})
+    assert len(warn) == 1
+    assert "adhesion" in warn[0]
+    assert bad["id"] in warn[0]
+    assert server._failed_before(h, "PLA", "draft", {"brim_width": "5"}) == []
+    assert server._failed_before(h, "PETG", "draft", {}) == []
+    hist = server._history(h)
+    assert (hist["done"], hist["failed"]) == (1, 1)
+
+
+async def test_upkeep_alerts_once_a_day_and_a_tap_resets(monkeypatch):
+    import dataclasses
+
+    w = server.WATCHERS["testp"]
+    monkeypatch.setattr(
+        w,
+        "p",
+        dataclasses.replace(
+            w.p, maintenance=upkeep.parse_maintenance({"belts": {"every_days": 1}})
+        ),
+    )
+    sent, cleared = [], []
+
+    async def notify(title, message, actions, image=None, tag=None):
+        sent.append((tag, [a for a, _ in actions]))
+        return True
+
+    async def clear(tag):
+        cleared.append(tag)
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    monkeypatch.setattr(server, "SPOOLMAN", None)
+    now = time.time()
+    server.JOBS.kv_set("maint_reset:testp:belts", str(now - 2 * 86400))
+    server.JOBS.kv_set("upkeep_alerted:maint:testp:belts", "0")
+    assert await server.upkeep_alerts(now) == 1
+    tag, actions = sent[-1]
+    assert actions == ["PRINT_WARDEN_MAINT_testp:belts"]
+    assert await server.upkeep_alerts(now + 3600) == 0
+    await server._on_ha_action("PRINT_WARDEN_MAINT_testp:belts", {})
+    assert cleared == [tag]
+    (belts,) = [m for m in server._maintenance("testp") if m["item"] == "belts"]
+    assert not belts["due"]
+    rows = {
+        e: st
+        for _, printer_rows in server._entity_rows().values()
+        for e, st, _ in printer_rows
+    }
+    assert rows["sensor.print_warden_testp_maint_belts"] == "0"
+    with pytest.raises(ValueError):
+        server.record_maintenance("testp", "flux capacitor", "x")
+
+
+async def test_submit_split_shares_copies_and_submits_ordinary_jobs(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    stl = tmp_path / "cube.stl"
+    stl.write_text(
+        "solid c\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 40 0 0\nvertex 0 40 20\n"
+        "endloop\nendfacet\nendsolid c\n"
+    )
+
+    async def resolve(model):
+        return stl
+
+    async def no_spool(printer, mat):
+        return {}, None
+
+    sliced = []
+
+    async def slice_stl(cfg, path, out, machine, process, filament, *a, **kw):
+        sliced.append(out.name)
+        return SimpleNamespace(est_seconds=3600)
+
+    submitted = []
+
+    async def submit(printer, model, material, quality, **kw):
+        submitted.append((printer, kw["copies"]))
+        return {"printer": printer, "copies": kw["copies"]}
+
+    machine = {
+        "printable_area": ["0x0", "200x0", "200x200", "0x200"],
+        "printable_height": 200,
+    }
+    monkeypatch.setattr(server, "_resolve_model", resolve)
+    monkeypatch.setattr(server, "_spool_temps", no_spool)
+    monkeypatch.setattr(server.slicer, "slice_stl", slice_stl)
+    monkeypatch.setattr(server.slicer, "flatten", lambda *a, **k: machine)
+    monkeypatch.setattr(server, "submit_job", submit)
+    server._CORRECTIONS.clear()
+    _ready_printer("testp")
+    _ready_printer("testq", material="PETG")
+    with pytest.raises(ValueError, match="no printer can take this"):
+        await server.submit_split("lab", "cube.stl", "TPU", 4)
+    _ready_printer("testq")
+    out = await server.submit_split("lab", "cube.stl", "pla", 4)
+    assert sorted(submitted) == [("testp", 2), ("testq", 2)]
+    plan = out["plan"]
+    assert plan["all_done_in_s"] < plan["one_printer_would_take_s"]
+    assert sorted(sliced) == ["testp", "testq"]
+    with pytest.raises(ValueError, match="do not fit"):
+        await server.submit_split("testp,testq", "cube.stl", "PLA", 60)
+
+
+async def test_cheap_power_holds_long_offers(clean_queues, monkeypatch):
+    import dataclasses
+
+    from print_warden import config
+
+    monkeypatch.setattr(
+        server,
+        "CFG",
+        dataclasses.replace(
+            server.CFG,
+            cheap_power=config.CheapPower("sensor.price", max_price=0.2, min_hours=1),
+        ),
+    )
+    price = {"v": "0.35"}
+
+    async def state(entity):
+        return price["v"] if entity == "sensor.price" else None
+
+    offered = []
+
+    async def request(job_id):
+        offered.append(job_id)
+        server.JOBS.transition(job_id, "awaiting_approval", "test")
+        return {"notification_sent": True}
+
+    monkeypatch.setattr(server.HA, "state", state)
+    monkeypatch.setattr(server, "request_start", request)
+    _ready_printer("testp")
+    j = _queued(est_seconds=4 * 3600)
+    res = await server.advance_queue("testp")
+    assert res["why"].startswith("waiting for cheaper power")
+    assert server.JOBS.kv_get("power_hold:testp") == "1"
+    price["v"] = "0.1"
+    res = await server.advance_queue("testp")
+    assert res["action"] == "offered"
+    assert offered == [j["id"]]
+    assert server.JOBS.kv_get("power_hold:testp") == "0"
