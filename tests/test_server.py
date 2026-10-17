@@ -787,3 +787,19 @@ async def test_cheap_power_holds_long_offers(clean_queues, monkeypatch):
     assert res["action"] == "offered"
     assert offered == [j["id"]]
     assert server.JOBS.kv_get("power_hold:testp") == "0"
+
+
+def test_calibrate_bed_camera(monkeypatch):
+    import json
+
+    machine = {"printable_area": ["0x0", "250x0", "250x210", "0x210"]}
+    monkeypatch.setattr(server.slicer, "flatten", lambda *a, **k: machine)
+    corners = [[0.2, 0.9], [0.8, 0.9], [0.7, 0.3], [0.3, 0.3]]
+    out = server.calibrate_bed_camera("testp", corners, "Enoch in chat")
+    assert out["bed_mm"] == (0.0, 0.0, 250.0, 210.0)
+    saved = json.loads(server.JOBS.kv_get("bed_calibration:testp"))
+    assert saved["corners"] == corners
+    with pytest.raises(ValueError):
+        server.calibrate_bed_camera(
+            "testp", [[0.2, 0.9], [1.5, 0.9], [0.7, 0.3], [0.3, 0.3]], "x"
+        )

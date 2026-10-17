@@ -37,6 +37,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 10. After a print the bed is `occupied`; `request_start` for the next job is blocked.
 11. Remove the part, tap **Bed cleared**. Expect: a labelled check recorded; the next queued job is offered.
 12. Leave the part on and run `check_bed`. Expect: not clear, with the changed fraction.
+    With `calibrate_bed_camera` done: `footprint_check(job_id)` with the part on reads no hint; take the part off
+    and run it again: "probably failed: 1 of 1 part(s) not seen".
 
 ## 4. Stop and recover
 

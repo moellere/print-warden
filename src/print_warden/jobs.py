@@ -74,6 +74,7 @@ FIELDS = (
     "outcome_reason",
     "outcome_by",
     "outcome_at",
+    "outcome_hint",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides")
 ADDED_COLUMNS = {
@@ -96,6 +97,7 @@ ADDED_COLUMNS = {
     "outcome_reason": "text",
     "outcome_by": "text",
     "outcome_at": "real",
+    "outcome_hint": "text",
 }
 
 

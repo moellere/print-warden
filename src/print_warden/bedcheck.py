@@ -37,6 +37,16 @@ def score(
 ) -> float:
     """Fraction of the bed region that differs from the reference, per colour channel after matching each channel's
     brightness, so a part the same grey value as the bed but a different colour still counts."""
+    changed = diff_mask(reference, current, region).histogram()[255]
+    return changed / (SIZE[0] * SIZE[1])
+
+
+def diff_mask(
+    reference: bytes,
+    current: bytes,
+    region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
+) -> Image.Image:
+    """The changed pixels (255) of `region` at SIZE, as `score` counts them."""
     ref, cur = _prep(reference, region), _prep(current, region)
     bands = []
     for r, c in zip(ref.split(), cur.split(), strict=True):
@@ -47,8 +57,7 @@ def score(
     diff = bands[0]
     for b in bands[1:]:
         diff = ImageChops.lighter(diff, b)
-    changed = diff.point(lambda v: 255 if v > PIXEL_DELTA else 0).histogram()[255]
-    return changed / (SIZE[0] * SIZE[1])
+    return diff.point(lambda v: 255 if v > PIXEL_DELTA else 0)
 
 
 @dataclass(frozen=True)

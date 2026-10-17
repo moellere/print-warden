@@ -111,6 +111,13 @@ the last `min_agreements` labelled checks all agreed with the operator, and the 
 `auto_start_hours`. Each unattended start sends an alert with the check's snapshot. A missed small part (a false
 "clear" after a print) breaks the record, so auto_start stops until the check earns it back.
 
+**Did the part stay on the bed.** Klipper reports a print complete even when the part came off halfway. Once the bed
+camera is calibrated (`calibrate_bed_camera`: the printable area's four corners in a snapshot at the bed-check pose,
+as image fractions), the post-print check also projects where the job's first layer was drawn into the frame. If a
+part is not seen there ("probably failed: 1 of 3 parts not seen..."), or much of the bed away from the parts changed
+(debris, spaghetti), the outcome prompt is re-sent with that hint. The hint is kept on the job (`outcome_hint`); a
+person still decides. `footprint_check(job_id)` runs it on demand. Deterministic image arithmetic, no model.
+
 ## Job flow
 
 ```

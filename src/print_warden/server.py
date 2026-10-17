@@ -8,6 +8,7 @@ import contextlib
 import dataclasses
 import hashlib
 import hmac
+import json
 import logging
 import os
 import time
@@ -32,6 +33,7 @@ from . import (
     cameras,
     checks,
     config,
+    footprint,
     ha_entities,
     moonraker,
     mqtt_entities,
@@ -386,6 +388,56 @@ async def capture_bed_reference(printer: str, authorized_by: str) -> dict[str, A
         printer, "clear", f"reference captured; chat: {authorized_by.strip()}"
     )
     return {"printer": printer, "reference": str(ref.name), "state": "clear"}
+
+
+@mcp.tool()
+def calibrate_bed_camera(
+    printer: str, corners: list[list[float]], calibrated_by: str
+) -> dict[str, Any]:
+    """Tell the warden where the bed is in the bed camera's image, for the part-on-bed check after each print. Take a
+    snapshot at the bed-check pose (get_snapshot), find the printable area's four corners in it, and give each as
+    [u, v] fractions of the image width and height (0-1, from the top-left), in this order: front-left, front-right,
+    back-right, back-left. Redo it if the camera moves. A record, not an action."""
+    w = _w(printer)
+    if not w.p.machine:
+        raise ValueError(
+            f"{printer} has no machine profile, so its bed size is unknown"
+        )
+    machine = slicer.flatten(Path(CFG.slicer.vendor_dir), "machine", w.p.machine)
+    bed = checks.bed_rect(machine)
+    pts = [(float(u), float(v)) for u, v in corners]
+    footprint.calibration(pts, bed)
+    JOBS.kv_set(
+        f"bed_calibration:{printer}",
+        json.dumps(
+            {"corners": pts, "bed": bed, "by": calibrated_by, "at": time.time()}
+        ),
+    )
+    return {"printer": printer, "bed_mm": bed, "corners": pts}
+
+
+@mcp.tool()
+async def footprint_check(job_id: str) -> dict[str, Any]:
+    """Run the part-on-bed check for a finished job now: a fresh bed-check frame against the empty-bed reference,
+    inside and outside where the job's first layer was drawn. Needs calibrate_bed_camera and a reference. The result
+    is advisory; it is also kept on the job as `outcome_hint`."""
+    job = JOBS.get(job_id)
+    w = _w(job["printer"])
+    check = await w.check_bed(None)
+    if not check:
+        raise ValueError(f"no bed-check frame: {w.check_skipped}")
+    verdict = w.footprint_verdict(job, check)
+    if verdict is None:
+        raise ValueError(
+            "calibrate_bed_camera first (and capture an empty-bed reference)"
+        )
+    return {
+        "job_id": job_id,
+        "footprint_changed": verdict.inside,
+        "rest_of_bed_changed": verdict.outside,
+        "hint": verdict.hint,
+        "snapshot": f"{CFG.public_url}/files/{check.snapshot}",
+    }
 
 
 @mcp.tool()
@@ -951,6 +1003,7 @@ def print_history(
         "error",
         "outcome",
         "outcome_reason",
+        "outcome_hint",
         "started_at",
         "finished_at",
     )

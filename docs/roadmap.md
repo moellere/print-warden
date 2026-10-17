@@ -153,11 +153,13 @@ Done when: every sign-off row is signed or has an issue.
 
 Done when: a plate with a negative part slices with its hole, and no project gcode reaches the printer.
 
-## Phase 15 — Did the part stay on the bed
+## Phase 15 — Did the part stay on the bed ✅ (build)
 
 - A one-time bed-camera calibration (four bed corners tapped in a reference image) maps bed coordinates to the image;
   after a "complete" print, at the parked pose, the footprint the gcode drew is compared with what changed. Nothing
   there pre-fills the outcome as "probably failed"; a person still confirms. Deterministic, no model.
+- The footprint is Orca's part extrusion on the first layers (`;TYPE:` marks drop the purge line, skirt and prime
+  tower), split into parts by connected region, so one detached part of three is named.
 
 Done when: a removed part is flagged before anyone looks.
 
