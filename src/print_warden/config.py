@@ -86,6 +86,15 @@ class Printer:
 
 
 @dataclass(frozen=True)
+class Mqtt:
+    host: str
+    port: int = 1883
+    username: str | None = None
+    password: str | None = None
+    discovery_prefix: str = "homeassistant"
+
+
+@dataclass(frozen=True)
 class HomeAssistant:
     url: str
     webhook_id: str
@@ -94,6 +103,7 @@ class HomeAssistant:
     notify_service: str | None = None
     action_secret: str | None = None
     publish_entities: bool = True
+    mqtt: Mqtt | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +125,18 @@ class Config:
     alert_cooldown_s: float = 300.0
     quiet_entity: str | None = None
     quiet_states: tuple[str, ...] = ("on",)
+
+
+def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
+    if not raw:
+        return None
+    return Mqtt(
+        host=raw["host"],
+        port=int(raw.get("port", 1883)),
+        username=raw.get("username"),
+        password=os.environ.get(raw.get("password_env", "MQTT_PASSWORD")) or None,
+        discovery_prefix=str(raw.get("discovery_prefix", "homeassistant")).rstrip("/"),
+    )
 
 
 def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
@@ -195,6 +217,7 @@ def load(path: str | Path) -> Config:
                 h.get("action_secret_env", "HA_ACTION_SECRET")
             ),
             publish_entities=bool(h.get("publish_entities", True)),
+            mqtt=_mqtt(h.get("mqtt")),
         )
     ob = raw.get("obico") or {}
     st = raw.get("storage") or {}

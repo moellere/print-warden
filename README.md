@@ -62,7 +62,9 @@ clamped to 0.5–2×). It is applied wherever an estimate is used: routing, `fin
 With `home_assistant.publish_entities` (default on) the warden keeps `sensor.print_warden_<printer>_{state, progress,
 finish, queue, bed, material}` up to date through HA's REST states API, using the token it already has: changes every
 30 s, everything every 5 min (HA forgets REST-set states on restart). These entities have no unique_id, so they cannot
-be renamed or assigned to an area in the HA UI; MQTT discovery would allow that but needs a broker.
+be renamed or assigned to an area in the HA UI. With `home_assistant.mqtt` set (the broker HA's MQTT integration uses)
+the same entities are published by MQTT discovery instead: same entity ids, but with unique_ids and one device per
+printer, retained on the broker so they survive an HA restart, and unavailable while the warden is down.
 
 ## Bed-clear check and auto_start
 

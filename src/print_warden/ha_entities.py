@@ -1,5 +1,6 @@
 """Home Assistant entities for each printer, pushed through HA's REST states API with the token the warden already
-has (no MQTT broker needed). HA forgets REST-set states on restart, so the warden republishes periodically."""
+has (no MQTT broker needed). HA forgets REST-set states on restart, so the warden republishes periodically. The same
+rows feed MQTT discovery (`mqtt_entities.py`) when a broker is configured."""
 
 from __future__ import annotations
 
@@ -7,8 +8,10 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+Row = tuple[str, str, dict[str, Any]]
 
-def _slug(name: str) -> str:
+
+def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
@@ -21,9 +24,9 @@ def printer_entities(
     bed_state: str,
     material: str | None,
     now: datetime,
-) -> list[tuple[str, str, dict[str, Any]]]:
+) -> list[Row]:
     """(entity_id, state, attributes) for one printer."""
-    base = f"sensor.print_warden_{_slug(printer)}"
+    base = f"sensor.print_warden_{slug(printer)}"
     state = (
         "offline"
         if not status.get("moonraker_connected")

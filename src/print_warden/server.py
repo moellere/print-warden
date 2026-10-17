@@ -33,6 +33,7 @@ from . import (
     config,
     ha_entities,
     moonraker,
+    mqtt_entities,
     park,
     policy,
     retention,
@@ -1219,6 +1220,27 @@ def _print_left_s(name: str) -> float | None:
     return elapsed * (100 - pct) / pct if pct > 5 else None
 
 
+def _entity_rows() -> dict[str, tuple[str, list[ha_entities.Row]]]:
+    """printer -> (slug, its entity rows), for whichever transport publishes them."""
+    now = datetime.now().astimezone()
+    return {
+        name: (
+            ha_entities.slug(name),
+            ha_entities.printer_entities(
+                name,
+                w.status(),
+                JOBS.find_active(name),
+                _print_left_s(name),
+                len(JOBS.queue(name)),
+                BED.state(name)["state"],
+                JOBS.kv_get(f"loaded_material:{name}"),
+                now,
+            ),
+        )
+        for name, w in WATCHERS.items()
+    }
+
+
 async def publish_entities(force: bool = False) -> int:
     """Push each printer's HA entities; only what changed, plus everything every REPUBLISH_S (HA forgets REST-set
     states when it restarts). Returns how many were sent."""
@@ -1227,18 +1249,7 @@ async def publish_entities(force: bool = False) -> int:
         return 0
     force = force or time.time() - _PUBLISHED_AT > REPUBLISH_S
     sent = 0
-    for name, w in WATCHERS.items():
-        st = w.status()
-        rows = ha_entities.printer_entities(
-            name,
-            st,
-            JOBS.find_active(name),
-            _print_left_s(name),
-            len(JOBS.queue(name)),
-            BED.state(name)["state"],
-            JOBS.kv_get(f"loaded_material:{name}"),
-            datetime.now().astimezone(),
-        )
+    for _slug, rows in _entity_rows().values():
         for entity, state, attrs in rows:
             if not force and _PUBLISHED.get(entity) == (state, attrs):
                 continue
@@ -1251,6 +1262,12 @@ async def publish_entities(force: bool = False) -> int:
 
 
 async def entity_loop(interval_s: float = 30) -> None:
+    """MQTT discovery when home_assistant.mqtt is set, otherwise the REST states API."""
+    if CFG.ha and CFG.ha.publish_entities and CFG.ha.mqtt:
+        await mqtt_entities.MqttEntities(CFG.ha.mqtt, __version__).run(
+            _entity_rows, interval_s
+        )
+        return
     while True:
         try:
             await publish_entities()

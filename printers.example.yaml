@@ -75,6 +75,12 @@ home_assistant:
   notify_service: notify.mobile_app_your_phone   # gets the Start / Skip buttons
   action_secret_env: HA_ACTION_SECRET            # guards POST /ha/action; the route is off if unset
   publish_entities: true                         # sensor.print_warden_<printer>_{state,progress,finish,queue,bed,material}
+  # mqtt:                                        # publish them by MQTT discovery instead (unique_ids, a device per printer)
+  #   host: mqtt.lan
+  #   port: 1883
+  #   username: print-warden
+  #   password_env: MQTT_PASSWORD
+  #   discovery_prefix: homeassistant
 
 obico:
   url: http://nas.local:3334
