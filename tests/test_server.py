@@ -251,10 +251,10 @@ def clean_queues():
     wipe()
 
 
-def _queued(printer="testp", **kw):
+def _queued(printer="testp", name="q", **kw):
     j = server.JOBS.create(
         printer=printer,
-        name="q",
+        name=name,
         material="PLA",
         remote_name="warden/q.gcode",
         offer=True,
@@ -708,8 +708,12 @@ async def test_submit_split_shares_copies_and_submits_ordinary_jobs(
         "endloop\nendfacet\nendsolid c\n"
     )
 
-    async def resolve(model):
-        return stl
+    from print_warden import intake
+
+    page = intake.Page("https://example.com/m/1", [], "Cube", "maker", "CC-BY")
+
+    async def resolve(model, file=None):
+        return stl, page
 
     async def no_spool(printer, mat):
         return {}, None
@@ -723,6 +727,7 @@ async def test_submit_split_shares_copies_and_submits_ordinary_jobs(
     submitted = []
 
     async def submit(printer, model, material, quality, **kw):
+        assert kw["source"] is page
         submitted.append((printer, kw["copies"]))
         return {"printer": printer, "copies": kw["copies"]}
 
@@ -734,7 +739,7 @@ async def test_submit_split_shares_copies_and_submits_ordinary_jobs(
     monkeypatch.setattr(server, "_spool_temps", no_spool)
     monkeypatch.setattr(server.slicer, "slice_stl", slice_stl)
     monkeypatch.setattr(server.slicer, "flatten", lambda *a, **k: machine)
-    monkeypatch.setattr(server, "submit_job", submit)
+    monkeypatch.setattr(server, "_submit_job", submit)
     server._CORRECTIONS.clear()
     _ready_printer("testp")
     _ready_printer("testq", material="PETG")
@@ -882,3 +887,80 @@ async def test_calibration_tower_flow(monkeypatch, clean_queues):
     over, note = await server._spool_temps("testp", "PLA")
     assert over["filament_flow_ratio"] == ["0.931"]
     assert "flow 0.931" in note
+
+
+def test_status_page_is_token_guarded_and_escaped(client, clean_queues):
+    assert client.get("/status").status_code == 401
+    _ready_printer("testp")
+    _queued(name="<script>alert(1)</script>", est_seconds=5400)
+    shots = server.CFG.storage_dir / "snapshots" / "testp"
+    shots.mkdir(parents=True, exist_ok=True)
+    (shots / "20991231-000000_bed.jpg").write_bytes(b"jpg")
+    r = client.get("/status?token=test-token")
+    assert r.status_code == 200
+    assert "<script>alert" not in r.text
+    assert "&lt;script&gt;" in r.text
+    assert "1h 30m" in r.text
+    shot = "/files/snapshots/testp/20991231-000000_bed.jpg"
+    assert f'src="{shot}"' in r.text
+    assert client.get(shot).content == b"jpg"
+
+
+async def test_submit_job_from_a_model_page_keeps_where_it_came_from(
+    clean_queues, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from print_warden import intake
+
+    page = intake.Page(
+        "https://www.thingiverse.com/thing:42",
+        [
+            intake.ModelFile("base.stl", "https://dl/1", {"Authorization": "Bearer t"}),
+            intake.ModelFile("lid.stl", "https://dl/2"),
+        ],
+        "Box",
+        "maker",
+        "Creative Commons - Attribution",
+    )
+    got = []
+
+    async def model_page(url):
+        return page
+
+    async def download(url, name, headers=None):
+        got.append((url, name, headers))
+        dst = tmp_path / name
+        dst.write_text("solid c\nendsolid c\n")
+        return dst
+
+    async def no_spool(printer, mat):
+        return {}, None
+
+    async def slice_stl(cfg, path, out, *a, **kw):
+        g = out / "x.gcode"
+        g.write_text(";x\n")
+        return SimpleNamespace(
+            gcode=g, preview=None, est_seconds=60, filament_g=1, filament_m=0.3,
+            layers=1, max_z=1, warnings=[], blockers=[], cached=False,
+        )  # fmt: skip
+
+    async def upload(*a):
+        return None
+
+    monkeypatch.setattr(server, "_model_page", model_page)
+    monkeypatch.setattr(server, "_download", download)
+    monkeypatch.setattr(server, "_spool_temps", no_spool)
+    monkeypatch.setattr(server.slicer, "slice_stl", slice_stl)
+    monkeypatch.setattr(server.moonraker, "upload_gcode", upload)
+    _ready_printer("testp")
+    with pytest.raises(ValueError, match="name one with `file`"):
+        await server.submit_job("testp", page.source_url, "PLA", offer=False)
+    job = await server.submit_job(
+        "testp", page.source_url, "PLA", offer=False, file="base"
+    )
+    assert got == [("https://dl/1", "base.stl", {"Authorization": "Bearer t"})]
+    assert job["source_url"] == page.source_url
+    assert (job["author"], job["license"]) == ("maker", page.license)
+    hist = server.print_history("testp", state="staged")
+    assert hist[0]["license"] == page.license

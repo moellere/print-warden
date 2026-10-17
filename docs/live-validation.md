@@ -86,6 +86,17 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 27. `calibrate(printer, "flow")` then a normal print: `M221` is back at 100 % (`M221` without arguments in the
     console reports it).
 
+## 10. Status page and model pages
+
+28. Open `http://<host>:8720/status?token=…` on a phone and a desktop while one printer prints. Expect: both printers,
+    the printing one with progress and a finish time, the queue with estimates, the latest snapshot; without the
+    token, 401.
+29. `model_page("https://www.thingiverse.com/thing:<id>")` with `THINGIVERSE_TOKEN` set, then
+    `submit_job(printer, <same url>, "PLA", file=<one of them>)`. Expect: the file is the one named and
+    `print_history` shows the page, author and license.
+30. The same with a `https://www.printables.com/model/<id>-…` page. If it fails with "unofficial", Printables changed
+    its API: open an issue with the error.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -118,3 +129,6 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | |
 | 26 | Temperature tower → section saved to the spool and used | | |
 | 27 | Flow tower leaves the printer at 100 % | | |
+| 28 | `/status` shows both printers live; 401 without the token | | |
+| 29 | Thingiverse page → named file printed, license on the job | | |
+| 30 | Printables page → named file printed, license on the job | | |

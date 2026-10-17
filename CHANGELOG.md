@@ -12,6 +12,11 @@
   or with `record_calibration`, is saved to the spool in Spoolman and applied to its later jobs (flow ratio and
   pressure advance as filament overrides, temperature in place of Spoolman's). Towers restore flow and pressure
   advance at the end. The extruder's `pressure_advance` is now read from Moonraker.
+- `/status`: a read-only page (same token as `/mcp`) with every printer's state, progress, bed, queue, latest
+  snapshot and maintenance due, plus filament to reorder or dry; refreshes every 30 s.
+- Model pages: `submit_job` (and `submit_split`) take a Thingiverse (`THINGIVERSE_TOKEN`), Printables or any web
+  page linking model files, with `file` to pick one; `model_page(url)` lists them. Source page, author and license
+  are kept on the job and shown in `print_history`.
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 

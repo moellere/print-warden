@@ -190,6 +190,12 @@ loaded over it; `plate` picks one plate per job. Before slicing, every gcode set
 `post_process`) is replaced and embedded gcode dropped, so a downloaded project cannot run its own gcode; if one of
 those settings still reaches the output where the printer profile defines it, the job is blocked. With `copies` or
 `orient` a 3MF is sliced as geometry only.
+**Model pages.** `model` may also be a model page: `model_page(url)` shows its title, author, license and model
+files, and `submit_job(..., model=<page>, file="lid")` prints one of them (`file` is needed when there are several).
+The page, author and license stay on the job (`print_history`). Thingiverse goes through its API and needs an app
+token in `THINGIVERSE_TOKEN` (`intake.thingiverse_token_env` to rename it); Printables goes through the GraphQL
+endpoint its site uses, which is unofficial and may change; any other page is searched for links ending in
+`.stl` / `.3mf` / `.scad`, with `og:title`, the `author` meta and a `rel="license"` link.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
 ## Run
@@ -209,11 +215,15 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
 | `/healthz` | open |
+
+`/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
+progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
+dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
 
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
@@ -244,7 +254,12 @@ src/print_warden/
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps
   spoolman.py   Spoolman client (materials, remaining weight)
-  server.py     MCP tools + HTTP routes (/upload, /obico/webhook, /ha/action, /files, /healthz)
+  threemf.py    3MF plates to STL, project sanitizing (no project gcode reaches the printer)
+  footprint.py  bed-camera homography, first-layer footprint, part-on-bed verdict
+  calibration.py  temperature / flow / pressure-advance towers and their results
+  intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
+  status.py     the read-only /status page
+  server.py     MCP tools + HTTP routes (/upload, /status, /obico/webhook, /ha/action, /files, /healthz)
 ```
 
 ## Develop

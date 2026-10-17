@@ -174,10 +174,14 @@ Done when: a removed part is flagged before anyone looks.
 
 Done when: a new spool goes from calibration print to tuned settings on the next job without editing a profile.
 
-## Phase 17 — Read-only status page and model intake
+## Phase 17 — Read-only status page and model intake ✅ (build)
 
 - `/status` (token-guarded): printers, queues, ETAs, bed state, last snapshots, upkeep due. Actions stay on the phone.
-- A Printables / Thingiverse page URL resolves to its model files, with license and author kept on the job.
+  Snapshots load from the open `/files` route, so the token is not copied into image URLs.
+- A Printables / Thingiverse page URL resolves to its model files, with license and author kept on the job; any
+  other page yields the model files it links. Thingiverse is its v1 API (app token); Printables has no public API, so
+  the warden uses the GraphQL endpoint its site calls. Neither site is reachable from the build container, so both
+  are covered by mocked tests and wait on a live row.
 
 Done when: the page shows both printers live and `submit_job` takes a model page URL.
 

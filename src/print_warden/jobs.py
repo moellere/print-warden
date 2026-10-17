@@ -76,6 +76,10 @@ FIELDS = (
     "outcome_at",
     "outcome_hint",
     "calibration",
+    "source_url",
+    "source_title",
+    "author",
+    "license",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides", "calibration")
 JSON_DEFAULTS = {"overrides": "{}", "calibration": "null"}
@@ -101,6 +105,10 @@ ADDED_COLUMNS = {
     "outcome_at": "real",
     "outcome_hint": "text",
     "calibration": "text",
+    "source_url": "text",
+    "source_title": "text",
+    "author": "text",
+    "license": "text",
 }
 
 

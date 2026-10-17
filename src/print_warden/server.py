@@ -23,7 +23,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -36,6 +36,7 @@ from . import (
     config,
     footprint,
     ha_entities,
+    intake,
     moonraker,
     mqtt_entities,
     outcome,
@@ -46,6 +47,7 @@ from . import (
     schedule,
     slicer,
     stats,
+    status,
     threemf,
     upkeep,
 )
@@ -487,10 +489,13 @@ async def submit_job(
     offer: bool = True,
     use_spool_temps: bool = True,
     plate: int = 1,
+    file: str | None = None,
 ) -> dict[str, Any]:
     """Slice a model and stage the gcode on a printer (not started). `printer` is a printer name or a location
     ("covington", "wyola"): the warden routes to the printer there with the right material loaded. `model` is a file name previously
-    POSTed to /upload (STL, SCAD or 3MF) or an http(s) URL. A 3MF project is sliced whole (modifiers, negative parts,
+    POSTed to /upload (STL, SCAD or 3MF), an http(s) URL of one, or a model page (Thingiverse, Printables, or any page
+    linking model files; see model_page): with several files on the page, `file` names the one to print, and the
+    page's title, author and license are kept on the job. A 3MF project is sliced whole (modifiers, negative parts,
     per-object settings) with this printer's settings loaded over it and every gcode setting of the project stripped;
     `plate` picks the plate (one job per plate). With copies or orient a 3MF is sliced as geometry only. `overrides` are OrcaSlicer process keys applied after the
     house rules (tree supports, no brim). `copies` arranges that many on one plate; `orient` lets Orca pick the
@@ -514,6 +519,7 @@ async def submit_job(
         offer=offer,
         use_spool_temps=use_spool_temps,
         plate=plate,
+        file=file,
     )
 
 
@@ -531,8 +537,11 @@ async def _submit_job(
     use_spool_temps: bool = True,
     plate: int = 1,
     calibration: dict[str, Any] | None = None,
+    file: str | None = None,
+    source: intake.Page | None = None,
 ) -> dict[str, Any]:
-    """The body of submit_job; `calibration` (a calibration tower spec) is set only by calibrate."""
+    """The body of submit_job; `calibration` (a calibration tower spec) is set only by calibrate, `source` (the page
+    an already-downloaded model came from) only by submit_split."""
     printer, routed = await _resolve_printer(printer, material)
     w = _w(printer)
     p = w.p
@@ -541,7 +550,8 @@ async def _submit_job(
         raise ValueError(
             f"{printer} slicer config: machine={p.machine}, filaments={sorted(p.filaments)}, qualities={sorted(p.processes)}"
         )
-    src = await _resolve_model(model)
+    src, page = await _resolve_model(model, file)
+    page = page or source
     stem = (name or src.stem).replace(" ", "_")
     if src.suffix.lower() == ".3mf" and plate != 1 and not name:
         stem += f"_plate{plate}"
@@ -604,6 +614,10 @@ async def _submit_job(
         overrides=overrides or {},
         orient=int(orient),
         calibration=calibration,
+        source_url=page.source_url if page else None,
+        source_title=page.title if page else None,
+        author=page.author if page else None,
+        license=page.license if page else None,
     )
     if res.cached:
         JOBS.note(job["id"], "slice reused from cache")
@@ -676,6 +690,7 @@ async def submit_split(
     orient: bool = False,
     use_spool_temps: bool = True,
     plate: int = 1,
+    file: str | None = None,
 ) -> dict[str, Any]:
     """Print `copies` of a model across several printers so they finish sooner. `where` is a location, "any", or
     printer names separated by commas; the candidates are those with `material` loaded, a profile for it and
@@ -695,7 +710,7 @@ async def submit_split(
         names = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
         if not names:
             raise ValueError(f"{where!r} is not a location, 'any' or printer names")
-    src = await _resolve_model(model)
+    src, page = await _resolve_model(model, file)
     work = JOBDIR / "_split" / f"{time.strftime('%Y%m%d-%H%M%S')}_{src.stem}"
     stl = work / f"{src.stem}.stl"
     await _model_stl(src, stl, scad_defines, plate)
@@ -750,11 +765,12 @@ async def submit_split(
     jobs = []
     for n, k in sorted(share.items()):
         jobs.append(
-            await submit_job(
+            await _submit_job(
                 n,
                 src.name,
                 material,
                 quality,
+                source=page,
                 name=f"{name or src.stem}_{n}",
                 overrides=overrides,
                 scad_defines=scad_defines,
@@ -769,6 +785,14 @@ async def submit_split(
         "skipped": skipped,
         "jobs": jobs,
     }
+
+
+@mcp.tool()
+async def model_page(url: str) -> dict[str, Any]:
+    """What a model page offers before printing from it: title, author, license and its .stl/.3mf/.scad files
+    (name, size). Thingiverse needs THINGIVERSE_TOKEN; Printables is read through the site's own, unofficial API; any
+    other page is searched for links to model files. Pass the page to submit_job with `file` naming one."""
+    return (await _model_page(url)).public()
 
 
 async def advance_queue(printer: str) -> dict[str, Any]:
@@ -1032,7 +1056,7 @@ def print_history(
     printer: str | None = None, days: int = 30, state: str | None = None
 ) -> list[dict[str, Any]]:
     """Finished and running jobs from the last `days`, newest first: settings, estimate (Orca's and corrected),
-    actual print time, grams, cost and how it ended."""
+    actual print time, grams, cost, how it ended and where the model came from (page, author, license)."""
     rows = JOBS.since(time.time() - days * 86400, printer)
     keep = (
         "id",
@@ -1053,6 +1077,9 @@ def print_history(
         "outcome_hint",
         "started_at",
         "finished_at",
+        "source_url",
+        "author",
+        "license",
     )
     wanted = (state,) if state else ("printing", "done", "failed")
     return [{k: j.get(k) for k in keep} for j in reversed(rows) if j["state"] in wanted]
@@ -1487,29 +1514,44 @@ def _model_name(name: str) -> str:
     return base
 
 
-async def _resolve_model(model: str) -> Path:
+async def _download(url: str, name: str, headers: dict[str, str] | None = None) -> Path:
+    buf = bytearray()
+    async with (
+        httpx.AsyncClient(timeout=60, follow_redirects=True) as c,
+        c.stream("GET", url, headers=headers) as r,
+    ):
+        r.raise_for_status()
+        async for chunk in r.aiter_bytes():
+            buf += chunk
+            if len(buf) > MAX_MODEL_BYTES:
+                raise ValueError(f"{url} exceeds {MAX_MODEL_BYTES >> 20} MB")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    dst = UPLOADS / name
+    dst.write_bytes(bytes(buf))
+    return dst
+
+
+async def _model_page(url: str) -> intake.Page:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+        return await intake.resolve(url, c, CFG.thingiverse_token)
+
+
+async def _resolve_model(
+    model: str, file: str | None = None
+) -> tuple[Path, intake.Page | None]:
+    """The model on disk, and the page it came from when `model` was a model page URL."""
     if model.startswith(("http://", "https://")):
-        name = _model_name(httpx.URL(model).path)
-        buf = bytearray()
-        async with (
-            httpx.AsyncClient(timeout=60, follow_redirects=True) as c,
-            c.stream("GET", model) as r,
-        ):
-            r.raise_for_status()
-            async for chunk in r.aiter_bytes():
-                buf += chunk
-                if len(buf) > MAX_MODEL_BYTES:
-                    raise ValueError(f"{model} exceeds {MAX_MODEL_BYTES >> 20} MB")
-        UPLOADS.mkdir(parents=True, exist_ok=True)
-        dst = UPLOADS / name
-        dst.write_bytes(bytes(buf))
-        return dst
+        if intake.is_model_file(model):
+            return await _download(model, _model_name(httpx.URL(model).path)), None
+        page = await _model_page(model)
+        f = page.pick(file)
+        return await _download(f.url, _model_name(f.name), f.headers), page
     p = UPLOADS / _model_name(model)
     if not p.exists():
         raise FileNotFoundError(
             f"{model} not found; POST it to {CFG.public_url}/upload first"
         )
-    return p
+    return p, None
 
 
 async def upload(request: Request) -> JSONResponse:
@@ -1634,6 +1676,39 @@ def health_report() -> dict[str, Any]:
 
 async def health(_: Request) -> JSONResponse:
     return JSONResponse(health_report())
+
+
+def _latest_snapshot(printer: str) -> str | None:
+    d = CFG.storage_dir / "snapshots" / printer
+    shots = (
+        sorted(d.glob("*.jpg"), key=lambda f: f.stat().st_mtime) if d.is_dir() else []
+    )
+    return str(shots[-1].relative_to(CFG.storage_dir)) if shots else None
+
+
+async def status_data() -> dict[str, Any]:
+    """What /status shows: the health report plus what only an authenticated reader may see (job names, queue)."""
+    report = health_report()
+    for n, p in report["printers"].items():
+        active = JOBS.find_active(n)
+        p["job"] = active["name"] if active else None
+        p["material"] = JOBS.kv_get(f"loaded_material:{n}")
+        p["queue_jobs"] = [
+            {
+                "name": j["name"],
+                "material": j["material"],
+                "est_seconds": _corrected_est(j),
+            }
+            for j in JOBS.queue(n)
+        ]
+        p["snapshot"] = _latest_snapshot(n)
+    up = await upkeep_report()
+    report["reorder"], report["drying"] = up["reorder"], up["drying"]
+    return report
+
+
+async def status_page(request: Request) -> HTMLResponse:
+    return HTMLResponse(status.render(await status_data()))
 
 
 async def expire_approvals(now: float | None = None) -> list[str]:
@@ -1976,6 +2051,7 @@ for _d in PUBLIC_DIRS:
 app = Starlette(
     routes=[
         Route("/healthz", health),
+        Route("/status", status_page),
         Route("/obico/webhook", obico_webhook, methods=["POST"]),
         Route("/upload", upload, methods=["POST"]),
         Route("/ha/action", ha_action, methods=["POST"]),
