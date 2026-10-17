@@ -5,9 +5,9 @@
 - 3MF projects are sliced whole (modifiers, negative parts, per-object settings) with the printer's settings over
   them. Every gcode setting of the project is replaced and embedded gcode dropped first; a replaced setting that still
   reaches the output where the printer profile defines it blocks the job. `copies` / `orient` keep geometry-only.
-
-## Unreleased
-
+- Part-on-bed check: `calibrate_bed_camera` (four bed corners in the bed camera) lets the post-print check compare
+  where the first layer was drawn with what changed; a missing part or a cluttered bed re-sends the outcome prompt
+  with a hint (also `outcome_hint` on the job, and `footprint_check(job_id)`). Advisory only.
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 
