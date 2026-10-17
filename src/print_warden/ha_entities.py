@@ -24,8 +24,10 @@ def printer_entities(
     bed_state: str,
     material: str | None,
     now: datetime,
+    maintenance: list[dict[str, Any]] | None = None,
 ) -> list[Row]:
-    """(entity_id, state, attributes) for one printer."""
+    """(entity_id, state, attributes) for one printer; one `maint_<item>` sensor (share of its interval used) per
+    configured maintenance item."""
     base = f"sensor.print_warden_{slug(printer)}"
     state = (
         "offline"
@@ -39,7 +41,7 @@ def printer_entities(
         else "unknown"
     )
     common = {"printer": printer}
-    return [
+    rows: list[Row] = [
         (
             f"{base}_state",
             state,
@@ -99,3 +101,22 @@ def printer_entities(
             },
         ),
     ]
+    rows += [
+        (
+            f"{base}_maint_{slug(m['item'])}",
+            str(m["used_pct"]),
+            {
+                **common,
+                "friendly_name": f"{printer} {m['item']} maintenance",
+                "unit_of_measurement": "%",
+                "icon": "mdi:wrench-clock",
+                "hours": m["hours"],
+                "days": m["days"],
+                "every_hours": m["every_hours"],
+                "every_days": m["every_days"],
+                "due": m["due"],
+            },
+        )
+        for m in maintenance or []
+    ]
+    return rows

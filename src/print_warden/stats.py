@@ -8,6 +8,9 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from .outcome import failed as _failed
+from .outcome import reason as _reason
+
 FINISHED = ("done", "failed")
 CORRECTION_MIN_SAMPLES = 3
 CORRECTION_WINDOW = 20
@@ -55,19 +58,22 @@ def correction(jobs: list[dict[str, Any]], printer: str) -> float:
 
 
 def outcomes(jobs: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    """Done vs failed grouped by `key` (printer, material or quality), with the commonest failure reasons."""
+    """Done vs failed grouped by `key` (printer, material or quality), with the commonest failure reasons. A human's
+    label (outcome) wins over how the job ended; `labelled` says how many of the prints carry one."""
     done: dict[str, int] = defaultdict(int)
     failed: dict[str, int] = defaultdict(int)
+    labelled: dict[str, int] = defaultdict(int)
     reasons: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for j in jobs:
         if j.get("state") not in FINISHED:
             continue
         k = str(j.get(key) or "?")
-        if j["state"] == "done":
+        labelled[k] += bool(j.get("outcome"))
+        if not _failed(j):
             done[k] += 1
         else:
             failed[k] += 1
-            reasons[k][(j.get("error") or "unknown").split(":")[0][:60]] += 1
+            reasons[k][_reason(j)] += 1
     out = []
     for k in sorted(set(done) | set(failed)):
         n = done[k] + failed[k]
@@ -79,6 +85,7 @@ def outcomes(jobs: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
                 "done": done[k],
                 "failed": failed[k],
                 "failure_rate": round(failed[k] / n, 3),
+                "labelled": labelled[k],
                 "top_failures": [{"reason": r, "count": c} for r, c in top],
             }
         )
@@ -96,7 +103,7 @@ def monthly(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         r = rows[month]
         r["prints"] += 1
-        r["failed"] += j["state"] == "failed"
+        r["failed"] += _failed(j)
         r["hours"] += (j.get("print_duration_s") or 0) / 3600
         r["grams"] += j.get("grams_used") or 0
         r["cost"] += j.get("cost") or 0

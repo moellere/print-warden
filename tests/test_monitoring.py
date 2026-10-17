@@ -210,3 +210,19 @@ def test_quiet_entity_config(tmp_path):
     cfg = config.load(f)
     assert cfg.quiet_entity == "person.me"
     assert cfg.quiet_states == ("not_home",)
+
+
+async def test_outcome_prompt_after_a_print(w):
+    job = _printing_job(w.jobs)
+    await w._outcome_prompt(job, Event("p", "print_complete", "info", ""), "nozzle")
+    _, actions, image, tag = w.ha.prompts[-1]
+    assert actions == [
+        f"PRINT_WARDEN_OUTCOME_{job['id']}:good",
+        f"PRINT_WARDEN_OUTCOME_{job['id']}:failed",
+    ]
+    assert image and image.startswith("http://w/files/snapshots/")
+    assert tag == f"print_warden_outcome_{job['id']}"
+    await w._outcome_prompt(job, Event("p", "print_cancelled", "warning", ""), None)
+    _, actions, image, _ = w.ha.prompts[-1]
+    assert actions[0].endswith(":adhesion")
+    assert image is None

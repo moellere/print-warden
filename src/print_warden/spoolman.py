@@ -56,6 +56,7 @@ class Spoolman:
             "price_per_g": _price_per_g(s, f),
             "location": s.get("location"),
             "archived": s.get("archived", False),
+            "first_used": s.get("first_used"),
         }
 
     async def aclose(self) -> None:

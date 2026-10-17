@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from .upkeep import Interval, parse_maintenance
+
 
 @dataclass(frozen=True)
 class Rules:
@@ -74,6 +76,7 @@ class Printer:
     bed_check: BedCheck | None = None
     auto_start_hours: str | None = None
     finish_window: str | None = None
+    maintenance: dict[str, Interval] = field(default_factory=dict)
 
     @property
     def ws_url(self) -> str:
@@ -83,6 +86,19 @@ class Printer:
             .rstrip("/")
             + "/websocket"
         )
+
+
+@dataclass(frozen=True)
+class CheapPower:
+    entity: str
+    max_price: float
+    min_hours: float = 3.0
+
+
+@dataclass(frozen=True)
+class Upkeep:
+    reorder_below_g: float = 200.0
+    dry_after_days: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -125,6 +141,8 @@ class Config:
     alert_cooldown_s: float = 300.0
     quiet_entity: str | None = None
     quiet_states: tuple[str, ...] = ("on",)
+    upkeep: Upkeep = Upkeep()
+    cheap_power: CheapPower | None = None
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -204,6 +222,7 @@ def load(path: str | Path) -> Config:
             bed_check=_bed_check(p.get("bed_check")),
             auto_start_hours=p.get("auto_start_hours") or None,
             finish_window=p.get("finish_window") or None,
+            maintenance=parse_maintenance(p.get("maintenance")),
         )
     ha = None
     if h := raw.get("home_assistant"):
@@ -224,7 +243,7 @@ def load(path: str | Path) -> Config:
     sv = raw.get("server") or {}
     pol = raw.get("policy") or {}
     host = sv.get("host", "0.0.0.0")
-    port = int(sv.get("port", 8710))
+    port = int(sv.get("port", 8720))
     return Config(
         printers=printers,
         ha=ha,
@@ -246,5 +265,23 @@ def load(path: str | Path) -> Config:
         quiet_entity=(raw.get("alerts") or {}).get("quiet_entity") or None,
         quiet_states=tuple(
             str(s) for s in (raw.get("alerts") or {}).get("quiet_states") or ("on",)
+        ),
+        cheap_power=CheapPower(
+            entity=str(cp["entity"]),
+            max_price=float(cp["max_price"]),
+            min_hours=float(cp.get("min_hours", 3)),
+        )
+        if (cp := pol.get("cheap_power"))
+        else None,
+        upkeep=Upkeep(
+            reorder_below_g=float(
+                (raw.get("upkeep") or {}).get("reorder_below_g", 200)
+            ),
+            dry_after_days={
+                str(k).upper(): float(v)
+                for k, v in (
+                    (raw.get("upkeep") or {}).get("dry_after_days") or {}
+                ).items()
+            },
         ),
     )

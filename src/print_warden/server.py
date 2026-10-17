@@ -30,16 +30,21 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import (
     __version__,
     cameras,
+    checks,
     config,
     ha_entities,
     moonraker,
     mqtt_entities,
+    outcome,
     park,
     policy,
     retention,
+    rules,
+    schedule,
     slicer,
     stats,
     threemf,
+    upkeep,
 )
 from .bedcheck import BedStore
 from .events import Event, EventStore
@@ -456,17 +461,8 @@ async def submit_job(
         stem += f"_plate{plate}"
     out = JOBDIR / printer / f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}"
     out.mkdir(parents=True, exist_ok=True)
-    plate_warnings: list[str] = []
-    if src.suffix.lower() == ".scad":
-        stl = out / f"{stem}.stl"
-        await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
-    elif src.suffix.lower() == ".3mf":
-        stl = out / f"{stem}.stl"
-        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
-        plate_warnings = conv.warnings
-    else:
-        stl = out / f"{stem}.stl"
-        stl.write_bytes(src.read_bytes())
+    stl = out / f"{stem}.stl"
+    plate_warnings = await _model_stl(src, stl, scad_defines, plate)
     model_hash = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
     fil_over, temp_note = (
         (await _spool_temps(printer, mat)) if use_spool_temps else ({}, None)
@@ -487,6 +483,7 @@ async def submit_job(
         cache_dir=CFG.storage_dir / "slice-cache",
     )
     history = _history(model_hash)
+    before = _failed_before(model_hash, mat, q, overrides or {})
     job = JOBS.create(
         printer=printer,
         name=stem,
@@ -500,7 +497,10 @@ async def submit_job(
         filament_m=res.filament_m,
         layers=res.layers,
         max_z=res.max_z,
-        warnings=([temp_note] if temp_note else []) + plate_warnings + res.warnings,
+        warnings=([temp_note] if temp_note else [])
+        + before
+        + plate_warnings
+        + res.warnings,
         slice_blockers=res.blockers,
         copies=copies,
         offer=offer,
@@ -540,6 +540,129 @@ async def submit_job(
     return result
 
 
+async def _model_stl(
+    src: Path, stl: Path, scad_defines: dict[str, Any] | None, plate: int
+) -> list[str]:
+    """The model as an STL at `stl`: SCAD rendered, a 3MF plate converted, an STL copied. Returns warnings."""
+    if src.suffix.lower() == ".scad":
+        await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
+        return []
+    if src.suffix.lower() == ".3mf":
+        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
+        return conv.warnings
+    stl.parent.mkdir(parents=True, exist_ok=True)
+    stl.write_bytes(src.read_bytes())
+    return []
+
+
+@mcp.tool()
+async def submit_split(
+    where: str,
+    model: str,
+    material: str,
+    copies: int,
+    quality: str = "standard",
+    name: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    scad_defines: dict[str, Any] | None = None,
+    orient: bool = False,
+    use_spool_temps: bool = True,
+    plate: int = 1,
+) -> dict[str, Any]:
+    """Print `copies` of a model across several printers so they finish sooner. `where` is a location, "any", or
+    printer names separated by commas; the candidates are those with `material` loaded, a profile for it and
+    `quality`, and able to print. Each is sliced with one copy to time it (cached), copies go to whichever printer
+    would finish its share soonest within what fits on its plate, and each share becomes an ordinary job via
+    submit_job: queued, offered and started exactly like any other (tap or auto_start). Returns the plan (copies,
+    expected finish per printer, the single-printer time it beats) and the jobs."""
+    mat, q = material.upper(), quality.lower()
+    key = where.lower()
+    if key == "any":
+        names = list(WATCHERS)
+    elif "," in key or key in WATCHERS:
+        names = [n.strip() for n in key.split(",") if n.strip()]
+        for n in names:
+            _w(n)
+    else:
+        names = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
+        if not names:
+            raise ValueError(f"{where!r} is not a location, 'any' or printer names")
+    src = await _resolve_model(model)
+    work = JOBDIR / "_split" / f"{time.strftime('%Y%m%d-%H%M%S')}_{src.stem}"
+    stl = work / f"{src.stem}.stl"
+    await _model_stl(src, stl, scad_defines, plate)
+    dims = checks.stl_bounds(stl)
+    cands: list[schedule.Candidate] = []
+    skipped: dict[str, str] = {}
+    for n in names:
+        p = _w(n).p
+        loaded = (await _loaded(n) or "").upper()
+        eta = _eta_free_s(n)
+        if loaded != mat:
+            skipped[n] = f"has {loaded or 'nothing'} loaded"
+        elif not p.machine or mat not in p.filaments or q not in p.processes:
+            skipped[n] = f"no {mat}/{q} profile"
+        elif eta is None:
+            skipped[n] = "cannot print right now"
+        if n in skipped:
+            continue
+        assert p.machine
+        machine = slicer.flatten(Path(CFG.slicer.vendor_dir), "machine", p.machine)
+        if checks.fit_problems(dims, machine, 1) and not orient:
+            skipped[n] = "; ".join(checks.fit_problems(dims, machine, 1))
+            continue
+        per_plate = max(
+            (
+                k
+                for k in range(1, 51)
+                if orient or not checks.fit_problems(dims, machine, k)
+            ),
+            default=1,
+        )
+        fil_over, _ = (await _spool_temps(n, mat)) if use_spool_temps else ({}, None)
+        one = await slicer.slice_stl(
+            CFG.slicer,
+            stl,
+            work / n,
+            p.machine,
+            p.processes[q],
+            p.filaments[mat],
+            overrides,
+            park=p.bed_check.pose if p.bed_check else None,
+            material=mat,
+            orient=orient,
+            filament_overrides=fil_over,
+            cache_dir=CFG.storage_dir / "slice-cache",
+        )
+        per_copy = (one.est_seconds or 0) * _correction(n)
+        cands.append(schedule.Candidate(n, eta or 0.0, per_copy, per_plate))
+    if not cands:
+        raise ValueError(f"no printer can take this: {skipped}")
+    share = schedule.allocate(copies, cands)
+    jobs = []
+    for n, k in sorted(share.items()):
+        jobs.append(
+            await submit_job(
+                n,
+                src.name,
+                material,
+                quality,
+                name=f"{name or src.stem}_{n}",
+                overrides=overrides,
+                scad_defines=scad_defines,
+                copies=k,
+                orient=orient,
+                use_spool_temps=use_spool_temps,
+                plate=plate,
+            )
+        )
+    return {
+        "plan": schedule.plan_summary(share, cands, copies),
+        "skipped": skipped,
+        "jobs": jobs,
+    }
+
+
 async def advance_queue(printer: str) -> dict[str, Any]:
     """Offer the next job when the printer can take one: idle (or powered off with a power device), bed not
     occupied, no request already waiting, no start in flight. The first offered, unblocked staged job is tried with
@@ -568,6 +691,15 @@ async def advance_queue(printer: str) -> dict[str, Any]:
     if not head:
         why = "queue empty" if not queue else "every queued job has slice blockers"
         return {"action": "none", "why": why}
+    if CFG.cheap_power and HA:
+        cp = CFG.cheap_power
+        hold = schedule.power_hold(
+            _corrected_est(head), await HA.state(cp.entity), cp.max_price, cp.min_hours
+        )
+        if hold:
+            JOBS.kv_set(f"power_hold:{printer}", "1")
+            return {"action": "none", "why": hold, "job_id": head["id"]}
+    JOBS.kv_set(f"power_hold:{printer}", "0")
     if w.p.auto_start:
         try:
             res = await _start(head["id"], "auto", via_auto=True)
@@ -684,18 +816,35 @@ async def _spool_temps(
     )
 
 
+def _failed_before(
+    model_hash: str, material: str, quality: str, overrides: dict[str, Any]
+) -> list[str]:
+    """Advisory: earlier prints of this geometry with the same material, quality and overrides that failed."""
+    return [
+        f"this model failed before with these settings ({outcome.reason(j)}, job {j['id']} on {j['printer']}); "
+        "see model_history"
+        for j in JOBS.by_model(model_hash)
+        if j["state"] in ("done", "failed")
+        and outcome.failed(j)
+        and j["material"] == material
+        and j["quality"] == quality
+        and (j["overrides"] or {}) == overrides
+    ][:3]
+
+
 def _history(model_hash: str) -> dict[str, Any]:
     jobs = [
         j
         for j in JOBS.by_model(model_hash)
         if j["state"] in ("done", "failed", "printing")
     ]
-    done = [j for j in jobs if j["state"] == "done"]
+    finished = [j for j in jobs if j["state"] != "printing"]
+    done = [j for j in finished if not outcome.failed(j)]
     last_ok = done[0] if done else None
     return {
         "prints": len(jobs),
         "done": len(done),
-        "failed": sum(1 for j in jobs if j["state"] == "failed"),
+        "failed": sum(1 for j in finished if outcome.failed(j)),
         "last_success": {
             k: last_ok[k]
             for k in (
@@ -749,6 +898,8 @@ def model_history(model: str) -> dict[str, Any]:
                     "started_at",
                     "finished_at",
                     "error",
+                    "outcome",
+                    "outcome_reason",
                 )
             }
             for j in JOBS.by_model(h)
@@ -777,6 +928,8 @@ def print_history(
         "grams_used",
         "cost",
         "error",
+        "outcome",
+        "outcome_reason",
         "started_at",
         "finished_at",
     )
@@ -993,6 +1146,17 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             await advance_queue(job_id)
         elif verb == "FIRSTLAYER":
             JOBS.note(job_id, "first layers look good (phone tap)")
+        elif verb == "OUTCOME":
+            await _on_outcome_tap(job_id)
+        elif verb == "MAINT":
+            printer, _, item = job_id.partition(":")
+            record_maintenance(printer, item, "phone tap")
+            if HA:
+                await HA.clear_notification(_upkeep_tag(f"maint:{printer}:{item}"))
+        elif verb == "DRIED":
+            record_dried(int(job_id), "phone tap")
+            if HA:
+                await HA.clear_notification(_upkeep_tag(f"dry:{job_id}"))
         elif verb in ("CANCEL", "RESUME"):
             res = await print_control(job_id, verb.lower(), "phone tap")
             if not res["done"] and HA:
@@ -1004,6 +1168,51 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
                 )
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
+
+
+async def _on_outcome_tap(payload: str) -> None:
+    job_id, choice = outcome.parse(payload)
+    job = JOBS.get(job_id)
+    if choice in ("failed", "more") and HA:
+        await HA.notify_actionable(
+            f"Why did {job['name']} fail?",
+            "Pick the closest; More… for the rest.",
+            outcome.reasons(job_id, 1 if choice == "failed" else 2),
+            tag=outcome.tag(job_id),
+        )
+        if choice == "more":
+            return
+    label_job(
+        job_id,
+        "good" if choice == "good" else "failed",
+        None if choice in ("good", "failed") else choice,
+        "phone tap",
+    )
+    if choice != "failed" and HA:
+        await HA.clear_notification(outcome.tag(job_id))
+
+
+def label_job(job_id: str, result: str, reason: str | None, who: str) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if job["state"] not in ("done", "failed"):
+        raise ValueError(
+            f"job {job_id} is {job['state']}; only finished prints are labelled"
+        )
+    fields = outcome.label(result, reason)
+    note = f"labelled {result}" + (f" ({reason})" if reason else "") + f" by {who}"
+    return JOBS.note(job_id, note, outcome_by=who, outcome_at=time.time(), **fields)
+
+
+@mcp.tool()
+def label_print(
+    job_id: str, result: str, labelled_by: str, reason: str | None = None
+) -> dict[str, Any]:
+    """Record how a finished print really turned out: result 'good', or 'failed' with a reason (adhesion, spaghetti,
+    layer_shift, under_extrusion, other). Use the operator's words: `labelled_by` names who said so. A label changes
+    nothing on the printer; it feeds printer_stats and the "failed before" warning on submit_job, and a later label
+    replaces an earlier one."""
+    job = label_job(job_id, result, reason, labelled_by)
+    return {k: job[k] for k in ("id", "name", "state", "outcome", "outcome_reason")}
 
 
 async def print_control(job_id: str, action: str, who: str) -> dict[str, Any]:
@@ -1137,9 +1346,38 @@ async def obico_webhook(request: Request) -> JSONResponse:
 HEALTH_API = 1
 
 
+def _last_shutdown(printer: str, now: float) -> dict[str, Any] | None:
+    """The classified cause of a Klipper shutdown in the last week that Klipper has not been ready since."""
+    for ev in STORE.query(printer, since=now - 7 * 86400, limit=200):
+        if ev["kind"] == "klippy_ready":
+            return None
+        if ev["kind"] == "klippy_shutdown":
+            cause = (ev.get("data") or {}).get("cause") or "unknown"
+            return {
+                "cause": cause,
+                "hint": rules.SHUTDOWN_HINTS.get(cause, rules.UNKNOWN_HINT),
+                "s_ago": round(now - ev["ts"]),
+            }
+    return None
+
+
+def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
+    finished = [
+        j
+        for j in JOBS.since(now - 7 * 86400, printer)
+        if j["state"] in ("done", "failed")
+    ]
+    return {
+        "prints": len(finished),
+        "failed": sum(1 for j in finished if outcome.failed(j)),
+    }
+
+
 def health_report() -> dict[str, Any]:
     """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
-    within an api version; no file names, job names or URLs."""
+    within an api version; no file names, job names or URLs. Added after 0.3.0: `last_shutdown` (classified cause of
+    a shutdown Klipper has not recovered from), `outcomes_7d` and `maintenance_due`."""
+    now = time.time()
     printers = {}
     for n, w in WATCHERS.items():
         st = w.status()
@@ -1155,6 +1393,9 @@ def health_report() -> dict[str, Any]:
             "bed": BED.state(n)["state"],
             "queue": len(JOBS.queue(n)),
             "last_update_s_ago": st.get("last_update_s_ago"),
+            "last_shutdown": _last_shutdown(n, now),
+            "outcomes_7d": _outcomes_7d(n, now),
+            "maintenance_due": [m["item"] for m in _maintenance(n, now) if m["due"]],
         }
     return {
         "ok": all(p["connected"] for p in printers.values()),
@@ -1220,6 +1461,164 @@ def _print_left_s(name: str) -> float | None:
     return elapsed * (100 - pct) / pct if pct > 5 else None
 
 
+UPKEEP_REPEAT_S = 86400
+
+
+def _maintenance(printer: str, now: float | None = None) -> list[dict[str, Any]]:
+    """The printer's maintenance items; an item seen for the first time starts counting now."""
+    now = now or time.time()
+    items = _w(printer).p.maintenance
+    resets: dict[str, float] = {}
+    for item in items:
+        key = f"maint_reset:{printer}:{item}"
+        if (v := JOBS.kv_get(key)) is None:
+            JOBS.kv_set(key, str(now))
+            v = str(now)
+        resets[item] = float(v)
+    if not items:
+        return []
+    jobs = JOBS.since(min(resets.values()) - 30 * 86400, printer)
+    return upkeep.maintenance(printer, items, jobs, resets, now)
+
+
+def record_maintenance(printer: str, item: str, done_by: str) -> dict[str, Any]:
+    if item not in _w(printer).p.maintenance:
+        raise ValueError(f"{printer} has no maintenance item {item!r}")
+    JOBS.kv_set(f"maint_reset:{printer}:{item}", str(time.time()))
+    JOBS.kv_set(f"upkeep_alerted:maint:{printer}:{item}", "0")
+    STORE.add(Event(printer, "maintenance_done", "info", f"{item} done ({done_by})"))
+    return next(m for m in _maintenance(printer) if m["item"] == item)
+
+
+def record_dried(spool_id: int, done_by: str) -> dict[str, Any]:
+    JOBS.kv_set(f"dried:{spool_id}", str(time.time()))
+    JOBS.kv_set(f"upkeep_alerted:dry:{spool_id}", "0")
+    return {"spool_id": spool_id, "dried_by": done_by}
+
+
+async def upkeep_report(now: float | None = None) -> dict[str, Any]:
+    """Reorder, drying and maintenance findings; Spoolman's part is skipped (with the reason) when it cannot be read."""
+    now = now or time.time()
+    out: dict[str, Any] = {
+        "reorder": [],
+        "drying": [],
+        "maintenance": [m for n in WATCHERS for m in _maintenance(n, now)],
+    }
+    if SPOOLMAN:
+        try:
+            spools = await SPOOLMAN.spools()
+            queued = JOBS.list(None, 500, upkeep.QUEUED)
+            out["reorder"] = upkeep.reorder(spools, queued, CFG.upkeep.reorder_below_g)
+            by_id = {s["id"]: s for s in spools}
+            loaded = {
+                n: by_id[int(sid)]
+                for n in WATCHERS
+                if (sid := JOBS.kv_get(f"active_spool:{n}")) and int(sid) in by_id
+            }
+            dried = {
+                s["id"]: float(v)
+                for s in loaded.values()
+                if (v := JOBS.kv_get(f"dried:{s['id']}"))
+            }
+            out["drying"] = upkeep.drying(loaded, dried, CFG.upkeep.dry_after_days, now)
+        except httpx.HTTPError as e:
+            out["spoolman_error"] = str(e) or type(e).__name__
+    return out
+
+
+def _upkeep_tag(key: str) -> str:
+    return "print_warden_upkeep_" + "".join(c if c.isalnum() else "_" for c in key)
+
+
+async def upkeep_alerts(now: float | None = None) -> int:
+    """Send each finding to the phone at most once a day, never in quiet hours. Returns how many were sent."""
+    now = now or time.time()
+    if not HA or (WATCHERS and await next(iter(WATCHERS.values())).quiet()):
+        return 0
+    report = await upkeep_report(now)
+    items: list[tuple[str, str, str, list[tuple[str, str]]]] = []
+    for r in report["reorder"]:
+        items.append(
+            (
+                f"reorder:{r['material']}",
+                f"{r['material']} is running low",
+                (
+                    f"{r['remaining_g']} g left across spools, {r['queued_g']} g queued: "
+                    f"{r['after_queue_g']} g after the queue."
+                ),
+                [],
+            )
+        )
+    for d in report["drying"]:
+        items.append(
+            (
+                f"dry:{d['spool_id']}",
+                f"Dry the {d['material']} on {d['printer']}",
+                (
+                    f"Spool {d['spool_id']} ({d['name'] or d['material']}) has been open "
+                    f"{d['days_open']} days (dry every {d['dry_after_days']:g})."
+                ),
+                [(f"PRINT_WARDEN_DRIED_{d['spool_id']}", "Dried")],
+            )
+        )
+    for m in report["maintenance"]:
+        if m["due"]:
+            items.append(
+                (
+                    f"maint:{m['printer']}:{m['item']}",
+                    f"{m['printer']}: {m['item']} is due",
+                    f"{m['hours']} h printed / {m['days']} days since it was last done.",
+                    [(f"PRINT_WARDEN_MAINT_{m['printer']}:{m['item']}", "Done")],
+                )
+            )
+    sent = 0
+    for key, title, message, actions in items:
+        last = float(JOBS.kv_get(f"upkeep_alerted:{key}") or 0)
+        if now - last < UPKEEP_REPEAT_S:
+            continue
+        await HA.notify_actionable(title, message, actions, tag=_upkeep_tag(key))
+        JOBS.kv_set(f"upkeep_alerted:{key}", str(now))
+        sent += 1
+    return sent
+
+
+async def upkeep_loop(interval_s: float = 3600) -> None:
+    """Hourly: upkeep alerts, and a fresh look at queues held for cheaper power (prices move by the hour)."""
+    while True:
+        try:
+            await upkeep_alerts()
+        except Exception:
+            log.exception("upkeep")
+        for n in WATCHERS:
+            if JOBS.kv_get(f"power_hold:{n}") == "1":
+                try:
+                    await advance_queue(n)
+                except Exception:
+                    log.exception("power-hold re-offer %s", n)
+        await asyncio.sleep(interval_s)
+
+
+@mcp.tool()
+async def upkeep_status() -> dict[str, Any]:
+    """Filament and maintenance: materials whose Spoolman stock minus the queue is under upkeep.reorder_below_g,
+    loaded spools due for drying (upkeep.dry_after_days), and each printer's maintenance items with hours/days since
+    they were last done and whether they are due."""
+    return await upkeep_report()
+
+
+@mcp.tool()
+def record_maintenance_done(printer: str, item: str, done_by: str) -> dict[str, Any]:
+    """Record that a maintenance item (from the printer's `maintenance` config) was just done; its counter restarts.
+    A record, not an action: nothing on the printer changes. `done_by` names who did it."""
+    return record_maintenance(printer, item, done_by)
+
+
+@mcp.tool()
+def record_spool_dried(spool_id: int, done_by: str) -> dict[str, Any]:
+    """Record that a spool was just dried; its drying reminder restarts. `done_by` names who did it."""
+    return record_dried(spool_id, done_by)
+
+
 def _entity_rows() -> dict[str, tuple[str, list[ha_entities.Row]]]:
     """printer -> (slug, its entity rows), for whichever transport publishes them."""
     now = datetime.now().astimezone()
@@ -1235,6 +1634,7 @@ def _entity_rows() -> dict[str, tuple[str, list[ha_entities.Row]]]:
                 BED.state(name)["state"],
                 JOBS.kv_get(f"loaded_material:{name}"),
                 now,
+                _maintenance(name),
             ),
         )
         for name, w in WATCHERS.items()
@@ -1327,6 +1727,7 @@ async def lifespan(app: Starlette):
     ]
     tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
     tasks.append(asyncio.create_task(entity_loop(), name="ha-entities"))
+    tasks.append(asyncio.create_task(upkeep_loop(), name="upkeep"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(

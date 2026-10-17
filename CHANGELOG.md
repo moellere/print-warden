@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **Default port is now 8720** (was 8710, which homelab-helper's status endpoint also uses). A config with
+  `server.port: 8710` (as the example had) is unaffected; one relying on the default must set it or move its HA
+  webhook, Obico webhook and MCP URLs to 8720. `compose.yml` and the image's `EXPOSE` follow.
+- `print-warden check [config]`: resolves the Orca profiles and asks Moonraker, cameras, Home Assistant, Spoolman and
+  the broker whether they answer, read-only; exit 1 on any failure.
+- `docs/live-validation.md`: the runbook and sign-off table for the real printers.
+- Print outcomes: the end photo with Good / Failed (and a reason) after every print, or `label_print` from chat;
+  labels win in `printer_stats`, appear in `print_history` / `model_history`, and `submit_job` warns when the same
+  model failed before with the same settings. New job columns are added on start-up.
+- Upkeep: hourly reorder (Spoolman stock minus the queue under `upkeep.reorder_below_g`), drying
+  (`upkeep.dry_after_days`, **Dried** button) and per-printer `maintenance` items (hours or days, **Done** button,
+  `maint_<item>` entities); at most one phone alert per finding a day, never in quiet hours. MCP: `upkeep_status`,
+  `record_maintenance_done`, `record_spool_dried`.
+- `submit_split`: copies spread over printers with the material loaded, timed per printer, each share an ordinary
+  job. `policy.cheap_power` holds offers of long prints while a price entity reads above `max_price`.
+- `/healthz` (still api 1, fields added): `last_shutdown` (classified cause, until Klipper is ready again),
+  `outcomes_7d` and `maintenance_due`, for homelab-helper's findings.
+
 ## 0.3.0
 
 The three items the roadmap left open. Every new setting is optional; a 0.2.0 config runs unchanged.

@@ -1,6 +1,7 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0.
+Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0. Phases 8–12 are
+the next round.
 
 ## Phase 0 — Hardening ✅
 
@@ -91,3 +92,43 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
   OpenGL 3.4 context, which does not exist).
 - homelab-helper reads `/healthz` as its read-only `printwarden` source (`helper discover printwarden`): warden
   unreachable, printer offline, Klipper not ready and stale telemetry become findings there.
+
+## Phase 8 — Live validation and operations ✅ (build)
+
+- `print-warden check`: profiles resolve; Moonraker (and its power device), cameras (must return an image), Home
+  Assistant (token, notify service, lights, quiet entity), Spoolman and the broker answer. Read-only; exit 1 on failure.
+- `docs/live-validation.md`: a runbook and sign-off table per printer.
+- Default port 8720, off homelab-helper's 8710.
+
+Done when: every sign-off row is signed on both printers, or has an issue.
+
+## Phase 9 — Learn from how prints ended ✅ (build)
+
+- After each print, the end photo on the phone with Good / Failed and a reason (adhesion, spaghetti, layer shift,
+  under-extrusion, other); the stats report labelled failure reasons, not only Klipper's.
+- A model that failed with given settings is flagged on `submit_job` (advisory, never a block).
+
+Done when: failure rates by material and quality come from labelled outcomes.
+
+## Phase 10 — Filament and maintenance ✅ (build)
+
+- Reorder alert: remaining grams per material across Spoolman against what the queue needs.
+- Drying reminders for hygroscopic materials by how long a spool has been open.
+- Maintenance counters (print hours since nozzle change, lubrication, belt check) as entities, reset by a tap.
+
+Done when: a low spool or an overdue service raises one alert, and a tap clears it.
+
+## Phase 11 — Smarter scheduling ✅ (build)
+
+- `copies=N` split across printers with the same material loaded.
+- Optional cheap-power window from an HA price sensor for long prints, inside `finish_window`.
+
+Done when: a 10-copy job on two idle printers finishes in about half the time, every start still tap- or
+auto_start-gated.
+
+## Phase 12 — Deeper homelab-helper integration ✅ (build, warden side)
+
+- Warden events (Klipper shutdowns, repeated failures, overdue maintenance) in the status contract as an added field
+  (api 1 only gains fields); homelab-helper turns them into findings.
+
+Done when: a thermal-runaway shutdown appears in `helper findings list` with its classified cause.

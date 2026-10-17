@@ -55,6 +55,25 @@ filament's), the cost. `printer_stats(days=90)` reports estimate accuracy per pr
 printer / material / quality with the commonest reasons, and prints, hours, grams and cost per month;
 `print_history(printer, days, state)` lists the jobs behind it.
 
+Klipper knows a print completed, not whether it is any good. After every print the phone gets the end photo with
+**Good** / **Failed** (a cancelled or errored print goes straight to the reasons): adhesion, spaghetti, layer shift,
+under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, reason)` from chat) wins over how the
+job ended in the failure rates and reasons, and `submit_job` warns when the same geometry failed before with the same
+material, quality and overrides (advisory; it never blocks).
+
+Upkeep runs hourly and sends each finding to the phone at most once a day, outside quiet hours:
+
+- **Reorder:** a material whose Spoolman stock, minus what the queue still needs, is under
+  `upkeep.reorder_below_g`.
+- **Drying:** a loaded spool of a material in `upkeep.dry_after_days` that has been open (or since it was last dried)
+  longer than that. The **Dried** button records it.
+- **Maintenance:** per printer, `maintenance: {nozzle: {every_hours: 300}, belts: {every_days: 90}}`. Hours are the
+  print time since the item was last done. **Done** resets it, as does `record_maintenance_done` from chat. Each item
+  is a `sensor.print_warden_<printer>_maint_<item>` showing the share of its interval used. A new item starts
+  counting when it is first seen.
+
+`upkeep_status` shows all three.
+
 Each printer's ETA correction is the median actual/estimate ratio of its last 20 completed prints (once there are 3,
 clamped to 0.5–2×). It is applied wherever an estimate is used: routing, `finish_window`, notifications and
 `est_human` ("1h 12m (Orca 1h 0m)").
@@ -95,7 +114,7 @@ the last `min_agreements` labelled checks all agreed with the operator, and the 
 ## Job flow
 
 ```
-curl -F file=@part.stl http://nas.local:8710/upload           # or a .scad / .3mf
+curl -F file=@part.stl http://nas.local:8720/upload           # or a .scad / .3mf
 submit_job(printer="garagex4", model="part.stl", material="PETG", quality="standard", copies=1)
    -> checks the model fits, slices (tree supports, no brim), checks the gcode, uploads it to Moonraker as
       warden/<job>_<name>_<mat>.gcode and queues it; printer may be a location ("wyola")
@@ -121,6 +140,16 @@ more until the next trigger or `offer_next`. `submit_job(..., offer=False)` stag
 **Routing.** A location picks the printer with the job's material loaded that frees up soonest (what is left of the
 current print plus its queue); printers that cannot print are skipped. `finish_window` ("07:00-23:00") keeps
 auto_start from beginning a job that would finish outside it, and puts the expected finish in a tapped request.
+
+**Splitting.** `submit_split(where, model, material, copies)` spreads copies over the printers at a location (or
+`any`, or `"a,b"`) that have the material loaded. Each printer is timed with one copy (corrected, cached). Copies then
+go to whichever printer would finish its share soonest, within what fits on its plate. Every share is an ordinary job,
+offered and started by tap or `auto_start` like any other. The result shows the expected finish against one printer
+doing it all.
+
+**Cheap power.** With `policy.cheap_power` (`entity`, `max_price`, `min_hours`), the offer of a job expected to run at
+least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. An unreadable price
+never holds a job, and an explicit `request_start` is never held.
 
 **Slice checks.** Before slicing, the model's bounding box (rotated 90° if that fits) and `copies` are checked against
 the machine's printable area and height; a model that cannot fit is refused. After slicing, the extrusion extents are
@@ -150,8 +179,9 @@ modifier and support-painting volumes are dropped, and a plate with a negative (
 ```
 cp printers.example.yaml printers.yaml   # edit
 printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
+docker compose run --rm --build print-warden print-warden check   # every profile, service and camera answers
 docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppImage + OpenSCAD + ffmpeg
-curl localhost:8710/healthz
+curl localhost:8720/healthz
 ```
 
 Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
@@ -170,7 +200,7 @@ Access:
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
 
-Obico → Preferences → Notifications → Webhook URL: `http://<host>:8710/obico/webhook?secret=<OBICO_WEBHOOK_SECRET>`.
+Obico → Preferences → Notifications → Webhook URL: `http://<host>:8720/obico/webhook?secret=<OBICO_WEBHOOK_SECRET>`.
 Phone buttons come back through HA's websocket event bus (`mobile_app_notification_action`), no HA config needed.
 
 ## Layout

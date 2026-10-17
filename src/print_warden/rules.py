@@ -55,12 +55,16 @@ SHUTDOWN_CAUSES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+UNKNOWN_HINT = "see Klipper's log for the shutdown reason"
+SHUTDOWN_HINTS = {cause: hint for _, cause, hint in SHUTDOWN_CAUSES}
+
+
 def classify_shutdown(message: str) -> tuple[str, str]:
     low = message.lower()
     for needle, cause, hint in SHUTDOWN_CAUSES:
         if needle in low:
             return cause, hint
-    return "unknown", "see Klipper's log for the shutdown reason"
+    return "unknown", UNKNOWN_HINT
 
 
 def watched_object(name: str) -> bool:

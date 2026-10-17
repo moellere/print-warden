@@ -12,7 +12,16 @@ from typing import Any
 
 import httpx
 
-from . import bedcheck, cameras, moonraker, park, policy, reconcile, timelapse
+from . import (
+    bedcheck,
+    cameras,
+    moonraker,
+    outcome,
+    park,
+    policy,
+    reconcile,
+    timelapse,
+)
 from .bedcheck import BedStore, Check
 from .config import Config, Printer
 from .events import Event, EventStore
@@ -138,6 +147,8 @@ class PrinterWatcher:
                 self.bed.set_state(self.p.name, "occupied", ev.kind)
                 self._spawn(self._after_print())
             used = ev.data.get("filament_used_mm")
+            if job and self.ha:
+                self._spawn(self._outcome_prompt(job, ev, cam))
             if job:
                 await self.settle_spool(job, used, ev.data.get("print_duration"))
                 if ev.kind == "print_complete":
@@ -483,6 +494,34 @@ class PrinterWatcher:
                 [(f"PRINT_WARDEN_BEDCLEAR_{self.p.name}", "Bed cleared")],
                 tag=f"print_warden_bed_{self.p.name}",
             )
+
+    async def _outcome_prompt(
+        self, job: dict[str, Any], ev: Event, cam: str | None
+    ) -> None:
+        """The end photo with Good / Failed (or the failure reasons, for a cancelled or errored print). Sent whatever
+        the quiet hours: it waits on the phone until someone looks, like the bed-clear prompt."""
+        if not self.ha:
+            return
+        snap = (
+            self.cfg.storage_dir / ev.snapshot
+            if ev.snapshot
+            else (await self._snap(cam, None, None) if cam else None)
+        )
+        image = (
+            f"{self.cfg.public_url}/files/{snap.relative_to(self.cfg.storage_dir)}"
+            if snap
+            else None
+        )
+        completed = ev.kind == "print_complete"
+        await self.ha.notify_actionable(
+            f"How did {job['name']} turn out?"
+            if completed
+            else f"Why did {job['name']} fail?",
+            f"{self.p.name}: {ev.kind.removeprefix('print_')}. The label feeds the failure stats.",
+            outcome.first(job["id"], completed),
+            image=image,
+            tag=outcome.tag(job["id"]),
+        )
 
     async def _first_layer_prompt(self, ev: Event) -> None:
         """A look at the first layers with Looks good / Cancel buttons bound to the printing job. Skipped in quiet
