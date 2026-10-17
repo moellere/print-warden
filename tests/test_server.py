@@ -415,3 +415,58 @@ def test_model_history_by_geometry_and_job(clean_queues):
     assert server.model_history(bad["id"])["model_hash"] == h
     with pytest.raises(ValueError):
         server.model_history("nope.stl")
+
+
+@pytest.fixture
+def control(monkeypatch):
+    sent = []
+
+    async def cancel(base):
+        sent.append("cancel")
+
+    async def resume(base):
+        sent.append("resume")
+
+    monkeypatch.setattr(server.moonraker, "cancel_print", cancel)
+    monkeypatch.setattr(server.moonraker, "resume_print", resume)
+    return sent
+
+
+def _printing_on(name, file, state="printing"):
+    w = _ready_printer(name)
+    w.mr.state["print_stats"] = {"state": state, "filename": file}
+    j = server.JOBS.create(
+        printer=name, name="p", material="PLA", remote_name="warden/p.gcode"
+    )
+    for st in ("staged", "printing"):
+        j = server.JOBS.transition(j["id"], st)
+    return j
+
+
+async def test_cancel_tap_needs_the_same_job_still_printing(clean_queues, control):
+    job = _printing_on("testp", "warden/other.gcode")
+    res = await server.print_control(job["id"], "cancel", "phone tap")
+    assert not res["done"] and "not p" in res["why"] and control == []
+    server.WATCHERS["testp"].mr.state["print_stats"]["filename"] = "warden/p.gcode"
+    assert (await server.print_control(job["id"], "cancel", "phone tap"))["done"]
+    assert control == ["cancel"]
+
+
+async def test_stale_job_button_cannot_cancel(clean_queues, control):
+    old = _printing_on("testp", "warden/p.gcode")
+    server.JOBS.transition(old["id"], "done")
+    res = await server.print_control(old["id"], "cancel", "phone tap")
+    assert not res["done"] and "is done" in res["why"] and control == []
+
+
+async def test_resume_only_when_paused(clean_queues, control):
+    job = _printing_on("testp", "warden/p.gcode", state="printing")
+    assert not (await server.print_control(job["id"], "resume", "phone tap"))["done"]
+    server.WATCHERS["testp"].mr.state["print_stats"]["state"] = "paused"
+    await server._on_ha_action(f"PRINT_WARDEN_RESUME_{job['id']}", {})
+    assert control == ["resume"]
+
+
+async def test_no_mcp_tool_can_cancel_or_resume():
+    names = [t.name for t in await server.mcp.list_tools()]
+    assert not [n for n in names if "cancel" in n or "resume" in n or "control" in n]

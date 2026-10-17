@@ -15,7 +15,8 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Start a print | the operator: a phone tap (`request_start`) or quoted chat permission (`start_print`), and `policy.can_start` must pass |
 | Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours` |
 | Pause on detected failure | Obico |
-| Cancel a running print, power off | a human |
+| Cancel or resume a running print | a human: at the printer, or the Cancel / Resume button on a warden notification for that job (no MCP tool can) |
+| Power off | a human |
 
 Printers with a `power_device` (the X1's Sonoff) are powered on at start and Klipper is coaxed to ready with
 up to three FIRMWARE_RESTARTs before the print command goes out; the tap still gates the whole sequence.
@@ -25,6 +26,25 @@ loaded material matches the job, and the active spool has the job's grams plus 1
 A phone tap answers one `request_start` and is honoured only within `policy.approval_ttl_minutes` (default 15);
 unanswered requests go back to `staged` and the notification is withdrawn. Starts on one printer are serialised, so a
 double tap sends one print.
+
+## Monitoring
+
+Rules run on every Moonraker update; besides heaters, stalls and connection loss they watch whatever the printer has,
+discovered from Moonraker's object list on each (re)subscribe:
+
+- **Fans** (`fan`, `heater_fan …`, `controller_fan …`, `fan_generic …`): commanded ≥30% while the tachometer reads
+  under `fan_min_rpm` for `fan_stall_s` → critical. Fans without a tachometer (`rpm` is null) are not judged.
+- **Runout sensors** (`filament_switch_sensor …`, `filament_motion_sensor …`): filament lost mid-print → warning.
+- **Temperature sensors**: any whose name looks like a board or host (mcu, host, rpi, cpu) over 75°C, or any sensor
+  over its `rules.temp_limits` entry → warning, once until it cools 5°C.
+- **Klipper shutdowns** are classified (thermal runaway, heater not heating, thermistor out of range, MCU comms lost,
+  timer too close, TMC driver error, move out of range) with what to check.
+
+At layer `first_layer_check` (default 2; 0 disables) the phone gets the nozzle camera frame with **Looks good** /
+**Cancel print**. When Obico pauses a print the phone gets **Resume** / **Cancel print**. Both are bound to the job:
+the tap only acts if that job is still the one printing (same file on the printer), so a stale button cannot touch a
+later print. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt; critical alerts and
+Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
 ## Bed-clear check and auto_start
 

@@ -61,7 +61,8 @@ mcp = FastMCP(
     instructions="Print manager for the 3D printers: slice and stage jobs, start them only with the operator's "
     "permission (phone tap or quoted chat consent), and monitor via Moonraker rules, Obico verdicts and cameras. "
     "After a print the bed is occupied until the operator clears it; only the operator can say it is clear. "
-    "Cancelling a running print and powering off are human actions.",
+    "Cancelling or resuming a running print and powering off are human actions (a tap on a warden notification counts; "
+    "no tool here does them).",
 )
 
 
@@ -905,8 +906,57 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
         elif verb == "BEDCLEAR":
             await _w(job_id).mark_clear("phone tap")
             await advance_queue(job_id)
+        elif verb == "FIRSTLAYER":
+            JOBS.note(job_id, "first layers look good (phone tap)")
+        elif verb in ("CANCEL", "RESUME"):
+            res = await print_control(job_id, verb.lower(), "phone tap")
+            if not res["done"] and HA:
+                await HA.alert(
+                    JOBS.get(job_id)["printer"],
+                    "warning",
+                    f"{verb.lower()} refused",
+                    res["why"],
+                )
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
+
+
+async def print_control(job_id: str, action: str, who: str) -> dict[str, Any]:
+    """Cancel or resume a running print for an operator's tap. The button names a job; the job must still be the one
+    printing (same file on the printer), so a stale button from an earlier print cannot touch the current one."""
+    job = JOBS.get(job_id)
+    w = _w(job["printer"])
+    st = w.status()
+    why = None
+    if job["state"] != "printing":
+        why = f"job {job['name']} is {job['state']}, not printing"
+    elif (st.get("filename") or "") != job["remote_name"]:
+        why = f"the printer is running {st.get('filename') or 'nothing'}, not {job['name']}"
+    elif action == "cancel" and st.get("state") not in ("printing", "paused"):
+        why = f"printer is {st.get('state')}"
+    elif action == "resume" and st.get("state") != "paused":
+        why = f"printer is {st.get('state')}, not paused"
+    if why:
+        JOBS.note(job_id, f"{action} refused ({who}): {why}")
+        return {"done": False, "why": why}
+    if action == "cancel":
+        await moonraker.cancel_print(w.p.moonraker)
+    else:
+        await moonraker.resume_print(w.p.moonraker)
+    JOBS.note(job_id, f"{action} sent ({who})")
+    STORE.add(
+        Event(
+            job["printer"],
+            f"print_{action}_requested",
+            "warning",
+            f"{action.capitalize()} {job['name']} ({who})",
+            {"job_id": job_id},
+        )
+    )
+    if HA:
+        for tag in ("fl", "pause"):
+            await HA.clear_notification(f"print_warden_{tag}_{job_id}")
+    return {"done": True, "why": None}
 
 
 def _model_name(name: str) -> str:

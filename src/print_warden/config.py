@@ -16,6 +16,10 @@ class Rules:
     heater_deviation_s: float = 90.0
     stall_minutes: float = 10.0
     layer_snapshot: bool = True
+    fan_stall_s: float = 10.0
+    fan_min_rpm: float = 100.0
+    first_layer_check: int = 2
+    temp_limits: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,8 @@ class Config:
     spoolman_url: str | None = None
     api_token: str | None = None
     approval_ttl_minutes: float = 15.0
+    quiet_hours: str | None = None
+    alert_cooldown_s: float = 300.0
 
 
 def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
@@ -208,4 +214,6 @@ def load(path: str | Path) -> Config:
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
         api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
         approval_ttl_minutes=float(pol.get("approval_ttl_minutes", 15)),
+        quiet_hours=(raw.get("alerts") or {}).get("quiet_hours") or None,
+        alert_cooldown_s=float((raw.get("alerts") or {}).get("cooldown_s", 300)),
     )
