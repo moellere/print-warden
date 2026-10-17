@@ -12,6 +12,7 @@ dependencies = [
   "starlette>=0.38",
   "pillow>=10",
   "python-multipart>=0.0.9",
+  "aiomqtt>=2.3",
 ]
 
 [project.scripts]

@@ -79,7 +79,8 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - ETA correction per printer (median of recent actual/estimate, ≥3 prints, clamped) used in routing, finish_window
   and notifications.
 - HA entities per printer via the REST states API (state, progress, finish, queue, bed, material).
-- Not done: MQTT discovery (entities with unique_id); the REST approach needs no broker.
+- MQTT discovery (after 0.2.0): with `home_assistant.mqtt` the same entities are published with unique_ids, one
+  device per printer, retained, with availability; without it the REST approach needs no broker.
 
 ## Phase 7 — Packaging and ecosystem ✅ (warden side)
 
