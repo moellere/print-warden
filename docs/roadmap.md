@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source.
+Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0.
 
 ## Phase 0 — Hardening ✅
 
@@ -47,7 +47,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - Slice checks: model fit (and `copies`) before slicing; extrusion extents, temperatures vs. material and
   `blocking_warnings` after. Findings block until `waive_blockers` with the operator's consent.
 - `copies=N` (`--clone-objects` + `--arrange`) and `orient` (`--orient`).
-- Presence-based quiet hours (after 0.2.0): `alerts.quiet_entity` / `quiet_states` mute like the time window.
+- Presence-based quiet hours (0.3.0): `alerts.quiet_entity` / `quiet_states` mute like the time window.
 
 ## Phase 4 — Slicing quality ✅
 
@@ -59,7 +59,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - Found by running OrcaSlicer 2.4.2 for real: the temperature check now judges the highest temperature set (the
   Artillery start gcode preheats to 140°C), extrusion counts only from a known position, and the house rules pick the
   High Temp Plate (Orca's default Cool Plate gave PLA a 35°C bed).
-- 3MF projects (after 0.2.0): geometry only, one plate per job (`plate=N`); the project's settings and gcode are
+- 3MF projects (0.3.0): geometry only, one plate per job (`plate=N`); the project's settings and gcode are
   ignored, modifier volumes dropped, negative parts refused.
 
 ## Phase 5 — Monitoring depth ✅
@@ -79,7 +79,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - ETA correction per printer (median of recent actual/estimate, ≥3 prints, clamped) used in routing, finish_window
   and notifications.
 - HA entities per printer via the REST states API (state, progress, finish, queue, bed, material).
-- MQTT discovery (after 0.2.0): with `home_assistant.mqtt` the same entities are published with unique_ids, one
+- MQTT discovery (0.3.0): with `home_assistant.mqtt` the same entities are published with unique_ids, one
   device per printer, retained, with availability; without it the REST approach needs no broker.
 
 ## Phase 7 — Packaging and ecosystem ✅ (warden side)

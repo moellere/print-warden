@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+The three items the roadmap left open. Every new setting is optional; a 0.2.0 config runs unchanged.
 
 - MQTT discovery: with `home_assistant.mqtt` the printer entities are published through the broker with
   unique_ids and a device per printer (retained; `print_warden/status` for availability). New dependency: aiomqtt.
