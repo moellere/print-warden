@@ -114,6 +114,10 @@ alerts:
 
 policy:
   approval_ttl_minutes: 15   # a Start tap older than this is refused; the request returns to staged
+  # cheap_power:             # hold offers of long prints while power is dear (retried hourly)
+  #   entity: sensor.electricity_price
+  #   max_price: 0.20
+  #   min_hours: 3
 
 storage:
   dir: ./data          # events.db + snapshots/

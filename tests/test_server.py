@@ -663,3 +663,95 @@ async def test_upkeep_alerts_once_a_day_and_a_tap_resets(monkeypatch):
     assert rows["sensor.print_warden_testp_maint_belts"] == "0"
     with pytest.raises(ValueError):
         server.record_maintenance("testp", "flux capacitor", "x")
+
+
+async def test_submit_split_shares_copies_and_submits_ordinary_jobs(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    stl = tmp_path / "cube.stl"
+    stl.write_text(
+        "solid c\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 40 0 0\nvertex 0 40 20\n"
+        "endloop\nendfacet\nendsolid c\n"
+    )
+
+    async def resolve(model):
+        return stl
+
+    async def no_spool(printer, mat):
+        return {}, None
+
+    sliced = []
+
+    async def slice_stl(cfg, path, out, machine, process, filament, *a, **kw):
+        sliced.append(out.name)
+        return SimpleNamespace(est_seconds=3600)
+
+    submitted = []
+
+    async def submit(printer, model, material, quality, **kw):
+        submitted.append((printer, kw["copies"]))
+        return {"printer": printer, "copies": kw["copies"]}
+
+    machine = {
+        "printable_area": ["0x0", "200x0", "200x200", "0x200"],
+        "printable_height": 200,
+    }
+    monkeypatch.setattr(server, "_resolve_model", resolve)
+    monkeypatch.setattr(server, "_spool_temps", no_spool)
+    monkeypatch.setattr(server.slicer, "slice_stl", slice_stl)
+    monkeypatch.setattr(server.slicer, "flatten", lambda *a, **k: machine)
+    monkeypatch.setattr(server, "submit_job", submit)
+    server._CORRECTIONS.clear()
+    _ready_printer("testp")
+    _ready_printer("testq", material="PETG")
+    with pytest.raises(ValueError, match="no printer can take this"):
+        await server.submit_split("lab", "cube.stl", "TPU", 4)
+    _ready_printer("testq")
+    out = await server.submit_split("lab", "cube.stl", "pla", 4)
+    assert sorted(submitted) == [("testp", 2), ("testq", 2)]
+    plan = out["plan"]
+    assert plan["all_done_in_s"] < plan["one_printer_would_take_s"]
+    assert sorted(sliced) == ["testp", "testq"]
+    with pytest.raises(ValueError, match="do not fit"):
+        await server.submit_split("testp,testq", "cube.stl", "PLA", 60)
+
+
+async def test_cheap_power_holds_long_offers(clean_queues, monkeypatch):
+    import dataclasses
+
+    from print_warden import config
+
+    monkeypatch.setattr(
+        server,
+        "CFG",
+        dataclasses.replace(
+            server.CFG,
+            cheap_power=config.CheapPower("sensor.price", max_price=0.2, min_hours=1),
+        ),
+    )
+    price = {"v": "0.35"}
+
+    async def state(entity):
+        return price["v"] if entity == "sensor.price" else None
+
+    offered = []
+
+    async def request(job_id):
+        offered.append(job_id)
+        server.JOBS.transition(job_id, "awaiting_approval", "test")
+        return {"notification_sent": True}
+
+    monkeypatch.setattr(server.HA, "state", state)
+    monkeypatch.setattr(server, "request_start", request)
+    _ready_printer("testp")
+    j = _queued(est_seconds=4 * 3600)
+    res = await server.advance_queue("testp")
+    assert res["why"].startswith("waiting for cheaper power")
+    assert server.JOBS.kv_get("power_hold:testp") == "1"
+    price["v"] = "0.1"
+    res = await server.advance_queue("testp")
+    assert res["action"] == "offered"
+    assert offered == [j["id"]]
+    assert server.JOBS.kv_get("power_hold:testp") == "0"

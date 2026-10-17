@@ -54,7 +54,7 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 
 ## 6. Integrations
 
-18. With `home_assistant.mqtt`: the device appears under MQTT with six sensors; rename one; restart HA; the
+18. With `home_assistant.mqtt`: the device appears under MQTT with six sensors (plus one per maintenance item); rename one; restart HA; the
     rename and the states survive. Stop the warden: the entities go unavailable.
 19. homelab-helper: `helper discover printwarden --persist` lists the printers; power one off and re-run; a
     `printer-offline` finding opens; power it on and re-run; it resolves.
@@ -65,6 +65,13 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     due" with **Done**; tap it; `upkeep_status` shows it reset and the `maint_<item>` sensor reads 0.
 21. Set `upkeep.reorder_below_g` above a material's stock: the reorder alert arrives once, and not again that day.
 22. A loaded TPU spool first used more than `dry_after_days` ago: the drying reminder; **Dried** resets it.
+
+## 8. Scheduling
+
+23. `submit_split("<location>", "cube.stl", "PLA", 6)` with both printers idle and PLA loaded: two jobs, about three
+    copies each; each is offered on its own printer and starts only on its tap.
+24. With `policy.cheap_power` and the price above `max_price`: a long job is not offered (`advance_queue` says why);
+    when the price drops, it is offered within the hour.
 
 ## Sign-off
 
@@ -93,3 +100,5 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 20 | Maintenance due → Done resets it and the sensor | | |
 | 21 | Reorder alert once a day | | |
 | 22 | Drying reminder → Dried resets it | | |
+| 23 | submit_split shares copies; each share tap-started | | |
+| 24 | Cheap-power hold, offered when the price drops | | |

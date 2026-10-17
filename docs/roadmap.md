@@ -118,7 +118,7 @@ Done when: failure rates by material and quality come from labelled outcomes.
 
 Done when: a low spool or an overdue service raises one alert, and a tap clears it.
 
-## Phase 11 — Smarter scheduling
+## Phase 11 — Smarter scheduling ✅ (build)
 
 - `copies=N` split across printers with the same material loaded.
 - Optional cheap-power window from an HA price sensor for long prints, inside `finish_window`.

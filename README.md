@@ -141,6 +141,16 @@ more until the next trigger or `offer_next`. `submit_job(..., offer=False)` stag
 current print plus its queue); printers that cannot print are skipped. `finish_window` ("07:00-23:00") keeps
 auto_start from beginning a job that would finish outside it, and puts the expected finish in a tapped request.
 
+**Splitting.** `submit_split(where, model, material, copies)` spreads copies over the printers at a location (or
+`any`, or `"a,b"`) that have the material loaded. Each printer is timed with one copy (corrected, cached). Copies then
+go to whichever printer would finish its share soonest, within what fits on its plate. Every share is an ordinary job,
+offered and started by tap or `auto_start` like any other. The result shows the expected finish against one printer
+doing it all.
+
+**Cheap power.** With `policy.cheap_power` (`entity`, `max_price`, `min_hours`), the offer of a job expected to run at
+least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. An unreadable price
+never holds a job, and an explicit `request_start` is never held.
+
 **Slice checks.** Before slicing, the model's bounding box (rotated 90° if that fits) and `copies` are checked against
 the machine's printable area and height; a model that cannot fit is refused. After slicing, the extrusion extents are
 checked against the bed, the nozzle and bed temperatures against the material's range, and Orca's log against

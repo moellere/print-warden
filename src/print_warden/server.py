@@ -30,6 +30,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import (
     __version__,
     cameras,
+    checks,
     config,
     ha_entities,
     moonraker,
@@ -38,6 +39,7 @@ from . import (
     park,
     policy,
     retention,
+    schedule,
     slicer,
     stats,
     threemf,
@@ -458,17 +460,8 @@ async def submit_job(
         stem += f"_plate{plate}"
     out = JOBDIR / printer / f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}"
     out.mkdir(parents=True, exist_ok=True)
-    plate_warnings: list[str] = []
-    if src.suffix.lower() == ".scad":
-        stl = out / f"{stem}.stl"
-        await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
-    elif src.suffix.lower() == ".3mf":
-        stl = out / f"{stem}.stl"
-        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
-        plate_warnings = conv.warnings
-    else:
-        stl = out / f"{stem}.stl"
-        stl.write_bytes(src.read_bytes())
+    stl = out / f"{stem}.stl"
+    plate_warnings = await _model_stl(src, stl, scad_defines, plate)
     model_hash = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
     fil_over, temp_note = (
         (await _spool_temps(printer, mat)) if use_spool_temps else ({}, None)
@@ -546,6 +539,129 @@ async def submit_job(
     return result
 
 
+async def _model_stl(
+    src: Path, stl: Path, scad_defines: dict[str, Any] | None, plate: int
+) -> list[str]:
+    """The model as an STL at `stl`: SCAD rendered, a 3MF plate converted, an STL copied. Returns warnings."""
+    if src.suffix.lower() == ".scad":
+        await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
+        return []
+    if src.suffix.lower() == ".3mf":
+        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
+        return conv.warnings
+    stl.parent.mkdir(parents=True, exist_ok=True)
+    stl.write_bytes(src.read_bytes())
+    return []
+
+
+@mcp.tool()
+async def submit_split(
+    where: str,
+    model: str,
+    material: str,
+    copies: int,
+    quality: str = "standard",
+    name: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    scad_defines: dict[str, Any] | None = None,
+    orient: bool = False,
+    use_spool_temps: bool = True,
+    plate: int = 1,
+) -> dict[str, Any]:
+    """Print `copies` of a model across several printers so they finish sooner. `where` is a location, "any", or
+    printer names separated by commas; the candidates are those with `material` loaded, a profile for it and
+    `quality`, and able to print. Each is sliced with one copy to time it (cached), copies go to whichever printer
+    would finish its share soonest within what fits on its plate, and each share becomes an ordinary job via
+    submit_job: queued, offered and started exactly like any other (tap or auto_start). Returns the plan (copies,
+    expected finish per printer, the single-printer time it beats) and the jobs."""
+    mat, q = material.upper(), quality.lower()
+    key = where.lower()
+    if key == "any":
+        names = list(WATCHERS)
+    elif "," in key or key in WATCHERS:
+        names = [n.strip() for n in key.split(",") if n.strip()]
+        for n in names:
+            _w(n)
+    else:
+        names = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
+        if not names:
+            raise ValueError(f"{where!r} is not a location, 'any' or printer names")
+    src = await _resolve_model(model)
+    work = JOBDIR / "_split" / f"{time.strftime('%Y%m%d-%H%M%S')}_{src.stem}"
+    stl = work / f"{src.stem}.stl"
+    await _model_stl(src, stl, scad_defines, plate)
+    dims = checks.stl_bounds(stl)
+    cands: list[schedule.Candidate] = []
+    skipped: dict[str, str] = {}
+    for n in names:
+        p = _w(n).p
+        loaded = (await _loaded(n) or "").upper()
+        eta = _eta_free_s(n)
+        if loaded != mat:
+            skipped[n] = f"has {loaded or 'nothing'} loaded"
+        elif not p.machine or mat not in p.filaments or q not in p.processes:
+            skipped[n] = f"no {mat}/{q} profile"
+        elif eta is None:
+            skipped[n] = "cannot print right now"
+        if n in skipped:
+            continue
+        assert p.machine
+        machine = slicer.flatten(Path(CFG.slicer.vendor_dir), "machine", p.machine)
+        if checks.fit_problems(dims, machine, 1) and not orient:
+            skipped[n] = "; ".join(checks.fit_problems(dims, machine, 1))
+            continue
+        per_plate = max(
+            (
+                k
+                for k in range(1, 51)
+                if orient or not checks.fit_problems(dims, machine, k)
+            ),
+            default=1,
+        )
+        fil_over, _ = (await _spool_temps(n, mat)) if use_spool_temps else ({}, None)
+        one = await slicer.slice_stl(
+            CFG.slicer,
+            stl,
+            work / n,
+            p.machine,
+            p.processes[q],
+            p.filaments[mat],
+            overrides,
+            park=p.bed_check.pose if p.bed_check else None,
+            material=mat,
+            orient=orient,
+            filament_overrides=fil_over,
+            cache_dir=CFG.storage_dir / "slice-cache",
+        )
+        per_copy = (one.est_seconds or 0) * _correction(n)
+        cands.append(schedule.Candidate(n, eta or 0.0, per_copy, per_plate))
+    if not cands:
+        raise ValueError(f"no printer can take this: {skipped}")
+    share = schedule.allocate(copies, cands)
+    jobs = []
+    for n, k in sorted(share.items()):
+        jobs.append(
+            await submit_job(
+                n,
+                src.name,
+                material,
+                quality,
+                name=f"{name or src.stem}_{n}",
+                overrides=overrides,
+                scad_defines=scad_defines,
+                copies=k,
+                orient=orient,
+                use_spool_temps=use_spool_temps,
+                plate=plate,
+            )
+        )
+    return {
+        "plan": schedule.plan_summary(share, cands, copies),
+        "skipped": skipped,
+        "jobs": jobs,
+    }
+
+
 async def advance_queue(printer: str) -> dict[str, Any]:
     """Offer the next job when the printer can take one: idle (or powered off with a power device), bed not
     occupied, no request already waiting, no start in flight. The first offered, unblocked staged job is tried with
@@ -574,6 +690,15 @@ async def advance_queue(printer: str) -> dict[str, Any]:
     if not head:
         why = "queue empty" if not queue else "every queued job has slice blockers"
         return {"action": "none", "why": why}
+    if CFG.cheap_power and HA:
+        cp = CFG.cheap_power
+        hold = schedule.power_hold(
+            _corrected_est(head), await HA.state(cp.entity), cp.max_price, cp.min_hours
+        )
+        if hold:
+            JOBS.kv_set(f"power_hold:{printer}", "1")
+            return {"action": "none", "why": hold, "job_id": head["id"]}
+    JOBS.kv_set(f"power_hold:{printer}", "0")
     if w.p.auto_start:
         try:
             res = await _start(head["id"], "auto", via_auto=True)
@@ -1425,11 +1550,18 @@ async def upkeep_alerts(now: float | None = None) -> int:
 
 
 async def upkeep_loop(interval_s: float = 3600) -> None:
+    """Hourly: upkeep alerts, and a fresh look at queues held for cheaper power (prices move by the hour)."""
     while True:
         try:
             await upkeep_alerts()
         except Exception:
             log.exception("upkeep")
+        for n in WATCHERS:
+            if JOBS.kv_get(f"power_hold:{n}") == "1":
+                try:
+                    await advance_queue(n)
+                except Exception:
+                    log.exception("power-hold re-offer %s", n)
         await asyncio.sleep(interval_s)
 
 

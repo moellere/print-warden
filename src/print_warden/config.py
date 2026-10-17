@@ -89,6 +89,13 @@ class Printer:
 
 
 @dataclass(frozen=True)
+class CheapPower:
+    entity: str
+    max_price: float
+    min_hours: float = 3.0
+
+
+@dataclass(frozen=True)
 class Upkeep:
     reorder_below_g: float = 200.0
     dry_after_days: dict[str, float] = field(default_factory=dict)
@@ -135,6 +142,7 @@ class Config:
     quiet_entity: str | None = None
     quiet_states: tuple[str, ...] = ("on",)
     upkeep: Upkeep = Upkeep()
+    cheap_power: CheapPower | None = None
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -258,6 +266,13 @@ def load(path: str | Path) -> Config:
         quiet_states=tuple(
             str(s) for s in (raw.get("alerts") or {}).get("quiet_states") or ("on",)
         ),
+        cheap_power=CheapPower(
+            entity=str(cp["entity"]),
+            max_price=float(cp["max_price"]),
+            min_hours=float(cp.get("min_hours", 3)),
+        )
+        if (cp := pol.get("cheap_power"))
+        else None,
         upkeep=Upkeep(
             reorder_below_g=float(
                 (raw.get("upkeep") or {}).get("reorder_below_g", 200)

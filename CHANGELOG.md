@@ -15,6 +15,8 @@
   (`upkeep.dry_after_days`, **Dried** button) and per-printer `maintenance` items (hours or days, **Done** button,
   `maint_<item>` entities); at most one phone alert per finding a day, never in quiet hours. MCP: `upkeep_status`,
   `record_maintenance_done`, `record_spool_dried`.
+- `submit_split`: copies spread over printers with the material loaded, timed per printer, each share an ordinary
+  job. `policy.cheap_power` holds offers of long prints while a price entity reads above `max_price`.
 
 ## 0.3.0
 
