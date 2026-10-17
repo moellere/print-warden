@@ -1,7 +1,7 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0. Phases 8–12 are
-the next round.
+Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0. Phases 8–12 shipped
+in 0.4.0; their live sign-off is `docs/live-validation.md`.
 
 ## Phase 0 — Hardening ✅
 
@@ -93,7 +93,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - homelab-helper reads `/healthz` as its read-only `printwarden` source (`helper discover printwarden`): warden
   unreachable, printer offline, Klipper not ready and stale telemetry become findings there.
 
-## Phase 8 — Live validation and operations ✅ (build)
+## Phase 8 — Live validation and operations ✅ (0.4.0)
 
 - `print-warden check`: profiles resolve; Moonraker (and its power device), cameras (must return an image), Home
   Assistant (token, notify service, lights, quiet entity), Spoolman and the broker answer. Read-only; exit 1 on failure.
@@ -102,7 +102,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 
 Done when: every sign-off row is signed on both printers, or has an issue.
 
-## Phase 9 — Learn from how prints ended ✅ (build)
+## Phase 9 — Learn from how prints ended ✅ (0.4.0)
 
 - After each print, the end photo on the phone with Good / Failed and a reason (adhesion, spaghetti, layer shift,
   under-extrusion, other); the stats report labelled failure reasons, not only Klipper's.
@@ -110,7 +110,7 @@ Done when: every sign-off row is signed on both printers, or has an issue.
 
 Done when: failure rates by material and quality come from labelled outcomes.
 
-## Phase 10 — Filament and maintenance ✅ (build)
+## Phase 10 — Filament and maintenance ✅ (0.4.0)
 
 - Reorder alert: remaining grams per material across Spoolman against what the queue needs.
 - Drying reminders for hygroscopic materials by how long a spool has been open.
@@ -118,7 +118,7 @@ Done when: failure rates by material and quality come from labelled outcomes.
 
 Done when: a low spool or an overdue service raises one alert, and a tap clears it.
 
-## Phase 11 — Smarter scheduling ✅ (build)
+## Phase 11 — Smarter scheduling ✅ (0.4.0)
 
 - `copies=N` split across printers with the same material loaded.
 - Optional cheap-power window from an HA price sensor for long prints, inside `finish_window`.
@@ -126,7 +126,7 @@ Done when: a low spool or an overdue service raises one alert, and a tap clears 
 Done when: a 10-copy job on two idle printers finishes in about half the time, every start still tap- or
 auto_start-gated.
 
-## Phase 12 — Deeper homelab-helper integration ✅ (build, warden side)
+## Phase 12 — Deeper homelab-helper integration ✅ (0.4.0)
 
 - Warden events (Klipper shutdowns, repeated failures, overdue maintenance) in the status contract as an added field
   (api 1 only gains fields); homelab-helper turns them into findings.
