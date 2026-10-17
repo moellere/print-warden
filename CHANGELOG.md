@@ -17,6 +17,12 @@
 - Model pages: `submit_job` (and `submit_split`) take a Thingiverse (`THINGIVERSE_TOKEN`), Printables or any web
   page linking model files, with `file` to pick one; `model_page(url)` lists them. Source page, author and license
   are kept on the job and shown in `print_history`.
+- Printer profiles for any OrcaSlicer printer: presets resolve by name across every bundled vendor (and Orca's
+  filament library), not only `slicer.vendor_dir`, with parents found in their own vendor first. New
+  `print-warden profiles` command: `vendors`, `printers <vendor>`, `block <printer>` (the printers.yaml slicer block),
+  `import <files>` (Orca / Bambu Studio presets and bundles; `post_process` dropped) and `klipper <name> <moonraker>`
+  (a printer profile from Klipper's config). New optional `slicer.user_dir` (default `<storage>/profiles`) and
+  `slicer.profiles_root`.
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 

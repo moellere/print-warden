@@ -185,7 +185,7 @@ Done when: a new spool goes from calibration print to tuned settings on the next
 
 Done when: the page shows both printers live and `submit_job` takes a model page URL.
 
-## Phase 18 — Printer profiles for any printer
+## Phase 18 — Printer profiles for any printer ✅ (build)
 
 - Use any OrcaSlicer vendor's profiles, not only Artillery: list vendors/printers in Orca's bundled profiles and
   write the `printers.yaml` slicer block for one.
@@ -195,4 +195,20 @@ Done when: the page shows both printers live and `submit_job` takes a model page
   start/end macros) on top of a generic base when no vendor profile fits.
 
 Done when: a printer not in the Artillery set is configured from scratch with one command and slices correctly.
+
+Found by slicing for real (OrcaSlicer 2.4.2):
+
+- 465 bundled presets have a file name that is not their `name`, and `fdm_machine_common` and friends exist in many
+  vendors with different contents, so presets are indexed by `name` and a parent resolves in its child's vendor
+  first, then Orca's filament library. All 9,834 instantiated bundled presets resolve.
+- Orca's CLI refuses (rc -17) a machine whose name or `from: User` it cannot match to a bundled printer. A user's
+  preset is therefore passed with `inherits` naming its nearest bundled ancestor, and a process whose compatibility
+  list does not name that printer gets it added (printers.yaml already pairs them).
+- A bundled printer may inherit a sibling (another nozzle); counting the whole chain as the same printer gave a 0.2 mm
+  nozzle the 0.4 mm processes, so only a user's copy matches its bundled parent.
+- Cubicon's bundled filaments set `default_filament_colour` to a string, which aborts Orca's CLI; it is passed as a
+  list.
+- 34 printers sampled across 27 vendors, plus the Creality K1, a profile from a Klipper config and an imported Orca
+  bundle, sliced a cube with the generated block. All but one had no blocker: the Anycubic Kobra 2 Pro's start gcode
+  purges at Y226 on a 220 mm printable area, which the extents check blocks.
 

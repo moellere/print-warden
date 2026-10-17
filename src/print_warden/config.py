@@ -48,6 +48,8 @@ class SlicerConfig:
     orca: str = "/opt/orcaslicer/AppRun"
     openscad: str = "openscad"
     vendor_dir: str = "/opt/orcaslicer/resources/profiles/Artillery"
+    profiles_root: str | None = None
+    user_dir: str | None = None
     house_rules: str | None = None
     blocking_warnings: tuple[str, ...] = (
         "empty layer",
@@ -245,6 +247,7 @@ def load(path: str | Path) -> Config:
     pol = raw.get("policy") or {}
     host = sv.get("host", "0.0.0.0")
     port = int(sv.get("port", 8720))
+    storage = Path(st.get("dir", "./data"))
     return Config(
         printers=printers,
         ha=ha,
@@ -252,12 +255,14 @@ def load(path: str | Path) -> Config:
         obico_webhook_secret=os.environ.get(
             ob.get("webhook_secret_env", "OBICO_WEBHOOK_SECRET")
         ),
-        storage_dir=Path(st.get("dir", "./data")),
+        storage_dir=storage,
         keep_days=int(st.get("keep_days", 14)),
         host=host,
         port=port,
         public_url=(sv.get("public_url") or f"http://{host}:{port}").rstrip("/"),
-        slicer=_slicer(raw.get("slicer") or {}),
+        slicer=_slicer(
+            {"user_dir": str(storage / "profiles"), **(raw.get("slicer") or {})}
+        ),
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
         api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
         thingiverse_token=os.environ.get(

@@ -22,7 +22,7 @@ import httpx
 import yaml
 
 from . import config
-from .slicer import flatten
+from .slicer import flatten, search_dirs
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 
@@ -98,7 +98,7 @@ def _profiles(cfg: config.Config, p: config.Printer) -> list[Result]:
     area = f"{p.name} profiles"
     if not p.machine:
         return [Result(WARN, area, "no machine profile: this printer cannot slice")]
-    vendor = Path(cfg.slicer.vendor_dir)
+    vendor = search_dirs(cfg.slicer)
     wanted = [("machine", p.machine)]
     wanted += [("process", v) for v in p.processes.values()]
     wanted += [("filament", v) for v in p.filaments.values()]

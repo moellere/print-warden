@@ -97,6 +97,16 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 30. The same with a `https://www.printables.com/model/<id>-…` page. If it fails with "unofficial", Printables changed
     its API: open an issue with the error.
 
+## 11. Printer profiles
+
+31. On the warden host, `print-warden profiles klipper "<name>" http://<printer>:7125`, paste the printed block into a
+    test printer entry (or replace the slicer block of one printer in a copy of printers.yaml), `print-warden check`,
+    then slice and print a 20 mm cube from it. Expect: the bed size and height in the written preset match
+    `printer.cfg`, the gcode starts with your `PRINT_START` macro and its temperatures, and the cube prints.
+32. Export a printer or filament preset from OrcaSlicer (File → Export → Export Preset Bundle), then
+    `print-warden profiles import <bundle>` and slice with the printed block. Expect: the job's gcode carries your
+    preset's settings (e.g. its nozzle temperature).
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -132,3 +142,5 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 28 | `/status` shows both printers live; 401 without the token | | |
 | 29 | Thingiverse page → named file printed, license on the job | | |
 | 30 | Printables page → named file printed, license on the job | | |
+| 31 | Profile from Klipper: block, check, a cube printed | | |
+| 32 | Imported Orca preset bundle sliced with its settings | | |

@@ -198,6 +198,35 @@ endpoint its site uses, which is unofficial and may change; any other page is se
 `.stl` / `.3mf` / `.scad`, with `og:title`, the `author` meta and a `rel="license"` link.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
+## Printer profiles
+
+Any OrcaSlicer printer works, not only the Artillery set: presets are looked up by name in the warden's own profile
+directory (`slicer.user_dir`, default `<storage>/profiles`), then `slicer.vendor_dir`, then Orca's filament library,
+then every other vendor next to it (`slicer.profiles_root`, default the vendor directory's parent). A preset's parents
+resolve in its own vendor first, as in Orca. `print-warden profiles` sets a printer up:
+
+```
+print-warden profiles vendors                                  # Orca's bundled vendors
+print-warden profiles printers Creality                        # that vendor's printers
+print-warden profiles block "Creality K1 (0.4 nozzle)"         # the printers.yaml slicer block to paste
+print-warden profiles import my-k1.orca_printer "My PETG.json" # your own Orca / Bambu Studio presets or bundles
+print-warden profiles klipper "Voron 350" http://voron.local:7125   # a printer profile from Klipper's config
+```
+
+`block` keys the processes Orca lists as compatible with the printer by quality (`standard`, `draft`, `fine`, ...;
+a repeated name gets its layer height, `standard_0.28`), and picks per material the warden checks your own filament,
+else the vendor's generic one, else Orca's universal one. `import` writes presets (`.json`, `.orca_printer`,
+`.orca_filament`, `.bbscfg`, `.bbsflmt`) to `slicer.user_dir`; a preset whose parent is in neither the bundled
+profiles nor the same import is refused, and a process's `post_process` (a command Orca would run on the warden's
+host) is dropped. `klipper` reads the bed from the stepper limits, the height, nozzle, kinematics, speed and
+acceleration limits and the `PRINT_START`/`START_PRINT` and `PRINT_END`/`END_PRINT` macros (with the parameter names
+the macro reads, e.g. `BED_TEMP` / `EXTRUDER_TEMP`); it inherits Orca's generic Klipper printer for that nozzle, so its
+processes and Orca's universal filaments apply. Without a start macro it heats, homes and draws a purge line; check that
+start gcode before the first print. Then run `print-warden check`.
+
+Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm bed);
+the warden's extents check blocks those jobs. Waive it per job, or import a copy of the printer with your own purge.
+
 ## Run
 
 ```
@@ -239,7 +268,7 @@ src/print_warden/
   moonraker.py  websocket subscriber (read) + upload/start (write, policy-gated)
   rules.py      telemetry rules -> events
   watcher.py    per-printer orchestration, snapshots, light, timelapse, job tracking
-  slicer.py     OrcaSlicer CLI wrapper, preset flattening, gcode header parsing, OpenSCAD render
+  slicer.py     OrcaSlicer CLI wrapper, preset lookup and flattening, gcode header parsing, OpenSCAD render
   jobs.py       job ledger (SQLite): transition table, transition log
   policy.py     can_start(), approval_expired()
   reconcile.py  settle jobs from Moonraker history after a restart or outage
@@ -259,6 +288,7 @@ src/print_warden/
   calibration.py  temperature / flow / pressure-advance towers and their results
   intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
   status.py     the read-only /status page
+  profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
   server.py     MCP tools + HTTP routes (/upload, /status, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

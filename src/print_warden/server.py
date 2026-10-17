@@ -406,7 +406,7 @@ def calibrate_bed_camera(
         raise ValueError(
             f"{printer} has no machine profile, so its bed size is unknown"
         )
-    machine = slicer.flatten(Path(CFG.slicer.vendor_dir), "machine", w.p.machine)
+    machine = slicer.flatten(slicer.search_dirs(CFG.slicer), "machine", w.p.machine)
     bed = checks.bed_rect(machine)
     pts = [(float(u), float(v)) for u, v in corners]
     footprint.calibration(pts, bed)
@@ -730,7 +730,7 @@ async def submit_split(
         if n in skipped:
             continue
         assert p.machine
-        machine = slicer.flatten(Path(CFG.slicer.vendor_dir), "machine", p.machine)
+        machine = slicer.flatten(slicer.search_dirs(CFG.slicer), "machine", p.machine)
         if checks.fit_problems(dims, machine, 1) and not orient:
             skipped[n] = "; ".join(checks.fit_problems(dims, machine, 1))
             continue
@@ -1416,7 +1416,7 @@ async def calibrate(
     base = (spool.get("tuning") or {}).get("nozzle_temp") or spool.get("extruder_temp")
     if not base and kind == "temp":
         fil = slicer.flatten(
-            Path(CFG.slicer.vendor_dir), "filament", w.p.filaments[mat]
+            slicer.search_dirs(CFG.slicer), "filament", w.p.filaments[mat]
         )
         base = float((fil.get("nozzle_temperature") or ["0"])[0]) or None
     vals = calibration.values(kind, base, bowden)
