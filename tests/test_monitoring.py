@@ -250,3 +250,18 @@ def test_footprint_verdict_is_recorded_on_the_job(w, tmp_path):
     verdict = w.footprint_verdict(job, check)
     assert verdict.hint.startswith("probably failed")
     assert w.jobs.get(job["id"])["outcome_hint"] == verdict.hint
+
+
+async def test_a_finished_tower_asks_for_the_best_section(w):
+    from print_warden import calibration
+
+    job = _printing_job(w.jobs)
+    job = w.jobs.note(
+        job["id"],
+        "t",
+        calibration=calibration.spec("temp", calibration.values("temp", 200), 3),
+    )
+    await w._outcome_prompt(job, Event("p", "print_complete", "info", ""), None)
+    title, actions, _, _ = w.ha.prompts[-1]
+    assert title.startswith("Which section of the temp tower")
+    assert actions[0] == f"PRINT_WARDEN_CALIB_{job['id']}:1"

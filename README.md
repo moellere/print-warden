@@ -61,6 +61,14 @@ under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, 
 job ended in the failure rates and reasons, and `submit_job` warns when the same geometry failed before with the same
 material, quality and overrides (advisory; it never blocks).
 
+**Calibration towers.** `calibrate(printer, kind)` slices a five-section tower for the spool loaded on the printer and
+queues it like any job (it starts on a tap). `temp` steps the nozzle from 10 °C above the spool's temperature to 10
+below, `flow` the extrusion multiplier from 104 % to 96 %, `pa` Klipper's pressure advance (`bowden=True` for a
+Bowden range). The warden inserts each section's command after slicing, checks temperatures as usual, and puts flow and
+pressure advance back at the end. Afterwards the phone asks which section looked best; the answer is saved on the
+spool in Spoolman (`pw_nozzle_temp`, `pw_flow_ratio`, `pw_pressure_advance`; `record_calibration` from chat) and that
+spool's later jobs are sliced with it.
+
 Upkeep runs hourly and sends each finding to the phone at most once a day, outside quiet hours:
 
 - **Reorder:** a material whose Spoolman stock, minus what the queue still needs, is under

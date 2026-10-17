@@ -78,6 +78,14 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 24. With `policy.cheap_power` and the price above `max_price`: a long job is not offered (`advance_queue` says why);
     when the price drops, it is offered within the hour.
 
+## 9. Calibration
+
+26. `set_active_spool`, then `calibrate(printer, "temp")`; tap Start. Expect: the tower changes temperature at 8, 16,
+    24 and 32 mm (the console shows `M104`), the phone asks which section looked best; pick one; Spoolman shows
+    `pw_nozzle_temp` on the spool and the next job's warnings say its nozzle temperature came from the spool.
+27. `calibrate(printer, "flow")` then a normal print: `M221` is back at 100 % (`M221` without arguments in the
+    console reports it).
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -108,3 +116,5 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 23 | submit_split shares copies; each share tap-started | | |
 | 24 | Cheap-power hold, offered when the price drops | | |
 | 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | |
+| 26 | Temperature tower → section saved to the spool and used | | |
+| 27 | Flow tower leaves the printer at 100 % | | |

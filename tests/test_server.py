@@ -803,3 +803,82 @@ def test_calibrate_bed_camera(monkeypatch):
         server.calibrate_bed_camera(
             "testp", [[0.2, 0.9], [1.5, 0.9], [0.7, 0.3], [0.3, 0.3]], "x"
         )
+
+
+class FakeSpoolman:
+    def __init__(self, spool):
+        self.spool_ = spool
+        self.writes = []
+
+    async def spool(self, spool_id):
+        return dict(self.spool_, id=spool_id)
+
+    async def set_tuning(self, spool_id, field, value):
+        self.writes.append((spool_id, field, value))
+        name = {
+            "pw_flow_ratio": "flow_ratio",
+            "pw_nozzle_temp": "nozzle_temp",
+            "pw_pressure_advance": "pressure_advance",
+        }
+        self.spool_["tuning"] = {**self.spool_.get("tuning", {}), name[field]: value}
+        return dict(self.spool_, id=spool_id)
+
+
+async def test_calibration_tower_flow(monkeypatch, clean_queues):
+    from print_warden import calibration
+
+    sm = FakeSpoolman(
+        {"material": "PLA", "extruder_temp": 205, "tuning": {"flow_ratio": 0.95}}
+    )
+    monkeypatch.setattr(server, "SPOOLMAN", sm)
+    server.JOBS.kv_set("active_spool:testp", "7")
+    w = _ready_printer("testp")
+    w.mr.state["extruder"] = {"pressure_advance": 0.045}
+    submitted = {}
+
+    async def submit(printer, model, material, quality, **kw):
+        submitted.update(kw, printer=printer, model=model, material=material)
+        return {"id": "x", "warnings": []}
+
+    monkeypatch.setattr(server, "_submit_job", submit)
+    res = await server.calibrate("testp", "pa")
+    cal = submitted["calibration"]
+    assert (cal["kind"], cal["spool_id"], cal["reset"]) == (
+        "pa",
+        7,
+        "SET_PRESSURE_ADVANCE ADVANCE=0.045",
+    )
+    assert res["sections"][0] == "PA 0.010"
+    assert (server.UPLOADS / submitted["model"]).exists()
+    with pytest.raises(ValueError):
+        await server.calibrate("testq", "temp")
+
+    job = server.JOBS.create(
+        printer="testp",
+        name="flow_tower",
+        material="PLA",
+        calibration=calibration.spec("flow", calibration.values("flow"), 7),
+    )
+    for s in ("staged", "printing", "done"):
+        server.JOBS.transition(job["id"], s)
+    prompts, cleared = [], []
+
+    async def notify(title, message, actions, image=None, tag=None):
+        prompts.append([a for a, _ in actions])
+        return True
+
+    async def clear(tag):
+        cleared.append(tag)
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    await server._on_ha_action(f"PRINT_WARDEN_CALIB_{job['id']}:more", {})
+    assert prompts[-1][0].endswith(":3")
+    await server._on_ha_action(f"PRINT_WARDEN_CALIB_{job['id']}:4", {})
+    assert sm.writes == [(7, "pw_flow_ratio", 0.931)]
+    assert server.JOBS.get(job["id"])["outcome"] == "good"
+    assert cleared
+    over, note = await server._spool_temps("testp", "PLA")
+    assert over["filament_flow_ratio"] == ["0.931"]
+    assert "flow 0.931" in note

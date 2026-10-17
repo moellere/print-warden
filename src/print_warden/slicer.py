@@ -17,6 +17,7 @@ from typing import Any
 
 from . import checks
 from . import park as parking
+from .calibration import apply as calibrate_gcode
 from .config import Pose, SlicerConfig
 from .preview import render as render_preview
 from .threemf import leaked as project_leaks
@@ -209,6 +210,7 @@ async def slice_stl(
     cache_dir: Path | None = None,
     project: Path | None = None,
     plate: int = 1,
+    calibration: dict[str, Any] | None = None,
 ) -> SliceResult:
     """Raises ValueError before slicing when the model cannot fit; problems found in the sliced gcode come back as
     `blockers`, which keep the job from starting. With `cache_dir`, an identical request (same model bytes, same
@@ -253,6 +255,7 @@ async def slice_stl(
                 "blocking": cfg.blocking_warnings,
                 "orca": _orca_identity(cfg.orca),
                 "plate": plate if project else None,
+                "calibration": calibration,
             },
         )
         entry = cache_dir / key
@@ -299,6 +302,14 @@ async def slice_stl(
                 raise RuntimeError(f"no gcode inside 3mf: {log[-2000:]}")
             text = z.read(gcodes[0]).decode(errors="ignore")
             leaks = project_leaks(text) if project else []
+            if calibration:
+                text = calibrate_gcode(
+                    text,
+                    calibration["kind"],
+                    tuple(calibration["values"]),
+                    calibration["section_h"],
+                    calibration.get("reset"),
+                )
             park_warnings: list[str] = []
             if park:
                 height = machine_cfg.get("printable_height")

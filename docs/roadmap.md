@@ -163,11 +163,14 @@ Done when: a plate with a negative part slices with its hole, and no project gco
 
 Done when: a removed part is flagged before anyone looks.
 
-## Phase 16 — Per-spool tuning and calibration prints
+## Phase 16 — Per-spool tuning and calibration prints ✅ (build)
 
 - Flow ratio and pressure advance per spool in Spoolman extra fields, applied as filament overrides.
 - `calibrate(printer, spool, kind)` generates a temperature / flow / pressure-advance print; the outcome prompt asks
   which section was best and records it on the spool.
+- Found by slicing for real: a tower whose sections alternated in width overhung every other section and brought
+  tree supports (97 extra support layers); the tower now only steps inward. Klipper keeps `M221` and pressure
+  advance after a print, so each tower ends by restoring them (the live pressure advance comes from Moonraker).
 
 Done when: a new spool goes from calibration print to tuned settings on the next job without editing a profile.
 

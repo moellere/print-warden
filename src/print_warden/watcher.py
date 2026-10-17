@@ -15,6 +15,7 @@ import httpx
 
 from . import (
     bedcheck,
+    calibration,
     cameras,
     footprint,
     moonraker,
@@ -563,6 +564,16 @@ class PrinterWatcher:
             else None
         )
         completed = ev.kind == "print_complete"
+        cal = job.get("calibration")
+        if cal and completed:
+            await self.ha.notify_actionable(
+                f"Which section of the {cal['kind']} tower looked best?",
+                f"{self.p.name}: sections count from the bottom. The answer is saved to the spool.",
+                calibration.choices(job["id"], cal, 1),
+                image=image,
+                tag=outcome.tag(job["id"]),
+            )
+            return
         await self.ha.notify_actionable(
             f"How did {job['name']} turn out?"
             if completed

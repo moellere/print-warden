@@ -30,6 +30,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import (
     __version__,
+    calibration,
     cameras,
     checks,
     config,
@@ -500,6 +501,38 @@ async def submit_job(
     matches) replace the profile's. An identical earlier slice is reused from the cache. The result includes
     `history`: earlier jobs of the same model geometry with their settings and outcomes (see model_history).
     Returns the job with estimates, a preview URL, where it was routed and what the queue did with it."""
+    return await _submit_job(
+        printer=printer,
+        model=model,
+        material=material,
+        quality=quality,
+        name=name,
+        overrides=overrides,
+        scad_defines=scad_defines,
+        copies=copies,
+        orient=orient,
+        offer=offer,
+        use_spool_temps=use_spool_temps,
+        plate=plate,
+    )
+
+
+async def _submit_job(
+    printer: str,
+    model: str,
+    material: str,
+    quality: str = "standard",
+    name: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    scad_defines: dict[str, Any] | None = None,
+    copies: int = 1,
+    orient: bool = False,
+    offer: bool = True,
+    use_spool_temps: bool = True,
+    plate: int = 1,
+    calibration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The body of submit_job; `calibration` (a calibration tower spec) is set only by calibrate."""
     printer, routed = await _resolve_printer(printer, material)
     w = _w(printer)
     p = w.p
@@ -543,6 +576,7 @@ async def submit_job(
         cache_dir=CFG.storage_dir / "slice-cache",
         project=project,
         plate=plate,
+        calibration=calibration,
     )
     history = _history(model_hash)
     before = _failed_before(model_hash, mat, q, overrides or {})
@@ -569,6 +603,7 @@ async def submit_job(
         model_hash=model_hash,
         overrides=overrides or {},
         orient=int(orient),
+        calibration=calibration,
     )
     if res.cached:
         JOBS.note(job["id"], "slice reused from cache")
@@ -856,7 +891,8 @@ def waive_blockers(job_id: str, authorized_by: str) -> dict[str, Any]:
 async def _spool_temps(
     printer: str, material: str
 ) -> tuple[dict[str, Any], str | None]:
-    """Filament overrides from the active spool's Spoolman temperatures, when it holds this material."""
+    """Filament overrides from the active spool when it holds this material: its calibrated values (temperature,
+    flow ratio, pressure advance) where the warden recorded them, else Spoolman's temperatures."""
     sid = JOBS.kv_get(f"active_spool:{printer}")
     if not (sid and SPOOLMAN):
         return {}, None
@@ -868,7 +904,16 @@ async def _spool_temps(
     if spool["material"] != material:
         return {}, None
     over: dict[str, Any] = {}
-    nozzle, bed = spool.get("extruder_temp"), spool.get("bed_temp")
+    tuned = spool.get("tuning") or {}
+    nozzle, bed = (
+        tuned.get("nozzle_temp") or spool.get("extruder_temp"),
+        spool.get("bed_temp"),
+    )
+    if flow := tuned.get("flow_ratio"):
+        over["filament_flow_ratio"] = [str(flow)]
+    if (pa := tuned.get("pressure_advance")) is not None:
+        over["enable_pressure_advance"] = ["1"]
+        over["pressure_advance"] = [str(pa)]
     if nozzle:
         over["nozzle_temperature"] = over["nozzle_temperature_initial_layer"] = [
             str(int(nozzle))
@@ -885,7 +930,9 @@ async def _spool_temps(
         return {}, None
     return (
         over,
-        f"temperatures from spool {sid}: nozzle {nozzle or 'profile'}, bed {bed or 'profile'}",
+        f"from spool {sid}: nozzle {nozzle or 'profile'}, bed {bed or 'profile'}"
+        + (f", flow {flow}" if flow else "")
+        + (f", pressure advance {pa}" if pa is not None else ""),
     )
 
 
@@ -1222,6 +1269,8 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             JOBS.note(job_id, "first layers look good (phone tap)")
         elif verb == "OUTCOME":
             await _on_outcome_tap(job_id)
+        elif verb == "CALIB":
+            await _on_calibration_tap(job_id)
         elif verb == "MAINT":
             printer, _, item = job_id.partition(":")
             record_maintenance(printer, item, "phone tap")
@@ -1264,6 +1313,110 @@ async def _on_outcome_tap(payload: str) -> None:
     )
     if choice != "failed" and HA:
         await HA.clear_notification(outcome.tag(job_id))
+
+
+async def _on_calibration_tap(payload: str) -> None:
+    job_id, _, choice = payload.partition(":")
+    job = JOBS.get(job_id)
+    cal = job.get("calibration")
+    if not cal:
+        raise ValueError(f"job {job_id} is not a calibration print")
+    if choice == "more":
+        if HA:
+            await HA.notify_actionable(
+                f"Which section of the {cal['kind']} tower looked best?",
+                "Sections count from the bottom.",
+                calibration.choices(job_id, cal, 2),
+                tag=outcome.tag(job_id),
+            )
+        return
+    await record_calibration(job_id, int(choice), "phone tap")
+    if HA:
+        await HA.clear_notification(outcome.tag(job_id))
+
+
+@mcp.tool()
+async def record_calibration(
+    job_id: str, section: int, recorded_by: str
+) -> dict[str, Any]:
+    """Save the best-looking section of a finished calibration tower (1 = bottom) to its spool in Spoolman; later jobs
+    with that spool use it. Use the operator's words: `recorded_by` names who chose. The job is labelled good."""
+    job = JOBS.get(job_id)
+    cal = job.get("calibration")
+    if not cal:
+        raise ValueError(f"job {job_id} is not a calibration print")
+    if job["state"] != "done":
+        raise ValueError(
+            f"job {job_id} is {job['state']}; only a finished tower is read"
+        )
+    if not (SPOOLMAN and cal.get("spool_id")):
+        raise ValueError("the tower's spool is unknown, or Spoolman is not configured")
+    current = await SPOOLMAN.spool(int(cal["spool_id"]))
+    field, value = calibration.result(cal, section, current.get("tuning") or {})
+    spool = await SPOOLMAN.set_tuning(int(cal["spool_id"]), field, value)
+    label_job(job_id, "good", None, recorded_by)
+    JOBS.note(
+        job_id,
+        f"section {section} chosen: {field} = {value} on spool {cal['spool_id']}",
+    )
+    return {
+        "spool_id": cal["spool_id"],
+        "field": field,
+        "value": value,
+        "tuning": spool.get("tuning"),
+    }
+
+
+@mcp.tool()
+async def calibrate(
+    printer: str, kind: str, quality: str = "standard", bowden: bool = False
+) -> dict[str, Any]:
+    """Slice a calibration tower for the spool loaded on `printer` (set_active_spool first) and queue it like any job:
+    it starts only on a tap or auto_start. `kind`: "temp" (nozzle temperature, 10 °C either side of the spool's),
+    "flow" (extrusion multiplier 96-104 %) or "pa" (pressure advance; `bowden` for a Bowden extruder's range). Five
+    sections; after the print the phone asks which looked best and saves it to the spool (record_calibration from
+    chat). The printer's flow and pressure advance are put back at the end of the tower."""
+    w = _w(printer)
+    sid = JOBS.kv_get(f"active_spool:{printer}")
+    if not (SPOOLMAN and sid):
+        raise ValueError(
+            f"no active spool on {printer}: set_active_spool first (needs Spoolman)"
+        )
+    spool = await SPOOLMAN.spool(int(sid))
+    mat = spool["material"]
+    if mat not in w.p.filaments:
+        raise ValueError(f"{printer} has no {mat} filament profile")
+    base = (spool.get("tuning") or {}).get("nozzle_temp") or spool.get("extruder_temp")
+    if not base and kind == "temp":
+        fil = slicer.flatten(
+            Path(CFG.slicer.vendor_dir), "filament", w.p.filaments[mat]
+        )
+        base = float((fil.get("nozzle_temperature") or ["0"])[0]) or None
+    vals = calibration.values(kind, base, bowden)
+    reset = calibration.restore(
+        kind, (w.mr.state.get("extruder") or {}).get("pressure_advance")
+    )
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    model = f"calibration_tower_{kind}.stl"
+    (UPLOADS / model).write_bytes(calibration.tower_stl())
+    res = await _submit_job(
+        printer,
+        model,
+        mat,
+        quality,
+        name=f"{kind}_tower_spool{sid}",
+        calibration=calibration.spec(kind, vals, int(sid), reset),
+    )
+    if kind == "pa" and reset is None:
+        res["warnings"] = [
+            *res.get("warnings", []),
+            (
+                "the printer's pressure advance was unknown, so the tower's last value stays set until Klipper "
+                "restarts or a job sets it"
+            ),
+        ]
+    res["sections"] = [calibration.label(kind, v) for v in vals]
+    return res
 
 
 def label_job(job_id: str, result: str, reason: str | None, who: str) -> dict[str, Any]:

@@ -8,6 +8,10 @@
 - Part-on-bed check: `calibrate_bed_camera` (four bed corners in the bed camera) lets the post-print check compare
   where the first layer was drawn with what changed; a missing part or a cluttered bed re-sends the outcome prompt
   with a hint (also `outcome_hint` on the job, and `footprint_check(job_id)`). Advisory only.
+- Calibration towers: `calibrate(printer, temp|flow|pa)` for the loaded spool; the best section, chosen on the phone
+  or with `record_calibration`, is saved to the spool in Spoolman and applied to its later jobs (flow ratio and
+  pressure advance as filament overrides, temperature in place of Spoolman's). Towers restore flow and pressure
+  advance at the end. The extruder's `pressure_advance` is now read from Moonraker.
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 
