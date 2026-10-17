@@ -61,3 +61,21 @@ def test_old_database_gains_new_columns(tmp_path):
     store = JobStore(path)
     j = store.note("old", "migrated", spool_id=7)
     assert j["spool_id"] == 7 and j["approval_requested_at"] is None
+
+
+def test_queue_order_and_json_fields(store):
+    a = store.create(printer="p", name="a", offer=True, slice_blockers=["x"])
+    b = store.create(printer="p", name="b")
+    for j in (a, b):
+        store.transition(j["id"], "staged")
+    assert [j["name"] for j in store.queue("p")] == ["a", "b"]
+    store.note(b["id"], "move", queue_pos=-1.0)
+    assert [j["name"] for j in store.queue("p")] == ["b", "a"]
+    got = store.get(a["id"])
+    assert (
+        got["slice_blockers"] == ["x"]
+        and got["offer"] is True
+        and store.get(b["id"])["offer"] is False
+    )
+    store.note(a["id"], "waive", slice_blockers=[])
+    assert store.get(a["id"])["slice_blockers"] == []

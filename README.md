@@ -47,7 +47,7 @@ bed until Klipper's `idle_timeout` releases them (raise `idle_timeout` if you cl
 steppers were released is brought back with `G28 Y` and a Y move (X too if the pose sets it); Z never moves, the last
 commanded Z must be at least `pose.z`, and every rehome alerts. Prints the warden did not slice have no park block.
 
-`auto_start: true` starts a newly staged job without a tap only when the bed is marked clear, a live check reads clear,
+`auto_start: true` starts the queue's next job without a tap only when the bed is marked clear, a live check reads clear,
 the last `min_agreements` labelled checks all agreed with the operator, and the local time is inside
 `auto_start_hours`. Each unattended start sends an alert with the check's snapshot. A missed small part (a false
 "clear" after a print) breaks the record, so auto_start stops until the check earns it back.
@@ -56,10 +56,13 @@ the last `min_agreements` labelled checks all agreed with the operator, and the 
 
 ```
 curl -F file=@part.stl http://nas.local:8710/upload           # or a .scad
-submit_job(printer="garagex4", model="part.stl", material="PETG", quality="standard")
-   -> slices (tree supports, no brim), uploads gcode to Moonraker as warden/<job>_<name>_<mat>.gcode
-job_status(job_id)          # estimates, warnings, can_start + blockers
-request_start(job_id)       # phone notification with Start / Skip buttons
+submit_job(printer="garagex4", model="part.stl", material="PETG", quality="standard", copies=1)
+   -> checks the model fits, slices (tree supports, no brim), checks the gcode, uploads it to Moonraker as
+      warden/<job>_<name>_<mat>.gcode and queues it; printer may be a location ("wyola")
+job_status(job_id)          # estimates, warnings, slice blockers, can_start + blockers
+queue("garagex4") / move_job(job_id, 0) / offer_next("garagex4")
+request_start(job_id)       # phone notification with Start / Skip buttons (the queue does this for you)
+waive_blockers(job_id, authorized_by="the operator said: print it anyway")
 start_print(job_id, authorized_by="the operator said: go ahead and print it")   # chat path
 list_spools() / set_active_spool("garagex4", 2)   # Spoolman owns spools; the warden records which one is loaded
 ```
@@ -69,6 +72,22 @@ When a print ends the warden deducts the filament Klipper reports from the job's
 frames into `timelapse.mp4`, and sends the completion alert with actual vs. estimated time, grams and the timelapse link.
 On every Moonraker (re)connect, jobs whose outcome happened while the warden was away are settled from Moonraker's
 print history.
+
+**Queue.** Staged jobs line up per printer (`queue`, `move_job`). The warden offers the next one (phone tap, or
+`auto_start`) when the printer is idle, its bed is not occupied and nothing is already waiting: right after
+`submit_job`, and whenever the bed is marked clear. One offer at a time; a Skip or an expired request offers nothing
+more until the next trigger or `offer_next`. `submit_job(..., offer=False)` stages a job without queueing it.
+
+**Routing.** A location picks the printer with the job's material loaded that frees up soonest (what is left of the
+current print plus its queue); printers that cannot print are skipped. `finish_window` ("07:00-23:00") keeps
+auto_start from beginning a job that would finish outside it, and puts the expected finish in a tapped request.
+
+**Slice checks.** Before slicing, the model's bounding box (rotated 90° if that fits) and `copies` are checked against
+the machine's printable area and height; a model that cannot fit is refused. After slicing, the extrusion extents are
+checked against the bed, the nozzle and bed temperatures against the material's range, and Orca's log against
+`slicer.blocking_warnings`. Findings become slice blockers: `can_start` refuses and the queue passes the job over
+until `waive_blockers` records the operator's consent. `copies` uses Orca's `--clone-objects` + `--arrange`;
+`orient=True` uses `--orient` (the pre-slice fit check is skipped then; the gcode check still runs).
 
 Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS.
 Models are STL or SCAD, up to 100 MB.
@@ -114,6 +133,7 @@ src/print_warden/
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)
+  checks.py     slice checks: model fit, gcode extents, temperatures, blocking Orca warnings
   park.py       bed-check pose: end-gcode park at slice time, pose test, opt-in Y rehome
   ha.py         alert webhook, actionable notifications, light control
   ha_events.py  HA websocket: notification button taps

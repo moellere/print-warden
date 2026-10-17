@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import checks
 from . import park as parking
 from .config import Pose, SlicerConfig
 
@@ -29,6 +30,7 @@ class SliceResult:
     max_z: float | None
     warnings: list[str] = field(default_factory=list)
     log_tail: str = ""
+    blockers: list[str] = field(default_factory=list)
 
 
 def _load_named(vendor: Path, kind: str, name: str) -> dict[str, Any]:
@@ -112,13 +114,26 @@ async def slice_stl(
     filament: str,
     overrides: dict[str, Any] | None = None,
     park: Pose | None = None,
+    material: str = "",
+    copies: int = 1,
+    orient: bool = False,
 ) -> SliceResult:
+    """Raises ValueError before slicing when the model cannot fit; problems found in the sliced gcode come back as
+    `blockers`, which keep the job from starting."""
     out_dir.mkdir(parents=True, exist_ok=True)
     vendor = Path(cfg.vendor_dir)
     house = json.loads(Path(cfg.house_rules).read_text()) if cfg.house_rules else {}
     tmp = Path(tempfile.mkdtemp(prefix="slice-"))
     try:
         machine_cfg = flatten(vendor, "machine", machine)
+        if copies < 1 or copies > 50:
+            raise ValueError("copies must be 1-50")
+        if not orient and (
+            problems := checks.fit_problems(checks.stl_bounds(stl), machine_cfg, copies)
+        ):
+            raise ValueError(
+                f"{stl.name} cannot be printed on {machine}: " + "; ".join(problems)
+            )
         if park:
             machine_cfg["machine_end_gcode"] = parking.prepare_end_gcode(
                 str(machine_cfg.get("machine_end_gcode") or "")
@@ -141,6 +156,9 @@ async def slice_stl(
             f"{tmp / 'machine.json'};{tmp / 'process.json'}",
             "--load-filaments",
             str(tmp / "filament.json"),
+            *(["--clone-objects", str(copies)] if copies > 1 else []),
+            *(["--arrange", "1"] if copies > 1 else []),
+            *(["--orient", "1"] if orient else []),
             "--slice",
             "0",
             "--export-3mf",
@@ -187,6 +205,10 @@ async def slice_stl(
                     preview.write_bytes(z.read(cand))
                     break
         meta = parse_gcode_header(text)
+        blockers = checks.gcode_problems(
+            checks.gcode_facts(text), machine_cfg, material
+        )
+        blockers += checks.log_problems(log, cfg.blocking_warnings)
         warnings = (
             park_warnings
             + [ln.strip() for ln in log.splitlines() if "warn" in ln.lower()][:10]
@@ -202,6 +224,7 @@ async def slice_stl(
             meta.get("max_z"),
             warnings,
             log[-800:],
+            blockers,
         )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

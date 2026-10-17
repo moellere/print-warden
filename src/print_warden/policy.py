@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,6 +22,10 @@ def can_start(
     bed_state: str | None = None,
 ) -> tuple[bool, list[str]]:
     reasons: list[str] = []
+    for b in job.get("slice_blockers") or []:
+        reasons.append(
+            f"slice check: {b} (waive_blockers with the operator's consent to print anyway)"
+        )
     if bed_state == "occupied":
         reasons.append(
             "bed not cleared since the last print; tap Bed cleared or mark_bed_clear"
@@ -71,6 +75,15 @@ def in_window(spec: str | None, now: datetime) -> bool:
     start, end = time.fromisoformat(start_s.strip()), time.fromisoformat(end_s.strip())
     t = now.time()
     return start <= t < end if start <= end else t >= start or t < end
+
+
+def finish_ok(window: str | None, now: datetime, est_seconds: float | None) -> bool:
+    """Would a print started now finish inside `window`? No window means any finish time is fine."""
+    if not window:
+        return True
+    if not est_seconds:
+        return False
+    return in_window(window, now + timedelta(seconds=est_seconds))
 
 
 def can_auto_start(

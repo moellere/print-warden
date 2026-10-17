@@ -18,6 +18,14 @@ printers:
       machine: M
       processes: {{standard: P}}
       filaments: {{PLA: F}}
+  testq:
+    location: lab
+    moonraker: http://127.0.0.1:9
+    cameras: {{}}
+    slicer:
+      machine: M
+      processes: {{standard: P}}
+      filaments: {{PLA: F}}
 home_assistant:
   url: http://127.0.0.1:9
   webhook_id: test

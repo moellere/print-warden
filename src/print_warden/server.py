@@ -10,7 +10,7 @@ import hmac
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -70,14 +70,36 @@ def _w(printer: str) -> PrinterWatcher:
     return WATCHERS[printer]
 
 
+def _eta_free_s(name: str) -> float | None:
+    """Seconds until the printer could take a new job: what is left of the current print plus its queue.
+    None when it cannot print at all (Moonraker down, or Klipper down without a power device to bring it up)."""
+    w = WATCHERS[name]
+    st = w.status()
+    klippy_ok = st.get("klippy") == "ready" or bool(w.p.power_device)
+    if not st.get("moonraker_connected") or not klippy_ok:
+        return None
+    left = 0.0
+    if st.get("state") in ("printing", "paused"):
+        active = JOBS.find_active(name)
+        elapsed = (st.get("print_duration_min") or 0) * 60
+        pct = st.get("progress_pct") or 0
+        if active and active.get("est_seconds"):
+            left = max(0.0, active["est_seconds"] - elapsed)
+        elif pct > 5:
+            left = elapsed * (100 - pct) / pct
+        else:
+            left = 3600.0
+    return left + sum(j.get("est_seconds") or 0 for j in JOBS.queue(name))
+
+
 async def _resolve_printer(
     printer_or_location: str, material: str | None = None
-) -> str:
-    """Accept a printer name or a location (e.g. 'wyola'). A location picks the printer there whose loaded
-    material matches, preferring an idle one; ties or no match raise with the candidates listed."""
+) -> tuple[str, str]:
+    """Accept a printer name or a location (e.g. 'wyola'). A location picks, among printers there that can print,
+    the one with the right material loaded that frees up soonest. Returns (printer, why)."""
     key = printer_or_location.lower()
     if key in WATCHERS:
-        return key
+        return key, "named"
     cands = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
     if not cands:
         raise ValueError(
@@ -86,19 +108,25 @@ async def _resolve_printer(
         )
     ranked = []
     for n in cands:
-        st = WATCHERS[n].status()
         loaded = await _loaded(n)
         ok_mat = material is None or (loaded or "").upper() == material.upper()
-        idle = st.get("state") in policy.IDLE_STATES and st.get("klippy") == "ready"
-        ranked.append((ok_mat, idle, n, loaded, st.get("state"), st.get("klippy")))
-    ranked.sort(key=lambda r: (r[0], r[1]), reverse=True)
-    best = ranked[0]
-    if material is not None and not best[0]:
+        eta = _eta_free_s(n)
+        ranked.append((not ok_mat, eta is None, eta or 0.0, n, loaded))
+    ranked.sort()
+    bad_mat, unavailable, eta, best, _ = ranked[0]
+    if material is not None and bad_mat:
         raise ValueError(
             f"no printer at {key} has {material.upper()} loaded: "
-            + "; ".join(f"{r[2]} has {r[3]} ({r[4]}, klippy {r[5]})" for r in ranked)
+            + "; ".join(f"{r[3]} has {r[4]}" for r in ranked)
         )
-    return best[2]
+    if unavailable:
+        raise ValueError(
+            f"no printer at {key} can print right now: {[r[3] for r in ranked]}"
+        )
+    others = ", ".join(
+        f"{r[3]} {r[2] / 60:.0f} min" for r in ranked[1:] if not r[0] and not r[1]
+    )
+    return best, f"free in {eta / 60:.0f} min" + (f" (vs {others})" if others else "")
 
 
 @mcp.tool()
@@ -217,7 +245,9 @@ async def _policy(job: dict[str, Any]) -> tuple[bool, list[str]]:
     )
 
 
-async def _auto_gate(w: PrinterWatcher) -> tuple[bool, list[str], str | None]:
+async def _auto_gate(
+    w: PrinterWatcher, job: dict[str, Any]
+) -> tuple[bool, list[str], str | None]:
     """Everything a tap would otherwise vouch for: a human-cleared bed, a live check that agrees, a clean record of
     labelled checks, and the allowed hours. Returns (ok, reasons, snapshot of the live check)."""
     bc = w.p.bed_check
@@ -235,6 +265,11 @@ async def _auto_gate(w: PrinterWatcher) -> tuple[bool, list[str], str | None]:
         datetime.now().astimezone(),
         w.check_skipped,
     )
+    if not policy.finish_ok(
+        w.p.finish_window, datetime.now().astimezone(), job.get("est_seconds")
+    ):
+        ok = False
+        reasons.append(f"would finish outside finish_window ({w.p.finish_window})")
     return ok, reasons, check.snapshot if check else None
 
 
@@ -295,7 +330,9 @@ async def mark_bed_clear(printer: str, authorized_by: str) -> dict[str, Any]:
     can know this; never call it on your own inference or from a camera image."""
     if not authorized_by or len(authorized_by.strip()) < 8:
         raise ValueError("authorized_by must quote the operator")
-    return await _w(printer).mark_clear(f"chat: {authorized_by.strip()}")
+    out = await _w(printer).mark_clear(f"chat: {authorized_by.strip()}")
+    out["queue"] = await advance_queue(printer)
+    return out
 
 
 @mcp.tool()
@@ -353,12 +390,19 @@ async def submit_job(
     name: str | None = None,
     overrides: dict[str, Any] | None = None,
     scad_defines: dict[str, Any] | None = None,
+    copies: int = 1,
+    orient: bool = False,
+    offer: bool = True,
 ) -> dict[str, Any]:
     """Slice a model and stage the gcode on a printer (not started). `printer` is a printer name or a location
     ("covington", "wyola"): the warden routes to the printer there with the right material loaded. `model` is a file name previously
     POSTed to /upload (STL or SCAD) or an http(s) URL. `overrides` are OrcaSlicer process keys applied after the
-    house rules (tree supports, no brim). Returns the job with time/filament estimates and a preview URL."""
-    printer = await _resolve_printer(printer, material)
+    house rules (tree supports, no brim). `copies` arranges that many on one plate; `orient` lets Orca pick the
+    orientation. The model is checked against the bed before slicing and the gcode after (extents, temperatures for
+    the material); problems become blockers. With `offer` the job joins the printer's queue and is offered (phone tap,
+    or auto_start) as soon as the printer is idle and its bed clear; otherwise it waits for request_start.
+    Returns the job with estimates, a preview URL, where it was routed and what the queue did with it."""
+    printer, routed = await _resolve_printer(printer, material)
     w = _w(printer)
     p = w.p
     mat, q = material.upper(), quality.lower()
@@ -385,6 +429,9 @@ async def submit_job(
         p.filaments[mat],
         overrides,
         park=p.bed_check.pose if p.bed_check else None,
+        material=mat,
+        copies=copies,
+        orient=orient,
     )
     job = JOBS.create(
         printer=printer,
@@ -400,6 +447,9 @@ async def submit_job(
         layers=res.layers,
         max_z=res.max_z,
         warnings=res.warnings,
+        slice_blockers=res.blockers,
+        copies=copies,
+        offer=offer,
     )
     remote = f"warden/{job['id']}_{stem}_{mat}.gcode"
     try:
@@ -420,23 +470,118 @@ async def submit_job(
             alert=False,
         )
     )
-    result = _job_public(job)
-    if p.auto_start:
-        try:
-            started = await _start(job["id"], "auto", via_auto=True)
-            result = {
-                **started,
-                "auto_start": {
-                    "started": started["started"],
-                    "blockers": started["blockers"],
-                },
-            }
-        except httpx.HTTPError as e:
-            result["auto_start"] = {
-                "started": False,
-                "blockers": [f"start failed: {e}"],
-            }
+    result = {**_job_public(job), "routed": routed}
+    if offer:
+        result["queue"] = await advance_queue(printer)
     return result
+
+
+async def advance_queue(printer: str) -> dict[str, Any]:
+    """Offer the next job when the printer can take one: idle (or powered off with a power device), bed not
+    occupied, no request already waiting, no start in flight. The first offered, unblocked staged job is tried with
+    auto_start where enabled, else sent to the phone. One offer at a time; a Skip or an expiry offers nothing."""
+    w = _w(printer)
+    st = w.status()
+    idle = st.get("state") in policy.IDLE_STATES and (
+        st.get("klippy") == "ready" or bool(w.p.power_device)
+    )
+    if w.start_lock.locked():
+        return {"action": "none", "why": "a start is in flight"}
+    if JOBS.list(printer, 1, ("awaiting_approval", "approved", "printing")):
+        return {
+            "action": "none",
+            "why": "a job is already waiting, starting or printing",
+        }
+    if not st.get("moonraker_connected") or not idle:
+        return {
+            "action": "none",
+            "why": f"printer is {st.get('state') or st.get('klippy')}",
+        }
+    if BED.state(printer)["state"] == "occupied":
+        return {"action": "none", "why": "bed not cleared"}
+    queue = [j for j in JOBS.queue(printer) if j["offer"]]
+    head = next((j for j in queue if not j["slice_blockers"]), None)
+    if not head:
+        why = "queue empty" if not queue else "every queued job has slice blockers"
+        return {"action": "none", "why": why}
+    if w.p.auto_start:
+        try:
+            res = await _start(head["id"], "auto", via_auto=True)
+        except httpx.HTTPError as e:
+            res = {"started": False, "blockers": [f"start failed: {e}"]}
+        if res["started"]:
+            return {"action": "auto_started", "job_id": head["id"]}
+        auto_why = res["blockers"]
+    else:
+        auto_why = None
+    if not HA:
+        return {
+            "action": "none",
+            "why": "no Home Assistant to ask the operator",
+            "job_id": head["id"],
+        }
+    req = await request_start(head["id"])
+    if not req["notification_sent"]:
+        JOBS.transition(head["id"], "staged", "offer not delivered; back in the queue")
+        return {
+            "action": "none",
+            "why": "phone notification failed",
+            "job_id": head["id"],
+        }
+    out = {"action": "offered", "job_id": head["id"]}
+    if auto_why:
+        out["auto_start_refused"] = auto_why
+    return out
+
+
+@mcp.tool()
+def queue(printer: str) -> list[dict[str, Any]]:
+    """A printer's staged jobs in offer order: position, whether the warden will offer it, estimates, slice blockers."""
+    _w(printer)
+    return [
+        {
+            "position": i,
+            "job_id": j["id"],
+            "name": j["name"],
+            "material": j["material"],
+            "est_human": _job_public(j).get("est_human"),
+            "offer": j["offer"],
+            "slice_blockers": j["slice_blockers"],
+        }
+        for i, j in enumerate(JOBS.queue(printer))
+    ]
+
+
+@mcp.tool()
+def move_job(job_id: str, position: int) -> list[dict[str, Any]]:
+    """Move a staged job to `position` (0 = next) in its printer's queue. Returns the new queue."""
+    job = JOBS.get(job_id)
+    if job["state"] != "staged":
+        raise ValueError(f"job is {job['state']}; only staged jobs are queued")
+    order = [j for j in JOBS.queue(job["printer"]) if j["id"] != job_id]
+    order.insert(max(0, min(position, len(order))), job)
+    for i, j in enumerate(order):
+        JOBS.note(j["id"], f"queue position {i}", queue_pos=float(i))
+    return queue(job["printer"])
+
+
+@mcp.tool()
+async def offer_next(printer: str) -> dict[str, Any]:
+    """Offer the head of the queue now if the printer can take it (see submit_job's `offer`)."""
+    return await advance_queue(printer)
+
+
+@mcp.tool()
+def waive_blockers(job_id: str, authorized_by: str) -> dict[str, Any]:
+    """Clear a job's slice-check blockers after the operator has seen them and still wants it printed. `authorized_by`
+    must quote the operator; the waived blockers stay in the job log."""
+    if not authorized_by or len(authorized_by.strip()) < 8:
+        raise ValueError("authorized_by must quote the operator")
+    job = JOBS.get(job_id)
+    if not job["slice_blockers"]:
+        return _job_public(job)
+    note = f"waived {job['slice_blockers']} (chat: {authorized_by.strip()})"
+    return _job_public(JOBS.note(job_id, note, slice_blockers=[]))
 
 
 @mcp.tool()
@@ -466,6 +611,14 @@ async def request_start(job_id: str) -> dict[str, Any]:
         f"{job['name']} on {job['printer']} — {job['material']} {job['quality']}, est {_job_public(job).get('est_human')}, "
         f"{job.get('filament_g') or '?'} g. Valid {CFG.approval_ttl_minutes:.0f} min."
     )
+    window = _w(job["printer"]).p.finish_window
+    if window and not policy.finish_ok(
+        window, datetime.now().astimezone(), job.get("est_seconds")
+    ):
+        done = datetime.now().astimezone() + timedelta(
+            seconds=job.get("est_seconds") or 0
+        )
+        body += f" Finishes ~{done:%H:%M}, outside {window}."
     if not ok:
         body += " — BLOCKED: " + "; ".join(reasons)
     sent = bool(
@@ -530,7 +683,7 @@ async def _start(
     async with w.start_lock:
         job = JOBS.get(job_id)
         if via_auto:
-            auto_ok, why, snapshot = await _auto_gate(w)
+            auto_ok, why, snapshot = await _auto_gate(w, job)
             if not auto_ok:
                 JOBS.note(job_id, f"auto start refused: {'; '.join(why)}")
                 return {**_job_public(job), "started": False, "blockers": why}
@@ -623,6 +776,7 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             JOBS.transition(job_id, "skipped", "phone tap")
         elif verb == "BEDCLEAR":
             await _w(job_id).mark_clear("phone tap")
+            await advance_queue(job_id)
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
 
