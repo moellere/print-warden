@@ -141,7 +141,7 @@ Done when: a thermal-runaway shutdown appears in `helper findings list` with its
 
 Done when: every sign-off row is signed or has an issue.
 
-## Phase 14 — Full 3MF projects
+## Phase 14 — Full 3MF projects ✅ (build)
 
 - A 3MF is sliced as the project (modifiers, negative parts, per-object settings) with the printer's settings loaded
   over it. Every gcode-bearing setting of the project (`*_gcode`, `post_process`) is replaced by a sentinel and

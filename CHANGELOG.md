@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 3MF projects are sliced whole (modifiers, negative parts, per-object settings) with the printer's settings over
+  them. Every gcode setting of the project is replaced and embedded gcode dropped first; a replaced setting that still
+  reaches the output where the printer profile defines it blocks the job. `copies` / `orient` keep geometry-only.
+
+## Unreleased
+
 - `print-warden check` honours `home_assistant.verify_tls: false`, as the warden already did; it used to fail an
   HA reached by IP with a certificate for its name.
 

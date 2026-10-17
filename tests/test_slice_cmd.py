@@ -182,3 +182,51 @@ async def test_changed_geometry_misses_the_cache(vendor, fake_orca, tmp_path):
             cache_dir=cache,
         )
     assert fake_orca["runs"] == 2
+
+
+async def test_project_mode_slices_the_plate_and_blocks_a_held_over_setting(
+    vendor, fake_orca, tmp_path
+):
+    stl = _binary_stl(tmp_path / "m.stl", 40, 40, 12)
+    project = tmp_path / "m.project.3mf"
+    project.write_bytes(b"x")
+    fake_orca["body"] = "G1 X10 Y10 E1\n; print-warden stripped file_start_gcode\n"
+    res = await slicer.slice_stl(
+        _cfg(vendor),
+        stl,
+        tmp_path / "out",
+        "p",
+        "p",
+        "p",
+        material="PLA",
+        project=project,
+        plate=2,
+    )
+    cmd = fake_orca["cmd"]
+    assert cmd[cmd.index("--slice") + 1] == "2"
+    assert cmd[-1] == str(project)
+    assert res.blockers == []
+    assert any("file_start_gcode" in w for w in res.warnings)
+    fake_orca["body"] = "G1 X10 Y10 E1\n; print-warden stripped machine_end_gcode\n"
+    res = await slicer.slice_stl(
+        _cfg(vendor),
+        stl,
+        tmp_path / "out2",
+        "p",
+        "p",
+        "p",
+        material="PLA",
+        project=project,
+    )
+    assert any("machine_end_gcode reached the gcode" in b for b in res.blockers)
+    with pytest.raises(ValueError, match="geometry"):
+        await slicer.slice_stl(
+            _cfg(vendor),
+            stl,
+            tmp_path / "out3",
+            "p",
+            "p",
+            "p",
+            project=project,
+            copies=2,
+        )

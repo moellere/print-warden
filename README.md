@@ -169,9 +169,12 @@ OrcaSlicer otherwise picks the Cool Plate temperatures, which in the Artillery p
 
 Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS, ASA, TPU,
 PLA-CF (Artillery Generic profiles; temperature checks cover all six).
-Models are STL, SCAD or 3MF, up to 100 MB. A 3MF project (Orca, Bambu Studio, PrusaSlicer) contributes geometry
-only: `plate` picks one plate per job, the project's own settings and gcode are ignored in favour of the printer's,
-modifier and support-painting volumes are dropped, and a plate with a negative (subtracted) part is refused.
+Models are STL, SCAD or 3MF, up to 100 MB. A 3MF project (Orca, Bambu Studio, PrusaSlicer) is sliced whole, so
+modifiers, negative parts and per-object settings apply, with this printer's machine, process and filament settings
+loaded over it; `plate` picks one plate per job. Before slicing, every gcode setting in the project (`*_gcode`,
+`post_process`) is replaced and embedded gcode dropped, so a downloaded project cannot run its own gcode; if one of
+those settings still reaches the output where the printer profile defines it, the job is blocked. With `copies` or
+`orient` a 3MF is sliced as geometry only.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
 ## Run

@@ -437,8 +437,9 @@ async def submit_job(
 ) -> dict[str, Any]:
     """Slice a model and stage the gcode on a printer (not started). `printer` is a printer name or a location
     ("covington", "wyola"): the warden routes to the printer there with the right material loaded. `model` is a file name previously
-    POSTed to /upload (STL, SCAD or 3MF) or an http(s) URL. A 3MF project contributes its geometry only: `plate` picks
-    the plate (one job per plate), and the project's own settings and gcode are ignored in favour of this printer's. `overrides` are OrcaSlicer process keys applied after the
+    POSTed to /upload (STL, SCAD or 3MF) or an http(s) URL. A 3MF project is sliced whole (modifiers, negative parts,
+    per-object settings) with this printer's settings loaded over it and every gcode setting of the project stripped;
+    `plate` picks the plate (one job per plate). With copies or orient a 3MF is sliced as geometry only. `overrides` are OrcaSlicer process keys applied after the
     house rules (tree supports, no brim). `copies` arranges that many on one plate; `orient` lets Orca pick the
     orientation. The model is checked against the bed before slicing and the gcode after (extents, temperatures for
     the material); problems become blockers. With `offer` the job joins the printer's queue and is offered (phone tap,
@@ -462,7 +463,14 @@ async def submit_job(
     out = JOBDIR / printer / f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}"
     out.mkdir(parents=True, exist_ok=True)
     stl = out / f"{stem}.stl"
-    plate_warnings = await _model_stl(src, stl, scad_defines, plate)
+    plate_warnings, project = await _model_stl(
+        src, stl, scad_defines, plate, project_ok=copies == 1 and not orient
+    )
+    if src.suffix.lower() == ".3mf" and not project:
+        plate_warnings.append(
+            "copies/orient re-arrange the plate, so this 3MF was sliced as geometry only "
+            "(modifiers and per-object settings not applied)"
+        )
     model_hash = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
     fil_over, temp_note = (
         (await _spool_temps(printer, mat)) if use_spool_temps else ({}, None)
@@ -481,6 +489,8 @@ async def submit_job(
         orient=orient,
         filament_overrides=fil_over,
         cache_dir=CFG.storage_dir / "slice-cache",
+        project=project,
+        plate=plate,
     )
     history = _history(model_hash)
     before = _failed_before(model_hash, mat, q, overrides or {})
@@ -541,18 +551,29 @@ async def submit_job(
 
 
 async def _model_stl(
-    src: Path, stl: Path, scad_defines: dict[str, Any] | None, plate: int
-) -> list[str]:
-    """The model as an STL at `stl`: SCAD rendered, a 3MF plate converted, an STL copied. Returns warnings."""
+    src: Path,
+    stl: Path,
+    scad_defines: dict[str, Any] | None,
+    plate: int,
+    project_ok: bool = False,
+) -> tuple[list[str], Path | None]:
+    """The model as an STL at `stl` (SCAD rendered, a 3MF plate converted, an STL copied) and, for a 3MF when
+    `project_ok`, the sanitized project to slice instead. Returns (warnings, project)."""
     if src.suffix.lower() == ".scad":
         await slicer.render_scad(CFG.slicer.openscad, src, stl, scad_defines)
-        return []
+        return [], None
     if src.suffix.lower() == ".3mf":
-        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate)
-        return conv.warnings
+        conv = await asyncio.to_thread(threemf.to_stl, src, stl, plate, project_ok)
+        if not project_ok:
+            return conv.warnings, None
+        clean = await asyncio.to_thread(
+            threemf.sanitize, src, stl.with_suffix(".project.3mf")
+        )
+        multi = [w for w in conv.warnings if "plate=N" in w]
+        return multi, clean.path
     stl.parent.mkdir(parents=True, exist_ok=True)
     stl.write_bytes(src.read_bytes())
-    return []
+    return [], None
 
 
 @mcp.tool()

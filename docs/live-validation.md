@@ -16,7 +16,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
    Expect: estimates, a preview URL that opens, no blockers, the job `staged`.
 2. Upload a `.3mf` exported from Orca, Bambu Studio and PrusaSlicer (one each, at least one with two plates);
    `submit_job(..., plate=2)`. Expect: the plate's objects only, a warning naming the plates, no project gcode in
-   the job's gcode (its start gcode is the printer profile's).
+   the job's gcode (its start gcode is the printer profile's). One with a negative part (a hole cut by a volume):
+   the hole is in the print.
 3. A model larger than the bed. Expect: refused before slicing, with the axis that does not fit.
 
 ## 2. Start, watch, finish

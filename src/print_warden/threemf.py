@@ -1,4 +1,14 @@
-"""3MF projects → STL, geometry only.
+"""3MF projects: geometry as STL, and the project itself with everything that can run gcode stripped.
+
+Two ways to slice a 3MF, both keeping the project's own gcode away from the printer:
+
+- **Project mode** (`sanitize`): the project goes to OrcaSlicer whole, so modifiers, negative parts and per-object
+  settings work, with the printer's machine, process and filament settings loaded over it. Before that, every
+  setting whose name says gcode (start/end, layer change, filament change, timelapse, ...) and `post_process` is
+  emptied in `project_settings.config` and in per-object metadata, and embedded plate gcode is dropped. The lines
+  that were removed are returned so the slice can be refused if any of them shows up in the output.
+- **Geometry mode** (`to_stl`, below): one plate becomes one binary STL for the plain STL path. Used for the fit
+  check, the model hash, and slicing with `copies`/`orient`, which need Orca to re-arrange the plate.
 
 A 3MF (OrcaSlicer, Bambu Studio, PrusaSlicer, or any 3MF core writer) is read for its meshes and nothing else: one plate
 becomes one binary STL, which then goes through the same slice path as an uploaded STL (house rules, fit and gcode
@@ -17,11 +27,13 @@ so a downloaded project cannot bring its own gcode to the printer.
 
 from __future__ import annotations
 
+import json
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 CORE = "{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}"
 PROD = "{http://schemas.microsoft.com/3dmanufacturing/production/2015/06}"
@@ -147,9 +159,15 @@ def _plates(z: zipfile.ZipFile) -> dict[int, set[tuple[str, int]]]:
 
 
 class _Collector:
-    def __init__(self, pkg: _Package, subtypes: dict[tuple[str, str], str]):
+    def __init__(
+        self,
+        pkg: _Package,
+        subtypes: dict[tuple[str, str], str],
+        allow_negative: bool = False,
+    ):
         self.pkg = pkg
         self.subtypes = subtypes
+        self.allow_negative = allow_negative
         self.triangles: list[Triangle] = []
         self.dropped: dict[str, int] = {}
 
@@ -196,6 +214,8 @@ class _Collector:
             cid = c.get("objectid", "")
             if top_id is not None:
                 sub = self.subtypes.get((top_id, cid), "normal_part")
+                if sub == "negative_part" and self.allow_negative:
+                    continue
                 if sub == "negative_part":
                     raise ValueError(
                         "the plate has a negative part (a volume subtracted from the model), which the warden "
@@ -236,8 +256,11 @@ def plate_numbers(path: Path) -> list[int]:
         return sorted(_plates(z)) or [1]
 
 
-def to_stl(src: Path, out: Path, plate: int = 1) -> PlateResult:
-    """Write plate `plate` of the 3MF at `src` as a binary STL at `out`."""
+def to_stl(
+    src: Path, out: Path, plate: int = 1, allow_negative: bool = False
+) -> PlateResult:
+    """Write plate `plate` of the 3MF at `src` as a binary STL at `out`. With `allow_negative` a negative part is
+    left out instead of refused (for bounds and hashing, when the project itself is sliced)."""
     try:
         z = zipfile.ZipFile(src)
     except zipfile.BadZipFile:
@@ -253,7 +276,7 @@ def to_stl(src: Path, out: Path, plate: int = 1) -> PlateResult:
                 f"{src.name} has plates {numbers}; there is no plate {plate}"
             )
         wanted = plates.get(plate)
-        collector = _Collector(pkg, _part_subtypes(z))
+        collector = _Collector(pkg, _part_subtypes(z), allow_negative)
         build = root.find(f"{CORE}build")
         seen: dict[str, int] = {}
         objects = 0
@@ -298,3 +321,87 @@ def to_stl(src: Path, out: Path, plate: int = 1) -> PlateResult:
             f"{src.name} has plates {numbers}; this job is plate {plate} (submit others with plate=N)"
         )
     return PlateResult(out, plate, numbers, objects, len(tris), warnings)
+
+
+STRIPPED_KEYS = ("post_process",)
+NOT_SCRIPTS = ("emit_machine_limits_to_gcode",)
+SENTINEL = "; print-warden stripped "
+
+
+def _gcode_key(key: str) -> bool:
+    """A setting that holds gcode to run: Orca's `*_gcode` scripts (not flags like `gcode_flavor`)."""
+    return (key.endswith("_gcode") and key not in NOT_SCRIPTS) or key in STRIPPED_KEYS
+
+
+def _blank(key: str, value: Any) -> Any:
+    """The sentinel in place of a gcode setting that had content (a list keeps its length); an empty one, and
+    post_process, are simply emptied."""
+    if key in STRIPPED_KEYS:
+        return [] if isinstance(value, list) else ""
+    if not any(v.strip() for v in _strings(value)):
+        return [""] * len(value) if isinstance(value, list) else ""
+    mark = SENTINEL + key
+    return [mark] * len(value) if isinstance(value, list) else mark
+
+
+def _strings(value: Any) -> list[str]:
+    return [
+        v for v in (value if isinstance(value, list) else [value]) if isinstance(v, str)
+    ]
+
+
+@dataclass
+class Sanitized:
+    path: Path
+    stripped_keys: list[str]
+
+
+def sanitize(src: Path, out: Path) -> Sanitized:
+    """Copy the project to `out` with every gcode-bearing setting replaced by a sentinel comment and embedded gcode
+    dropped. OrcaSlicer loads the printer's settings over the project's, so no sentinel should reach the output;
+    `leaked` finds any that did."""
+    try:
+        z = zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        raise ValueError(f"{src.name} is not a 3mf (zip) file") from None
+    keys: list[str] = []
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with z, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as o:
+        for info in z.infolist():
+            name = info.filename
+            if name.lower().endswith((".gcode", ".gcode.md5", ".bgcode")):
+                continue
+            if info.file_size > MAX_FILE_BYTES:
+                raise ValueError(f"3mf part {name} exceeds {MAX_FILE_BYTES >> 20} MB")
+            data = z.read(info)
+            if name == "Metadata/project_settings.config":
+                try:
+                    cfg = json.loads(data)
+                except ValueError:
+                    raise ValueError("project_settings.config is not JSON") from None
+                for k, v in list(cfg.items()):
+                    if _gcode_key(k):
+                        keys.append(k)
+                        cfg[k] = _blank(k, v)
+                data = json.dumps(cfg).encode()
+            elif name == "Metadata/model_settings.config":
+                root = ET.fromstring(data)
+                for parent in root.iter():
+                    for meta in list(parent.findall("metadata")):
+                        if _gcode_key(meta.get("key", "")):
+                            keys.append(f"object:{meta.get('key')}")
+                            parent.remove(meta)
+                data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            o.writestr(info, data)
+    return Sanitized(out, sorted(set(keys)))
+
+
+def leaked(gcode: str) -> list[str]:
+    """Project settings that reached the sliced gcode despite the printer's being loaded over them."""
+    return sorted(
+        {
+            ln.strip().removeprefix(SENTINEL)
+            for ln in gcode.splitlines()
+            if ln.strip().startswith(SENTINEL)
+        }
+    )

@@ -19,6 +19,7 @@ from . import checks
 from . import park as parking
 from .config import Pose, SlicerConfig
 from .preview import render as render_preview
+from .threemf import leaked as project_leaks
 
 
 @dataclass
@@ -206,10 +207,20 @@ async def slice_stl(
     orient: bool = False,
     filament_overrides: dict[str, Any] | None = None,
     cache_dir: Path | None = None,
+    project: Path | None = None,
+    plate: int = 1,
 ) -> SliceResult:
     """Raises ValueError before slicing when the model cannot fit; problems found in the sliced gcode come back as
     `blockers`, which keep the job from starting. With `cache_dir`, an identical request (same model bytes, same
-    final machine/process/filament settings, copies, orient, park pose and Orca binary) reuses the earlier slice."""
+    final machine/process/filament settings, copies, orient, park pose and Orca binary) reuses the earlier slice.
+
+    With `project` (a 3MF from `threemf.sanitize`) Orca slices that plate of the project, the printer's settings
+    loaded over it; `stl` is then the plate's geometry, for the fit check and naming. A stripped setting's sentinel
+    in the output blocks the job when the printer's profile defines that setting (Orca's override did not hold)."""
+    if project and (copies > 1 or orient):
+        raise ValueError(
+            "copies and orient re-arrange the plate: slice the geometry, not the project"
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     vendor = Path(cfg.vendor_dir)
     house = json.loads(Path(cfg.house_rules).read_text()) if cfg.house_rules else {}
@@ -232,7 +243,7 @@ async def slice_stl(
     entry = None
     if cache_dir:
         key = cache_key(
-            stl.read_bytes(),
+            (project or stl).read_bytes(),
             (machine_cfg, process_cfg, filament_cfg),
             {
                 "copies": copies,
@@ -241,6 +252,7 @@ async def slice_stl(
                 "material": material.upper(),
                 "blocking": cfg.blocking_warnings,
                 "orca": _orca_identity(cfg.orca),
+                "plate": plate if project else None,
             },
         )
         entry = cache_dir / key
@@ -263,12 +275,12 @@ async def slice_stl(
             *(["--arrange", "1"] if copies > 1 else []),
             *(["--orient", "1"] if orient else []),
             "--slice",
-            "0",
+            str(plate) if project else "0",
             "--export-3mf",
             f"{name}.3mf",
             "--outputdir",
             str(out_dir),
-            str(stl),
+            str(project or stl),
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -286,6 +298,7 @@ async def slice_stl(
             if not gcodes:
                 raise RuntimeError(f"no gcode inside 3mf: {log[-2000:]}")
             text = z.read(gcodes[0]).decode(errors="ignore")
+            leaks = project_leaks(text) if project else []
             park_warnings: list[str] = []
             if park:
                 height = machine_cfg.get("printable_height")
@@ -299,6 +312,7 @@ async def slice_stl(
             gcode.write_text(text)
             preview = None
             for cand in (
+                f"Metadata/plate_{plate}.png",
                 "Metadata/plate_1.png",
                 "Metadata/top_1.png",
                 "Metadata/pick_1.png",
@@ -319,8 +333,23 @@ async def slice_stl(
             checks.gcode_facts(text), machine_cfg, material
         )
         blockers += checks.log_problems(log, cfg.blocking_warnings)
+        defined = set(machine_cfg) | set(process_cfg) | set(filament_cfg)
+        blockers += [
+            f"the project's {k} reached the gcode although the printer profile sets it; not printing this slice"
+            for k in leaks
+            if k in defined
+        ]
+        neutral = [k for k in leaks if k not in defined]
         warnings = (
-            park_warnings
+            (
+                [
+                    "the project set gcode the printer profile does not define; the warden emptied it: "
+                    + ", ".join(neutral)
+                ]
+                if neutral
+                else []
+            )
+            + park_warnings
             + [ln.strip() for ln in log.splitlines() if "warn" in ln.lower()][:10]
         )
         res = SliceResult(
