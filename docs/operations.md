@@ -10,7 +10,7 @@ curl -s localhost:8710/healthz | jq
 ```
 
 To run a released image instead of building, replace `build: .` in `compose.yml` with
-`image: ghcr.io/moellere/print-warden:v0.2.0` (or `:latest`).
+`image: ghcr.io/moellere/print-warden:v0.3.0` (or `:latest`).
 
 MCP clients connect to `http://<host>:8710/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
 `?token=...` for clients that only take a URL.

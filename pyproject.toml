@@ -1,6 +1,6 @@
 [project]
 name = "print-warden"
-version = "0.2.0"
+version = "0.3.0"
 description = "Watches 3D printers (Moonraker + Obico + cameras), applies deterministic rules, exposes an MCP surface, and pushes alerts to Home Assistant."
 requires-python = ">=3.12"
 dependencies = [
