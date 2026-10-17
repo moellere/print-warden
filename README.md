@@ -89,7 +89,17 @@ checked against the bed, the nozzle and bed temperatures against the material's 
 until `waive_blockers` records the operator's consent. `copies` uses Orca's `--clone-objects` + `--arrange`;
 `orient=True` uses `--orient` (the pre-slice fit check is skipped then; the gcode check still runs).
 
-Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS.
+**Slicing quality.** An identical request (same model geometry, same final machine/process/filament settings,
+copies, orient, park pose and Orca binary) reuses the earlier slice from `slice-cache/` (pruned after `keep_days`
+unused). Each job records a hash of its geometry and the overrides used: `model_history("bracket.stl")` lists earlier
+prints of that model with their settings and outcomes, and `submit_job` returns the same summary as `history`, so a
+print that worked can be repeated and one that failed is not retried blindly. Nothing is applied automatically. With
+`use_spool_temps` (default) the loaded spool's Spoolman temperatures (`settings_extruder_temp`, `settings_bed_temp`)
+replace the profile's when its material matches the job. The house rules set `curr_bed_type: High Temp Plate`:
+OrcaSlicer otherwise picks the Cool Plate temperatures, which in the Artillery profiles is a 35°C bed for PLA.
+
+Qualities: draft (0.24), standard (0.20), strength (0.20), fine (0.12). Materials: PLA, PETG, ABS, ASA, TPU,
+PLA-CF (Artillery Generic profiles; temperature checks cover all six).
 Models are STL or SCAD, up to 100 MB.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 

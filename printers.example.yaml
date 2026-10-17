@@ -33,6 +33,9 @@ printers:
         PLA: Artillery Generic PLA
         PETG: Artillery Generic PETG
         ABS: Artillery Generic ABS
+        ASA: Artillery Generic ASA
+        TPU: Artillery Generic TPU
+        PLA-CF: Artillery Generic PLA-CF
     rules:
       heater_deviation_c: 8
       heater_deviation_s: 90

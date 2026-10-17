@@ -76,3 +76,16 @@ def test_log_problems():
         "slicer: WARNING: Empty layer between 2.0 and 2.2"
     ]
     assert checks.log_problems(log, ()) == []
+
+
+def test_preheat_and_bed_wait_temperatures_do_not_block():
+    """Artillery X4 Plus start gcode: 140°C probing preheat, an M109 S60 while the bed heats, then 200°C."""
+    text = "M104 S140\nM190 S35\nM109 S60\nM140 S60\nM109 S200\nM83\nG1 X10 Y10 E1\n"
+    assert checks.gcode_problems(checks.gcode_facts(text), X4, "PLA") == []
+    hot = text.replace("S200", "S250")
+    assert "nozzle 250" in checks.gcode_problems(checks.gcode_facts(hot), X4, "PLA")[0]
+
+
+def test_prime_before_the_first_move_has_no_position():
+    facts = checks.gcode_facts("M83\nG1 E10 F300\nG1 X20 Y30 E1\n")
+    assert facts["extents"] == (20, 30, 20, 30)

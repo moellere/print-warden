@@ -350,3 +350,68 @@ async def test_undelivered_offer_does_not_wedge_the_queue(clean_queues, ready):
     res = await server.advance_queue("testp")
     assert res["why"] == "phone notification failed"
     assert server.JOBS.get(job["id"])["state"] == "staged"
+
+
+@pytest.fixture
+def spoolman(monkeypatch):
+    spools = {}
+
+    class FakeSpoolman:
+        async def spool(self, sid):
+            return spools[sid]
+
+    monkeypatch.setattr(server, "SPOOLMAN", FakeSpoolman())
+    return spools
+
+
+async def test_spool_temperatures_become_filament_overrides(spoolman):
+    spoolman[7] = {
+        "material": "PLA",
+        "extruder_temp": 215,
+        "bed_temp": 65,
+        "remaining_g": 500,
+    }
+    server.JOBS.kv_set("active_spool:testp", "7")
+    try:
+        over, note = await server._spool_temps("testp", "PLA")
+        assert over["nozzle_temperature"] == ["215"] and over[
+            "hot_plate_temp_initial_layer"
+        ] == ["65"]
+        assert "spool 7" in note
+        assert await server._spool_temps("testp", "PETG") == ({}, None)
+        spoolman[7] = {"material": "PLA", "extruder_temp": None, "bed_temp": None}
+        assert await server._spool_temps("testp", "PLA") == ({}, None)
+    finally:
+        server.JOBS.kv_set("active_spool:testp", "")
+
+
+def test_model_history_by_geometry_and_job(clean_queues):
+    data = b"solid x\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 1\nendsolid x\n"
+    (server.UPLOADS).mkdir(parents=True, exist_ok=True)
+    (server.UPLOADS / "bracket.stl").write_bytes(data)
+    import hashlib
+
+    h = hashlib.sha256(data).hexdigest()[:16]
+    ok = server.JOBS.create(
+        printer="testp",
+        name="bracket",
+        material="PETG",
+        quality="strength",
+        overrides={"wall_loops": 4},
+        model_hash=h,
+    )
+    for st in ("staged", "printing", "done"):
+        server.JOBS.transition(ok["id"], st)
+    bad = server.JOBS.create(
+        printer="testq", name="renamed", material="PLA", model_hash=h
+    )
+    for st in ("staged", "printing", "failed"):
+        server.JOBS.transition(bad["id"], st)
+
+    hist = server.model_history("bracket.stl")
+    assert hist["prints"] == 2 and hist["done"] == 1 and hist["failed"] == 1
+    assert hist["last_success"]["overrides"] == {"wall_loops": 4}
+    assert hist["last_success"]["quality"] == "strength"
+    assert server.model_history(bad["id"])["model_hash"] == h
+    with pytest.raises(ValueError):
+        server.model_history("nope.stl")

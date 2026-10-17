@@ -39,6 +39,8 @@ class Spoolman:
             "name": f.get("name"),
             "vendor": (f.get("vendor") or {}).get("name"),
             "color": f.get("color_hex"),
+            "extruder_temp": f.get("settings_extruder_temp"),
+            "bed_temp": f.get("settings_bed_temp"),
             "remaining_g": s.get("remaining_weight"),
             "location": s.get("location"),
             "archived": s.get("archived", False),

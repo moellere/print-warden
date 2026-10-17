@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import hashlib
 import hmac
 import logging
 import os
@@ -393,6 +394,7 @@ async def submit_job(
     copies: int = 1,
     orient: bool = False,
     offer: bool = True,
+    use_spool_temps: bool = True,
 ) -> dict[str, Any]:
     """Slice a model and stage the gcode on a printer (not started). `printer` is a printer name or a location
     ("covington", "wyola"): the warden routes to the printer there with the right material loaded. `model` is a file name previously
@@ -401,6 +403,9 @@ async def submit_job(
     orientation. The model is checked against the bed before slicing and the gcode after (extents, temperatures for
     the material); problems become blockers. With `offer` the job joins the printer's queue and is offered (phone tap,
     or auto_start) as soon as the printer is idle and its bed clear; otherwise it waits for request_start.
+    With `use_spool_temps`, the loaded spool's nozzle/bed temperatures from Spoolman (when set and the material
+    matches) replace the profile's. An identical earlier slice is reused from the cache. The result includes
+    `history`: earlier jobs of the same model geometry with their settings and outcomes (see model_history).
     Returns the job with estimates, a preview URL, where it was routed and what the queue did with it."""
     printer, routed = await _resolve_printer(printer, material)
     w = _w(printer)
@@ -420,6 +425,10 @@ async def submit_job(
     else:
         stl = out / f"{stem}.stl"
         stl.write_bytes(src.read_bytes())
+    model_hash = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
+    fil_over, temp_note = (
+        (await _spool_temps(printer, mat)) if use_spool_temps else ({}, None)
+    )
     res = await slicer.slice_stl(
         CFG.slicer,
         stl,
@@ -432,7 +441,10 @@ async def submit_job(
         material=mat,
         copies=copies,
         orient=orient,
+        filament_overrides=fil_over,
+        cache_dir=CFG.storage_dir / "slice-cache",
     )
+    history = _history(model_hash)
     job = JOBS.create(
         printer=printer,
         name=stem,
@@ -446,11 +458,16 @@ async def submit_job(
         filament_m=res.filament_m,
         layers=res.layers,
         max_z=res.max_z,
-        warnings=res.warnings,
+        warnings=([temp_note] if temp_note else []) + res.warnings,
         slice_blockers=res.blockers,
         copies=copies,
         offer=offer,
+        model_hash=model_hash,
+        overrides=overrides or {},
+        orient=int(orient),
     )
+    if res.cached:
+        JOBS.note(job["id"], "slice reused from cache")
     remote = f"warden/{job['id']}_{stem}_{mat}.gcode"
     try:
         await moonraker.upload_gcode(p.moonraker, res.gcode, remote)
@@ -470,7 +487,12 @@ async def submit_job(
             alert=False,
         )
     )
-    result = {**_job_public(job), "routed": routed}
+    result = {
+        **_job_public(job),
+        "routed": routed,
+        "cached": res.cached,
+        "history": history,
+    }
     if offer:
         result["queue"] = await advance_queue(printer)
     return result
@@ -582,6 +604,112 @@ def waive_blockers(job_id: str, authorized_by: str) -> dict[str, Any]:
         return _job_public(job)
     note = f"waived {job['slice_blockers']} (chat: {authorized_by.strip()})"
     return _job_public(JOBS.note(job_id, note, slice_blockers=[]))
+
+
+async def _spool_temps(
+    printer: str, material: str
+) -> tuple[dict[str, Any], str | None]:
+    """Filament overrides from the active spool's Spoolman temperatures, when it holds this material."""
+    sid = JOBS.kv_get(f"active_spool:{printer}")
+    if not (sid and SPOOLMAN):
+        return {}, None
+    try:
+        spool = await SPOOLMAN.spool(int(sid))
+    except (httpx.HTTPError, KeyError, ValueError) as e:
+        log.warning("spoolman lookup failed: %s", e)
+        return {}, None
+    if spool["material"] != material:
+        return {}, None
+    over: dict[str, Any] = {}
+    nozzle, bed = spool.get("extruder_temp"), spool.get("bed_temp")
+    if nozzle:
+        over["nozzle_temperature"] = over["nozzle_temperature_initial_layer"] = [
+            str(int(nozzle))
+        ]
+    if bed:
+        for plate in (
+            "hot_plate_temp",
+            "cool_plate_temp",
+            "eng_plate_temp",
+            "textured_plate_temp",
+        ):
+            over[plate] = over[f"{plate}_initial_layer"] = [str(int(bed))]
+    if not over:
+        return {}, None
+    return (
+        over,
+        f"temperatures from spool {sid}: nozzle {nozzle or 'profile'}, bed {bed or 'profile'}",
+    )
+
+
+def _history(model_hash: str) -> dict[str, Any]:
+    jobs = [
+        j
+        for j in JOBS.by_model(model_hash)
+        if j["state"] in ("done", "failed", "printing")
+    ]
+    done = [j for j in jobs if j["state"] == "done"]
+    last_ok = done[0] if done else None
+    return {
+        "prints": len(jobs),
+        "done": len(done),
+        "failed": sum(1 for j in jobs if j["state"] == "failed"),
+        "last_success": {
+            k: last_ok[k]
+            for k in (
+                "id",
+                "printer",
+                "material",
+                "quality",
+                "overrides",
+                "copies",
+                "orient",
+            )
+        }
+        if last_ok
+        else None,
+    }
+
+
+@mcp.tool()
+def model_history(model: str) -> dict[str, Any]:
+    """Earlier jobs of a model: by uploaded file name (matched on geometry, so a renamed copy still counts) or job id.
+    Each entry has the settings used and how it ended, so a print that worked can be repeated with the same settings
+    and one that failed is not retried blindly. Nothing is applied automatically."""
+    try:
+        h = JOBS.get(model)["model_hash"]
+    except KeyError:
+        path = UPLOADS / _model_name(model)
+        if path.suffix.lower() != ".stl" or not path.exists():
+            raise ValueError(f"{model!r} is not a job id or an uploaded STL") from None
+        h = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    if not h:
+        return {"model_hash": None, "jobs": []}
+    return {
+        "model_hash": h,
+        **_history(h),
+        "jobs": [
+            {
+                k: j[k]
+                for k in (
+                    "id",
+                    "created",
+                    "printer",
+                    "material",
+                    "quality",
+                    "overrides",
+                    "copies",
+                    "orient",
+                    "state",
+                    "est_seconds",
+                    "started_at",
+                    "finished_at",
+                    "error",
+                )
+            }
+            for j in JOBS.by_model(h)
+        ],
+    }
 
 
 @mcp.tool()
