@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–7 are complete; the homelab-helper probe is the remaining item.
+Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source.
 
 ## Phase 0 — Hardening ✅
 
@@ -46,7 +46,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - Slice checks: model fit (and `copies`) before slicing; extrusion extents, temperatures vs. material and
   `blocking_warnings` after. Findings block until `waive_blockers` with the operator's consent.
 - `copies=N` (`--clone-objects` + `--arrange`) and `orient` (`--orient`).
-- Not done: presence-based quiet hours from Home Assistant (time windows only for now).
+- Presence-based quiet hours (after 0.2.0): `alerts.quiet_entity` / `quiet_states` mute like the time window.
 
 ## Phase 4 — Slicing quality ✅
 
@@ -86,4 +86,5 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - `/healthz` status contract (api 1) with the version, for monitors.
 - Previews drawn from the gcode, because headless OrcaSlicer 2.4.2 cannot render thumbnails (its CLI requests an
   OpenGL 3.4 context, which does not exist).
-- Next: a read-only homelab-helper probe of `/healthz` (lives in the homelab-helper repo).
+- homelab-helper reads `/healthz` as its read-only `printwarden` source (`helper discover printwarden`): warden
+  unreachable, printer offline, Klipper not ready and stale telemetry become findings there.

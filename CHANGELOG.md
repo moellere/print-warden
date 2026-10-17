@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Presence-based quiet hours: `alerts.quiet_entity` and `alerts.quiet_states` mute info/warning alerts and the
+  first-layer prompt while a Home Assistant entity is in one of those states; an unreadable entity never mutes.
+
 ## 0.2.0
 
 Everything since the first cut, phase by phase (see `docs/roadmap.md`):

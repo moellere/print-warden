@@ -43,7 +43,8 @@ discovered from Moonraker's object list on each (re)subscribe:
 At layer `first_layer_check` (default 2; 0 disables) the phone gets the nozzle camera frame with **Looks good** /
 **Cancel print**. When Obico pauses a print the phone gets **Resume** / **Cancel print**. Both are bound to the job:
 the tap only acts if that job is still the one printing (same file on the printer), so a stale button cannot touch a
-later print. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt; critical alerts and
+later print. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
+that Home Assistant entity is in `alerts.quiet_states` (default `["on"]`; an unreadable entity never mutes); critical alerts and
 Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
 ## History and Home Assistant

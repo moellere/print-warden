@@ -488,7 +488,7 @@ class PrinterWatcher:
         """A look at the first layers with Looks good / Cancel buttons bound to the printing job. Skipped in quiet
         hours and for prints the warden did not start a job for."""
         job = self.jobs.find_active(self.p.name) if self.jobs else None
-        if not (self.ha and job) or self.quiet():
+        if not (self.ha and job) or await self.quiet():
             return
         cam = (
             "nozzle" if "nozzle" in self.p.cameras else next(iter(self.p.cameras), None)
@@ -546,8 +546,14 @@ class PrinterWatcher:
             return path
         return cameras.save(self.cfg.storage_dir, self.p.name, cam, data)
 
-    def quiet(self) -> bool:
-        return policy.in_window(self.cfg.quiet_hours, datetime.now().astimezone())
+    async def quiet(self) -> bool:
+        """Inside the quiet_hours window, or the quiet_entity in Home Assistant is in one of quiet_states. An
+        unreadable entity is not quiet: alerts fail loud."""
+        if policy.in_window(self.cfg.quiet_hours, datetime.now().astimezone()):
+            return True
+        if not (self.ha and self.cfg.quiet_entity):
+            return False
+        return await self.ha.state(self.cfg.quiet_entity) in self.cfg.quiet_states
 
     async def _alert(self, ev: Event) -> None:
         """Critical always goes out; info and warning respect the per-kind cooldown and quiet hours."""
@@ -555,8 +561,8 @@ class PrinterWatcher:
             return
         now = time.time()
         if ev.severity != "critical" and (
-            self.quiet()
-            or now - self.last_alert.get(ev.kind, 0) < self.cfg.alert_cooldown_s
+            now - self.last_alert.get(ev.kind, 0) < self.cfg.alert_cooldown_s
+            or await self.quiet()
         ):
             return
         self.last_alert[ev.kind] = now

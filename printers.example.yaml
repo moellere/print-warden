@@ -92,6 +92,8 @@ slicer:
 
 alerts:
   quiet_hours: "23:00-07:00"   # info/warning alerts and the first-layer prompt are held; critical always goes out
+  # quiet_entity: input_boolean.sleeping   # also quiet while this Home Assistant entity is in quiet_states
+  # quiet_states: ["on"]                   # e.g. ["not_home"] for a person/group, ["sleep"] for a mode select
   cooldown_s: 300              # minimum gap between repeats of the same alert kind
 
 policy:
