@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–2 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–3 are complete; the rest are proposals.
 
 ## Phase 0 — Hardening ✅
 
@@ -37,12 +37,16 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - Bed pose (bed-slingers with a frame camera): warden-sliced jobs park at `bed_check.pose` with steppers held;
   checks and references only at that pose; opt-in `rehome_y` (Y only, Z never moves).
 
-## Phase 3 — Queue and scheduling
+## Phase 3 — Queue and scheduling ✅
 
-- Per-printer queue; "bed cleared" offers (or auto-starts) the next job.
-- Routing by soonest finish and quiet hours / HA presence, not only material + idle.
-- Slice-time checks: bounding box vs. printable area/height, temperatures vs. material, Orca warnings as blockers.
-- `copies=N` via Orca `--arrange` / `--orient`.
+- Per-printer queue (`queue`, `move_job`, `offer_next`); the next unblocked job is offered (tap or auto_start) after
+  `submit_job` and whenever the bed is marked clear, one offer at a time.
+- Location routing picks the printer with the material loaded that frees up soonest; `finish_window` keeps unattended
+  starts from finishing at night and flags it on tapped requests.
+- Slice checks: model fit (and `copies`) before slicing; extrusion extents, temperatures vs. material and
+  `blocking_warnings` after. Findings block until `waive_blockers` with the operator's consent.
+- `copies=N` (`--clone-objects` + `--arrange`) and `orient` (`--orient`).
+- Not done: presence-based quiet hours from Home Assistant (time windows only for now).
 
 ## Phase 4 — Slicing quality
 

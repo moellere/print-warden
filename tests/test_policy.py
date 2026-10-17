@@ -116,3 +116,16 @@ def test_one_disagreement_in_window_blocks():
     assert not policy.can_auto_start("clear", None, _checks(3), 3, "08:00-22:00", NOON)[
         0
     ]
+
+
+def test_slice_blockers_block_until_waived():
+    ok, reasons = policy.can_start(_job(slice_blockers=["nozzle 300°C"]), READY, "PLA")
+    assert not ok and "waive_blockers" in reasons[0]
+
+
+def test_finish_ok():
+    eve = datetime(2026, 1, 1, 20, 0, tzinfo=UTC)
+    assert policy.finish_ok(None, eve, 99999)
+    assert policy.finish_ok("07:00-23:00", eve, 2 * 3600)
+    assert not policy.finish_ok("07:00-23:00", eve, 8 * 3600)
+    assert not policy.finish_ok("07:00-23:00", eve, None)

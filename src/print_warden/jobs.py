@@ -3,6 +3,7 @@ Transitions outside TRANSITIONS raise; a log entry that changes nothing goes thr
 
 from __future__ import annotations
 
+import builtins
 import json
 import sqlite3
 import time
@@ -59,13 +60,22 @@ FIELDS = (
     "filament_used_mm",
     "approval_requested_at",
     "timelapse",
+    "slice_blockers",
+    "queue_pos",
+    "offer",
+    "copies",
 )
+JSON_FIELDS = ("warnings", "slice_blockers")
 ADDED_COLUMNS = {
     "spool_id": "integer",
     "filament_m": "real",
     "filament_used_mm": "real",
     "approval_requested_at": "real",
     "timelapse": "text",
+    "slice_blockers": "text",
+    "queue_pos": "real",
+    "offer": "integer",
+    "copies": "integer",
 }
 
 
@@ -99,8 +109,10 @@ class JobStore:
             }
         )
         row.update(kw)
-        if isinstance(row.get("warnings"), list):
-            row["warnings"] = json.dumps(row["warnings"])
+        row["queue_pos"] = row["queue_pos"] if row["queue_pos"] is not None else now
+        for k in JSON_FIELDS:
+            if isinstance(row.get(k), list):
+                row[k] = json.dumps(row[k])
         self._db.execute(
             f"insert into jobs ({','.join(FIELDS)}) values ({','.join('?' * len(FIELDS))})",
             [row[f] for f in FIELDS],
@@ -116,7 +128,9 @@ class JobStore:
         if not r:
             raise KeyError(f"no job {job_id}")
         d = dict(zip(FIELDS, r, strict=True))
-        d["warnings"] = json.loads(d["warnings"] or "[]")
+        for k in JSON_FIELDS:
+            d[k] = json.loads(d[k] or "[]")
+        d["offer"] = bool(d["offer"])
         d["log"] = json.loads(d["log"] or "[]")
         return d
 
@@ -162,6 +176,9 @@ class JobStore:
         log = job["log"] + [
             {"ts": now, "from": job["state"], "to": state, "note": note}
         ]
+        fields = {
+            k: json.dumps(v) if k in JSON_FIELDS else v for k, v in fields.items()
+        }
         sets = {"state": state, "updated": now, "log": json.dumps(log), **fields}
         self._db.execute(
             f"update jobs set {','.join(f'{k}=?' for k in sets)} where id=?",
@@ -169,6 +186,14 @@ class JobStore:
         )
         self._db.commit()
         return self.get(job["id"])
+
+    def queue(self, printer: str) -> builtins.list[dict[str, Any]]:
+        """Staged jobs on a printer, in the order they will be offered."""
+        ids = self._db.execute(
+            "select id from jobs where printer=? and state='staged' order by queue_pos, created",
+            (printer,),
+        )
+        return [self.get(r[0]) for r in ids]
 
     def find_active(self, printer: str) -> dict[str, Any] | None:
         rows = self.list(printer, 1, ("printing",))

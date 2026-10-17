@@ -43,6 +43,12 @@ class SlicerConfig:
     openscad: str = "openscad"
     vendor_dir: str = "/opt/orcaslicer/resources/profiles/Artillery"
     house_rules: str | None = None
+    blocking_warnings: tuple[str, ...] = (
+        "empty layer",
+        "floating",
+        "out of the plate",
+        "outside the plate",
+    )
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,7 @@ class Printer:
     track_spool_usage: bool = True
     bed_check: BedCheck | None = None
     auto_start_hours: str | None = None
+    finish_window: str | None = None
 
     @property
     def ws_url(self) -> str:
@@ -131,6 +138,13 @@ def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
     )
 
 
+def _slicer(raw: dict[str, Any]) -> SlicerConfig:
+    raw = dict(raw)
+    if "blocking_warnings" in raw:
+        raw["blocking_warnings"] = tuple(str(w) for w in raw["blocking_warnings"] or ())
+    return SlicerConfig(**raw)
+
+
 def load(path: str | Path) -> Config:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     printers: dict[str, Printer] = {}
@@ -158,6 +172,7 @@ def load(path: str | Path) -> Config:
             track_spool_usage=bool(p.get("track_spool_usage", True)),
             bed_check=_bed_check(p.get("bed_check")),
             auto_start_hours=p.get("auto_start_hours") or None,
+            finish_window=p.get("finish_window") or None,
         )
     ha = None
     if h := raw.get("home_assistant"):
@@ -189,7 +204,7 @@ def load(path: str | Path) -> Config:
         host=host,
         port=port,
         public_url=(sv.get("public_url") or f"http://{host}:{port}").rstrip("/"),
-        slicer=SlicerConfig(**(raw.get("slicer") or {})),
+        slicer=_slicer(raw.get("slicer") or {}),
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
         api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
         approval_ttl_minutes=float(pol.get("approval_ttl_minutes", 15)),
