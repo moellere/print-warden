@@ -533,3 +533,20 @@ async def test_entities_publish_changes_only(clean_queues, monkeypatch):
     sent.clear()
     assert await server.publish_entities() == 1
     assert sent == [("sensor.print_warden_testp_state", "offline")]
+
+
+def test_healthz_contract(client):
+    body = client.get("/healthz").json()
+    assert body["api"] == server.HEALTH_API == 1 and body["version"]
+    p = body["printers"]["testp"]
+    assert set(p) == {
+        "connected",
+        "klippy",
+        "state",
+        "progress_pct",
+        "finishes_in_s",
+        "bed",
+        "queue",
+        "last_update_s_ago",
+    }
+    assert "filename" not in str(body)

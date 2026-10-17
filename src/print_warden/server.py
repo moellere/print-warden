@@ -28,6 +28,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import (
+    __version__,
     cameras,
     config,
     ha_entities,
@@ -1120,10 +1121,38 @@ async def obico_webhook(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+HEALTH_API = 1
+
+
+def health_report() -> dict[str, Any]:
+    """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
+    within an api version; no file names, job names or URLs."""
+    printers = {}
+    for n, w in WATCHERS.items():
+        st = w.status()
+        left = _print_left_s(n)
+        printers[n] = {
+            "connected": bool(st.get("moonraker_connected")),
+            "klippy": st.get("klippy"),
+            "state": st.get("state"),
+            "progress_pct": st.get("progress_pct")
+            if st.get("state") in ("printing", "paused")
+            else None,
+            "finishes_in_s": round(left) if left is not None else None,
+            "bed": BED.state(n)["state"],
+            "queue": len(JOBS.queue(n)),
+            "last_update_s_ago": st.get("last_update_s_ago"),
+        }
+    return {
+        "ok": all(p["connected"] for p in printers.values()),
+        "api": HEALTH_API,
+        "version": __version__,
+        "printers": printers,
+    }
+
+
 async def health(_: Request) -> JSONResponse:
-    return JSONResponse(
-        {"ok": True, "printers": {n: w.mr.connected for n, w in WATCHERS.items()}}
-    )
+    return JSONResponse(health_report())
 
 
 async def expire_approvals(now: float | None = None) -> list[str]:

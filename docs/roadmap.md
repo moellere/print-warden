@@ -1,6 +1,6 @@
 # Roadmap
 
-Each phase lists what it delivers and when it is done. Phases 0–6 are complete; the rest are proposals.
+Each phase lists what it delivers and when it is done. Phases 0–7 are complete; the homelab-helper probe is the remaining item.
 
 ## Phase 0 — Hardening ✅
 
@@ -79,7 +79,11 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - HA entities per printer via the REST states API (state, progress, finish, queue, bed, material).
 - Not done: MQTT discovery (entities with unique_id); the REST approach needs no broker.
 
-## Phase 7 — Packaging and ecosystem
+## Phase 7 — Packaging and ecosystem ✅ (warden side)
 
-- Tagged images on GHCR from CI; versioned releases; operator docs.
-- Optional read-only homelab-helper probe for warden and printer health.
+- Versioned releases: `v*` tags build and push `ghcr.io/moellere/print-warden` (tag checked against
+  `pyproject.toml`); `CHANGELOG.md`, `docs/releasing.md`, `docs/operations.md`.
+- `/healthz` status contract (api 1) with the version, for monitors.
+- Previews drawn from the gcode, because headless OrcaSlicer 2.4.2 cannot render thumbnails (its CLI requests an
+  OpenGL 3.4 context, which does not exist).
+- Next: a read-only homelab-helper probe of `/healthz` (lives in the homelab-helper repo).

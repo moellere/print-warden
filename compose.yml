@@ -1,6 +1,7 @@
 services:
   print-warden:
     build: .
+    # image: ghcr.io/moellere/print-warden:latest   # a released image instead of building
     container_name: print-warden
     restart: unless-stopped
     ports: ["8710:8710"]
