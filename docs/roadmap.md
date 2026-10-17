@@ -1,7 +1,7 @@
 # Roadmap
 
 Each phase lists what it delivers and when it is done. Phases 0–7 are complete, including the homelab-helper source; their open items shipped in 0.3.0. Phases 8–12 shipped
-in 0.4.0; their live sign-off is `docs/live-validation.md`.
+in 0.4.0; their live sign-off is `docs/live-validation.md`. Phases 13–18 are the next round.
 
 ## Phase 0 — Hardening ✅
 
@@ -132,3 +132,58 @@ auto_start-gated.
   (api 1 only gains fields); homelab-helper turns them into findings.
 
 Done when: a thermal-runaway shutdown appears in `helper findings list` with its classified cause.
+
+## Phase 13 — Live sign-off
+
+- `docs/live-validation.md` walked on both printers; each failed row becomes an issue and a 0.4.x fix.
+- homelab-helper: a printer removed from the warden resolves its findings (the status lists every printer); a
+  homelab-helper release with the printwarden source when the operator names the version.
+
+Done when: every sign-off row is signed or has an issue.
+
+## Phase 14 — Full 3MF projects
+
+- A 3MF is sliced as the project (modifiers, negative parts, per-object settings) with the printer's settings loaded
+  over it. Every gcode-bearing setting of the project (`*_gcode`, `post_process`) is replaced by a sentinel and
+  embedded gcode is dropped; a sentinel in the output for a setting the printer profile defines blocks the job.
+- Found by slicing for real: OrcaSlicer 2.4.2 keeps the project's value for gcode settings the printer profile does
+  not define (`file_start_gcode`, the extrusion-role change scripts), so without the sanitizer a project could run
+  its own gcode at file start. Orca crashes on a project with no `project_settings.config`, so it is kept, cleaned.
+- `copies` / `orient` re-arrange the plate and fall back to geometry only.
+
+Done when: a plate with a negative part slices with its hole, and no project gcode reaches the printer.
+
+## Phase 15 — Did the part stay on the bed
+
+- A one-time bed-camera calibration (four bed corners tapped in a reference image) maps bed coordinates to the image;
+  after a "complete" print, at the parked pose, the footprint the gcode drew is compared with what changed. Nothing
+  there pre-fills the outcome as "probably failed"; a person still confirms. Deterministic, no model.
+
+Done when: a removed part is flagged before anyone looks.
+
+## Phase 16 — Per-spool tuning and calibration prints
+
+- Flow ratio and pressure advance per spool in Spoolman extra fields, applied as filament overrides.
+- `calibrate(printer, spool, kind)` generates a temperature / flow / pressure-advance print; the outcome prompt asks
+  which section was best and records it on the spool.
+
+Done when: a new spool goes from calibration print to tuned settings on the next job without editing a profile.
+
+## Phase 17 — Read-only status page and model intake
+
+- `/status` (token-guarded): printers, queues, ETAs, bed state, last snapshots, upkeep due. Actions stay on the phone.
+- A Printables / Thingiverse page URL resolves to its model files, with license and author kept on the job.
+
+Done when: the page shows both printers live and `submit_job` takes a model page URL.
+
+## Phase 18 — Printer profiles for any printer
+
+- Use any OrcaSlicer vendor's profiles, not only Artillery: list vendors/printers in Orca's bundled profiles and
+  write the `printers.yaml` slicer block for one.
+- Import a user's own Orca/Bambu printer, process and filament presets (exported `.json` or `.orca_printer` /
+  `.bbscfg` bundles) into a warden profile directory, resolving `inherits` against the bundled vendors.
+- Generate a printer profile from Klipper itself (bed size from `printer.cfg` limits via Moonraker, nozzle, kinematics,
+  start/end macros) on top of a generic base when no vendor profile fits.
+
+Done when: a printer not in the Artillery set is configured from scratch with one command and slices correctly.
+
