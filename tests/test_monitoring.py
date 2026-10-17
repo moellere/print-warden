@@ -179,3 +179,34 @@ async def test_obico_pause_offers_resume_and_cancel(w):
         f"PRINT_WARDEN_CANCEL_{job['id']}",
     ]
     assert image == "http://obico/i.jpg"
+
+
+async def test_quiet_entity_mutes_while_in_a_quiet_state(w):
+    w.cfg = dataclasses.replace(
+        w.cfg, quiet_entity="input_boolean.sleeping", quiet_states=("on",)
+    )
+    states = {"input_boolean.sleeping": "on"}
+
+    async def state(entity):
+        return states.get(entity)
+
+    w.ha.state = state
+    await w._alert(Event("p", "k1", "warning", "m", alert=True))
+    await w._alert(Event("p", "k2", "critical", "m", alert=True))
+    assert w.ha.alerts == ["critical"]
+    states["input_boolean.sleeping"] = "off"
+    await w._alert(Event("p", "k3", "warning", "m", alert=True))
+    del states["input_boolean.sleeping"]
+    await w._alert(Event("p", "k4", "warning", "m", alert=True))
+    assert w.ha.alerts == ["critical", "warning", "warning"]
+
+
+def test_quiet_entity_config(tmp_path):
+    f = tmp_path / "printers.yaml"
+    f.write_text(
+        "printers:\n  p:\n    moonraker: http://p\n"
+        "alerts:\n  quiet_entity: person.me\n  quiet_states: [not_home]\n"
+    )
+    cfg = config.load(f)
+    assert cfg.quiet_entity == "person.me"
+    assert cfg.quiet_states == ("not_home",)
