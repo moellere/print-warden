@@ -102,7 +102,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 
 Done when: every sign-off row is signed on both printers, or has an issue.
 
-## Phase 9 — Learn from how prints ended
+## Phase 9 — Learn from how prints ended ✅ (build)
 
 - After each print, the end photo on the phone with Good / Failed and a reason (adhesion, spaghetti, layer shift,
   under-extrusion, other); the stats report labelled failure reasons, not only Klipper's.

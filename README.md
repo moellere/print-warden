@@ -55,6 +55,12 @@ filament's), the cost. `printer_stats(days=90)` reports estimate accuracy per pr
 printer / material / quality with the commonest reasons, and prints, hours, grams and cost per month;
 `print_history(printer, days, state)` lists the jobs behind it.
 
+Klipper knows a print completed, not whether it is any good. After every print the phone gets the end photo with
+**Good** / **Failed** (a cancelled or errored print goes straight to the reasons): adhesion, spaghetti, layer shift,
+under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, reason)` from chat) wins over how the
+job ended in the failure rates and reasons, and `submit_job` warns when the same geometry failed before with the same
+material, quality and overrides (advisory; it never blocks).
+
 Each printer's ETA correction is the median actual/estimate ratio of its last 20 completed prints (once there are 3,
 clamped to 0.5–2×). It is applied wherever an estimate is used: routing, `finish_window`, notifications and
 `est_human` ("1h 12m (Orca 1h 0m)").

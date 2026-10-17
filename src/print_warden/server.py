@@ -34,6 +34,7 @@ from . import (
     ha_entities,
     moonraker,
     mqtt_entities,
+    outcome,
     park,
     policy,
     retention,
@@ -487,6 +488,7 @@ async def submit_job(
         cache_dir=CFG.storage_dir / "slice-cache",
     )
     history = _history(model_hash)
+    before = _failed_before(model_hash, mat, q, overrides or {})
     job = JOBS.create(
         printer=printer,
         name=stem,
@@ -500,7 +502,10 @@ async def submit_job(
         filament_m=res.filament_m,
         layers=res.layers,
         max_z=res.max_z,
-        warnings=([temp_note] if temp_note else []) + plate_warnings + res.warnings,
+        warnings=([temp_note] if temp_note else [])
+        + before
+        + plate_warnings
+        + res.warnings,
         slice_blockers=res.blockers,
         copies=copies,
         offer=offer,
@@ -684,18 +689,35 @@ async def _spool_temps(
     )
 
 
+def _failed_before(
+    model_hash: str, material: str, quality: str, overrides: dict[str, Any]
+) -> list[str]:
+    """Advisory: earlier prints of this geometry with the same material, quality and overrides that failed."""
+    return [
+        f"this model failed before with these settings ({outcome.reason(j)}, job {j['id']} on {j['printer']}); "
+        "see model_history"
+        for j in JOBS.by_model(model_hash)
+        if j["state"] in ("done", "failed")
+        and outcome.failed(j)
+        and j["material"] == material
+        and j["quality"] == quality
+        and (j["overrides"] or {}) == overrides
+    ][:3]
+
+
 def _history(model_hash: str) -> dict[str, Any]:
     jobs = [
         j
         for j in JOBS.by_model(model_hash)
         if j["state"] in ("done", "failed", "printing")
     ]
-    done = [j for j in jobs if j["state"] == "done"]
+    finished = [j for j in jobs if j["state"] != "printing"]
+    done = [j for j in finished if not outcome.failed(j)]
     last_ok = done[0] if done else None
     return {
         "prints": len(jobs),
         "done": len(done),
-        "failed": sum(1 for j in jobs if j["state"] == "failed"),
+        "failed": sum(1 for j in finished if outcome.failed(j)),
         "last_success": {
             k: last_ok[k]
             for k in (
@@ -749,6 +771,8 @@ def model_history(model: str) -> dict[str, Any]:
                     "started_at",
                     "finished_at",
                     "error",
+                    "outcome",
+                    "outcome_reason",
                 )
             }
             for j in JOBS.by_model(h)
@@ -777,6 +801,8 @@ def print_history(
         "grams_used",
         "cost",
         "error",
+        "outcome",
+        "outcome_reason",
         "started_at",
         "finished_at",
     )
@@ -993,6 +1019,8 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             await advance_queue(job_id)
         elif verb == "FIRSTLAYER":
             JOBS.note(job_id, "first layers look good (phone tap)")
+        elif verb == "OUTCOME":
+            await _on_outcome_tap(job_id)
         elif verb in ("CANCEL", "RESUME"):
             res = await print_control(job_id, verb.lower(), "phone tap")
             if not res["done"] and HA:
@@ -1004,6 +1032,51 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
                 )
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
+
+
+async def _on_outcome_tap(payload: str) -> None:
+    job_id, choice = outcome.parse(payload)
+    job = JOBS.get(job_id)
+    if choice in ("failed", "more") and HA:
+        await HA.notify_actionable(
+            f"Why did {job['name']} fail?",
+            "Pick the closest; More… for the rest.",
+            outcome.reasons(job_id, 1 if choice == "failed" else 2),
+            tag=outcome.tag(job_id),
+        )
+        if choice == "more":
+            return
+    label_job(
+        job_id,
+        "good" if choice == "good" else "failed",
+        None if choice in ("good", "failed") else choice,
+        "phone tap",
+    )
+    if choice != "failed" and HA:
+        await HA.clear_notification(outcome.tag(job_id))
+
+
+def label_job(job_id: str, result: str, reason: str | None, who: str) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if job["state"] not in ("done", "failed"):
+        raise ValueError(
+            f"job {job_id} is {job['state']}; only finished prints are labelled"
+        )
+    fields = outcome.label(result, reason)
+    note = f"labelled {result}" + (f" ({reason})" if reason else "") + f" by {who}"
+    return JOBS.note(job_id, note, outcome_by=who, outcome_at=time.time(), **fields)
+
+
+@mcp.tool()
+def label_print(
+    job_id: str, result: str, labelled_by: str, reason: str | None = None
+) -> dict[str, Any]:
+    """Record how a finished print really turned out: result 'good', or 'failed' with a reason (adhesion, spaghetti,
+    layer_shift, under_extrusion, other). Use the operator's words: `labelled_by` names who said so. A label changes
+    nothing on the printer; it feeds printer_stats and the "failed before" warning on submit_job, and a later label
+    replaces an earlier one."""
+    job = label_job(job_id, result, reason, labelled_by)
+    return {k: job[k] for k in ("id", "name", "state", "outcome", "outcome_reason")}
 
 
 async def print_control(job_id: str, action: str, who: str) -> dict[str, Any]:

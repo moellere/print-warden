@@ -1,5 +1,6 @@
 import asyncio
 import time
+import uuid
 
 import pytest
 from starlette.testclient import TestClient
@@ -550,3 +551,70 @@ def test_healthz_contract(client):
         "last_update_s_ago",
     }
     assert "filename" not in str(body)
+
+
+def _labelled_job(state="done", **kw):
+    j = server.JOBS.create(
+        printer="testp", name="part", material="PLA", quality="draft", **kw
+    )
+    for s in ("staged", "printing", state):
+        j = server.JOBS.transition(j["id"], s)
+    return j
+
+
+async def test_outcome_taps_label_the_job(monkeypatch):
+    prompts, cleared = [], []
+
+    async def notify(title, message, actions, image=None, tag=None):
+        prompts.append([a for a, _ in actions])
+        return True
+
+    async def clear(tag):
+        cleared.append(tag)
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    j = _labelled_job()
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:failed", {})
+    assert server.JOBS.get(j["id"])["outcome"] == "failed"
+    assert prompts[-1][0].endswith(":adhesion")
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:more", {})
+    assert prompts[-1][0].endswith(":layer_shift")
+    assert server.JOBS.get(j["id"])["outcome_reason"] is None
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:layer_shift", {})
+    got = server.JOBS.get(j["id"])
+    assert (got["outcome"], got["outcome_reason"], got["outcome_by"]) == (
+        "failed",
+        "layer_shift",
+        "phone tap",
+    )
+    assert cleared == [f"print_warden_outcome_{j['id']}"]
+
+
+def test_label_print_tool_and_its_limits():
+    j = _labelled_job("failed", error="print_cancelled")
+    out = server.label_print(j["id"], "good", "Enoch in chat")
+    assert out["outcome"] == "good"
+    with pytest.raises(ValueError):
+        server.label_print(j["id"], "failed", "x", reason="gremlins")
+    running = server.JOBS.create(printer="testp", name="r")
+    server.JOBS.transition(running["id"], "staged")
+    with pytest.raises(ValueError, match="only finished"):
+        server.label_print(running["id"], "good", "x")
+    server.JOBS.transition(running["id"], "skipped")
+
+
+def test_failed_before_warns_only_for_the_same_settings():
+    h = "feedc0de" + uuid.uuid4().hex[:8]
+    bad = _labelled_job(model_hash=h, overrides={})
+    server.label_job(bad["id"], "failed", "adhesion", "test")
+    _labelled_job(model_hash=h, overrides={"brim_width": "5"})
+    warn = server._failed_before(h, "PLA", "draft", {})
+    assert len(warn) == 1
+    assert "adhesion" in warn[0]
+    assert bad["id"] in warn[0]
+    assert server._failed_before(h, "PLA", "draft", {"brim_width": "5"}) == []
+    assert server._failed_before(h, "PETG", "draft", {}) == []
+    hist = server._history(h)
+    assert (hist["done"], hist["failed"]) == (1, 1)

@@ -8,6 +8,9 @@
 - `print-warden check [config]`: resolves the Orca profiles and asks Moonraker, cameras, Home Assistant, Spoolman and
   the broker whether they answer, read-only; exit 1 on any failure.
 - `docs/live-validation.md`: the runbook and sign-off table for the real printers.
+- Print outcomes: the end photo with Good / Failed (and a reason) after every print, or `label_print` from chat;
+  labels win in `printer_stats`, appear in `print_history` / `model_history`, and `submit_job` warns when the same
+  model failed before with the same settings. New job columns are added on start-up.
 
 ## 0.3.0
 
