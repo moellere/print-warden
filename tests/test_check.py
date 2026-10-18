@@ -226,3 +226,31 @@ async def test_model_sites_only_when_asked(tmp_path, monkeypatch):
         r.area: r.status for r in results if r.area in ("thingiverse", "printables")
     }
     assert sites == {"thingiverse": check.WARN, "printables": check.WARN}
+
+
+async def test_power_entity_needs_a_known_unit(tmp_path, monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(check.shutil, "which", lambda name: f"/usr/bin/{name}")
+    cfg = _cfg(tmp_path)
+    (name, p), *_ = cfg.printers.items()
+    cfg = dataclasses.replace(
+        cfg, printers={name: dataclasses.replace(p, power_entity="sensor.plug")}
+    )
+    base = _handler()
+
+    def handler(unit):
+        def h(r):
+            if str(r.url) == "http://ha/api/states/sensor.plug":
+                return httpx.Response(
+                    200,
+                    json={"state": "12", "attributes": {"unit_of_measurement": unit}},
+                )
+            return base(r)
+
+        return h
+
+    ok = await _run(cfg, handler("W"))
+    assert any("power entity sensor.plug: power sensor" in r.detail for r in ok)
+    bad = await _run(cfg, handler("A"))
+    assert any(r.status == check.FAIL and "not in kWh/Wh/W/kW" in r.detail for r in bad)

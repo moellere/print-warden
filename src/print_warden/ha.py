@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -107,6 +107,14 @@ class HAClient:
             r = await self._c.get(f"/api/states/{entity_id}")
             return r.json().get("state") if r.status_code == 200 else None
         except httpx.HTTPError:
+            return None
+
+    async def state_full(self, entity_id: str) -> dict[str, Any] | None:
+        """The entity's state with its attributes (unit of measurement and the rest)."""
+        try:
+            r = await self._c.get(f"/api/states/{entity_id}")
+            return cast("dict[str, Any]", r.json()) if r.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
             return None
 
     async def light(self, entity_id: str, on: bool) -> None:

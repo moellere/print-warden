@@ -79,6 +79,7 @@ class Printer:
     auto_start_hours: str | None = None
     finish_window: str | None = None
     purge_zone: tuple[float, float, float, float] | None = None
+    power_entity: str | None = None
     maintenance: dict[str, Interval] = field(default_factory=dict)
 
     @property
@@ -96,6 +97,13 @@ class CheapPower:
     entity: str
     max_price: float
     min_hours: float = 3.0
+    min_kwh: float | None = None
+
+
+@dataclass(frozen=True)
+class Energy:
+    price_per_kwh: float | None = None
+    price_entity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +155,7 @@ class Config:
     quiet_states: tuple[str, ...] = ("on",)
     upkeep: Upkeep = Upkeep()
     cheap_power: CheapPower | None = None
+    energy: Energy = Energy()
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -239,6 +248,7 @@ def load(path: str | Path) -> Config:
             auto_start_hours=p.get("auto_start_hours") or None,
             finish_window=p.get("finish_window") or None,
             purge_zone=_purge_zone(name, p.get("purge_zone")),
+            power_entity=p.get("power_entity") or None,
             maintenance=parse_maintenance(p.get("maintenance")),
         )
     ha = None
@@ -294,9 +304,17 @@ def load(path: str | Path) -> Config:
             entity=str(cp["entity"]),
             max_price=float(cp["max_price"]),
             min_hours=float(cp.get("min_hours", 3)),
+            min_kwh=float(cp["min_kwh"]) if cp.get("min_kwh") is not None else None,
         )
         if (cp := pol.get("cheap_power"))
         else None,
+        energy=Energy(
+            price_per_kwh=float(en["price_per_kwh"])
+            if (en := raw.get("energy") or {}).get("price_per_kwh") is not None
+            else None,
+            price_entity=en.get("price_entity")
+            or ((pol.get("cheap_power") or {}).get("entity")),
+        ),
         upkeep=Upkeep(
             reorder_below_g=float(
                 (raw.get("upkeep") or {}).get("reorder_below_g", 200)

@@ -81,6 +81,9 @@ FIELDS = (
     "author",
     "license",
     "batch_id",
+    "energy_kwh",
+    "heatup_kwh",
+    "energy_cost",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides", "calibration")
 JSON_DEFAULTS = {"overrides": "{}", "calibration": "null"}
@@ -111,6 +114,9 @@ ADDED_COLUMNS = {
     "author": "text",
     "license": "text",
     "batch_id": "text",
+    "energy_kwh": "real",
+    "heatup_kwh": "real",
+    "energy_cost": "real",
 }
 
 

@@ -22,7 +22,7 @@ import aiomqtt
 import httpx
 import yaml
 
-from . import config
+from . import config, energy
 from .slicer import flatten, search_dirs
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -267,6 +267,24 @@ async def _home_assistant(c: httpx.AsyncClient, cfg: config.Config) -> list[Resu
             Result(OK, "home assistant", f"{label} {entity}")
             if found
             else Result(FAIL, "home assistant", f"{label} {entity} does not exist")
+        )
+    for p in cfg.printers.values():
+        if not p.power_entity:
+            continue
+        r = await c.get(f"{ha.url}/api/states/{p.power_entity}", headers=h)
+        reading = energy.parse(r.json()) if r.status_code == 200 else None
+        out.append(
+            Result(
+                OK,
+                "home assistant",
+                f"{p.name} power entity {p.power_entity}: {reading.kind} sensor",
+            )
+            if reading
+            else Result(
+                FAIL,
+                "home assistant",
+                f"{p.name} power entity {p.power_entity} is missing, unavailable or not in kWh/Wh/W/kW",
+            )
         )
     return out
 

@@ -252,13 +252,18 @@ Slicing stages the job without queueing it, so a look at the preview comes befor
 only touch jobs the page staged. The CSRF token is an HMAC of the hour (a per-process secret when the warden runs
 without a token, which is when it matters most).
 
-## Phase 22 — Real energy and cost per print
+## Phase 22 — Real energy and cost per print ✅ (build)
 
 - Optional `power_entity` per printer (a Home Assistant energy or power sensor): the kWh of each print, times a
   configured or live price, is a cost on the job; `printer_stats` splits filament from energy and shows idle heat-up.
   The cheap-power hold uses the measured draw.
 
 Done when: a print's cost includes measured kWh within a few percent of the sensor's own total.
+
+An energy counter is read at start, first layer and end; a power sensor is sampled every 30 s and integrated, with the
+running total in the job store so a restart mid-print keeps it. The hold uses a printer's mean draw over the last
+90 days of metered prints. A measured price per print uses the mean of the price at start and end, not an hourly
+integral: close enough for a price that changes hourly and a print of a few hours, and said so here.
 
 ## Phase 23 — Multi-material (MMU and toolchangers)
 

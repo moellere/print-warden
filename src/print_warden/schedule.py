@@ -75,10 +75,19 @@ def assign(
 
 
 def power_hold(
-    est_s: float, price: str | None, max_price: float, min_hours: float
+    est_s: float,
+    price: str | None,
+    max_price: float,
+    min_hours: float,
+    kwh: float | None = None,
+    min_kwh: float | None = None,
 ) -> str | None:
-    """Why an offer should wait for cheaper power, or None."""
-    if est_s < min_hours * 3600:
+    """Why an offer should wait for cheaper power, or None. With `min_kwh` and the printer's measured draw (`kwh`, the
+    job's expected energy), energy decides instead of hours."""
+    if min_kwh is not None and kwh is not None:
+        if kwh < min_kwh:
+            return None
+    elif est_s < min_hours * 3600:
         return None
     try:
         now = float(price) if price is not None else None
@@ -86,6 +95,8 @@ def power_hold(
         now = None
     if now is None or now <= max_price:
         return None
+    if min_kwh is not None and kwh is not None:
+        return f"waiting for cheaper power: {now:g} > {max_price:g} for a print expected to use {kwh:.2f} kWh"
     return f"waiting for cheaper power: {now:g} > {max_price:g} for a {est_s / 3600:.1f} h print"
 
 

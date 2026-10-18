@@ -55,6 +55,13 @@ filament's), the cost. `printer_stats(days=90)` reports estimate accuracy per pr
 printer / material / quality with the commonest reasons, and prints, hours, grams and cost per month;
 `print_history(printer, days, state)` lists the jobs behind it.
 
+**Energy.** With a printer's `power_entity` (a Home Assistant sensor on its plug), every print records its kWh, the
+heat-up before the first layer, and an energy cost. An energy counter (kWh, Wh) gives the exact rise from start to
+end; a power sensor (W, kW) is sampled every 30 s and integrated, and a gap over 5 minutes (the warden was down)
+counts nothing. The price is `energy.price_per_kwh`, or the mean of `energy.price_entity` (default: the cheap-power
+entity) at start and end. `printer_stats` adds kWh and energy cost per month and, per printer, mean draw while
+printing and mean heat-up; `print-warden check` confirms each power entity reports a unit it can use.
+
 Klipper knows a print completed, not whether it is any good. After every print the phone gets the end photo with
 **Good** / **Failed** (a cancelled or errored print goes straight to the reasons): adhesion, spaghetti, layer shift,
 under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, reason)` from chat) wins over how the
@@ -171,8 +178,9 @@ queue. `batch_status(batch_id)` shows progress (also on `/status`); `save_batch`
 keep a set ("the usual set") for `queue_saved_batch(name)`; `list_saved_batches`, `delete_saved_batch`.
 
 **Cheap power.** With `policy.cheap_power` (`entity`, `max_price`, `min_hours`), the offer of a job expected to run at
-least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. An unreadable price
-never holds a job, and an explicit `request_start` is never held.
+least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. With `min_kwh` and a
+metered printer, the job's expected energy (its corrected estimate times the printer's measured draw over 90 days)
+decides instead of its hours. An unreadable price never holds a job, and an explicit `request_start` is never held.
 
 **Slice checks.** Before slicing, the model's bounding box (rotated 90° if that fits) and `copies` are checked against
 the machine's printable area and height; a model that cannot fit is refused. After slicing, the extrusion extents are

@@ -123,6 +123,12 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     the preview and estimate within a minute. Add to queue: the phone gets the Start offer (or, if the printer is busy,
     the page says it is queued). A second form opened in another tab and posted after two hours is refused.
 
+## 14. Energy
+
+37. Set `power_entity` on one printer (an HA energy counter on its plug, or a power sensor), `print-warden check`
+    (the entity reads as an energy or power sensor), then print. Expect: `print_history` shows `energy_kwh` within a
+    few percent of the counter's rise in HA over the print, `heatup_kwh` well under it, and an `energy_cost`.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -164,3 +170,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 34 | `check --sites`: Thingiverse token and Printables query | | |
 | 35 | A 4-plate project as one batch across both printers | | |
 | 36 | `/stage`: upload, slice, queue, offer on the phone | | |
+| 37 | kWh per print within a few percent of the plug's counter | | |

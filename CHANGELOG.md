@@ -14,6 +14,10 @@
 - `/stage`: add a print from a browser (file or link, where, material, quality, copies, plate): slice, see the
   preview, then Add to queue (offered on the phone as usual) or Discard. It never starts, cancels or waives; forms
   carry a CSRF token and must come from the page's own origin.
+- Energy per print: a printer's `power_entity` (an HA kWh counter or W sensor) gives each job `energy_kwh`,
+  `heatup_kwh` (before the first layer) and `energy_cost` (`energy.price_per_kwh` or a price entity);
+  `printer_stats` reports kWh and energy cost per month and mean draw and heat-up per printer; `check` validates the
+  entity's unit. `policy.cheap_power.min_kwh` holds by expected energy (measured draw) instead of hours.
 - `print-warden check` validates `THINGIVERSE_TOKEN` when set; `--sites` also checks that Printables still answers the
   warden's query.
 

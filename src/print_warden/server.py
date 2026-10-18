@@ -35,6 +35,7 @@ from . import (
     cameras,
     checks,
     config,
+    energy,
     footprint,
     ha_entities,
     intake,
@@ -1128,8 +1129,15 @@ async def advance_queue(printer: str) -> dict[str, Any]:
         return {"action": "none", "why": why}
     if CFG.cheap_power and HA:
         cp = CFG.cheap_power
+        est = _corrected_est(head)
+        kw = energy.average_kw(JOBS.since(time.time() - 90 * 86400, printer))
         hold = schedule.power_hold(
-            _corrected_est(head), await HA.state(cp.entity), cp.max_price, cp.min_hours
+            est,
+            await HA.state(cp.entity),
+            cp.max_price,
+            cp.min_hours,
+            kwh=est / 3600 * kw if kw else None,
+            min_kwh=cp.min_kwh,
         )
         if hold:
             JOBS.kv_set(f"power_hold:{printer}", "1")
@@ -1383,6 +1391,8 @@ def print_history(
         "source_url",
         "author",
         "license",
+        "energy_kwh",
+        "energy_cost",
     )
     wanted = (state,) if state else ("printing", "done", "failed")
     return [{k: j.get(k) for k in keep} for j in reversed(rows) if j["state"] in wanted]
@@ -1391,8 +1401,9 @@ def print_history(
 @mcp.tool()
 def printer_stats(days: int = 90) -> dict[str, Any]:
     """From the last `days` of jobs: how Orca's estimates compare with real print times (and the correction each
-    printer's ETAs now use), failure rates by printer / material / quality with the commonest reasons, and prints,
-    hours, grams and cost per month."""
+    printer's ETAs now use), failure rates by printer / material / quality with the commonest reasons, prints,
+    hours, grams, filament cost, kWh and energy cost per month, and per metered printer its kWh, mean draw while
+    printing, mean heat-up and energy cost."""
     rows = JOBS.since(time.time() - days * 86400)
     return {
         "estimate_accuracy": stats.estimate_accuracy(rows),
@@ -1401,6 +1412,7 @@ def printer_stats(days: int = 90) -> dict[str, Any]:
         "by_material": stats.outcomes(rows, "material"),
         "by_quality": stats.outcomes(rows, "quality"),
         "monthly": stats.monthly(rows),
+        "energy": stats.energy(rows),
     }
 
 
