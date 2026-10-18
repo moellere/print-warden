@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The Start / Skip approval notification is sent sticky and persistent (Android companion), so tapping its body or
+  swiping no longer loses the request; the warden still withdraws it on start, skip or expiry.
+
 ## 0.6.0
 
 Phases 19–22. No config changes are required: new job columns are added on start-up, and every new setting

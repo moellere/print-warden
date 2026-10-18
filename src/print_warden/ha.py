@@ -51,7 +51,11 @@ class HAClient:
         actions: list[tuple[str, str]],
         image: str | None = None,
         tag: str | None = None,
+        sticky: bool = False,
     ) -> bool:
+        """`sticky` keeps the notification in the phone's shade after a tap on its body and stops a swipe from
+        dismissing it (Android companion `sticky` + `persistent`), so only its buttons or `clear_notification`
+        remove it. Use it for prompts the warden withdraws itself once they are answered or expire."""
         if not self.cfg.notify_service:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)
@@ -61,6 +65,9 @@ class HAClient:
             "channel": "Print warden",
             "importance": "high",
         }
+        if sticky:
+            data["sticky"] = True
+            data["persistent"] = True
         if image:
             data["image"] = image
         try:
