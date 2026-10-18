@@ -162,6 +162,14 @@ go to whichever printer would finish its share soonest, within what fits on its 
 offered and started by tap or `auto_start` like any other. The result shows the expected finish against one printer
 doing it all.
 
+**Batches.** `submit_batch(where, items)` queues several prints at once; each item is `{model, material, quality?,
+plates?, copies?, file?, overrides?, name?}`, and `plates: "all"` makes one job per plate of a 3MF project. Every job
+is timed on each printer that can take it (material loaded, profile, fits its plate); the longest go first, each to the
+printer that would finish it soonest. Every job is ordinary: queued, offered and started by tap or `auto_start`. The
+result says when each printer should be done and whether Spoolman's stock covers the batch after the rest of the
+queue. `batch_status(batch_id)` shows progress (also on `/status`); `save_batch` / `submit_batch(..., save_as=...)`
+keep a set ("the usual set") for `queue_saved_batch(name)`; `list_saved_batches`, `delete_saved_batch`.
+
 **Cheap power.** With `policy.cheap_power` (`entity`, `max_price`, `min_hours`), the offer of a job expected to run at
 least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. An unreadable price
 never holds a job, and an explicit `request_start` is never held.

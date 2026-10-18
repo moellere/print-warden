@@ -228,7 +228,7 @@ Found by slicing for real: after `G28` the Kobra's X is unknown to the gcode, so
 the suggested zone is therefore the strip along the bed edge the purge crossed, not the purge's own (partial) box.
 With `purge_zone: [0, 222, 220, 230]` the Kobra 2 Pro's bundled profile slices with no blocker.
 
-## Phase 20 — Multi-plate projects and batches
+## Phase 20 — Multi-plate projects and batches ✅ (build)
 
 - A 3MF with several plates becomes one batch of jobs, routed across printers like `submit_split`; each job still
   starts on its own tap.
@@ -236,6 +236,10 @@ With `purge_zone: [0, 222, 220, 230]` the Kobra 2 Pro's bundled profile slices w
   Spoolman stock.
 
 Done when: a 4-plate project is queued in one call, prints across both printers, and its batch shows progress.
+
+Each plate is timed on every printer as the job itself will be sliced (the project, its printer's settings), so the
+real job usually comes from the slice cache. Assignment is the longest-processing-time rule: longest first, each to
+the printer that would finish it soonest.
 
 ## Phase 21 — A staging page
 

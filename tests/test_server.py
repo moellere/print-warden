@@ -964,3 +964,112 @@ async def test_submit_job_from_a_model_page_keeps_where_it_came_from(
     assert (job["author"], job["license"]) == ("maker", page.license)
     hist = server.print_history("testp", state="staged")
     assert hist[0]["license"] == page.license
+
+
+async def test_submit_batch_spreads_plates_and_checks_stock(
+    clean_queues, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    proj = server.UPLOADS / "box.3mf"
+    proj.parent.mkdir(parents=True, exist_ok=True)
+    proj.write_bytes(b"zip")
+    monkeypatch.setattr(server.threemf, "plate_numbers", lambda p: [1, 2, 3, 4])
+
+    async def model_stl(src, stl, defines, plate, project_ok=False):
+        stl.parent.mkdir(parents=True, exist_ok=True)
+        stl.write_text(
+            "solid c\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 40 0 0\n"
+            "vertex 0 40 20\nendloop\nendfacet\nendsolid c\n"
+        )
+        return [], None
+
+    async def no_spool(printer, mat):
+        return {}, None
+
+    timed = []
+
+    async def slice_stl(cfg, stl, out, *a, plate=1, **kw):
+        timed.append((out.name, plate))
+        # testp is twice as fast; plate 1 is the long one
+        base = 4000 if plate == 1 else 1000
+        return SimpleNamespace(est_seconds=base if out.name == "testp" else 2 * base)
+
+    submitted = []
+
+    async def submit(printer, model, material, quality, **kw):
+        submitted.append((printer, kw["plate"], kw["batch_id"]))
+        return server.JOBS.create(
+            printer=printer, name=kw["name"], material=material, est_seconds=100,
+            filament_g=150, batch_id=kw["batch_id"],
+        )  # fmt: skip
+
+    class Stock:
+        async def spools(self):
+            return [{"material": "PLA", "remaining_g": 500}]
+
+    machine = {
+        "printable_area": ["0x0", "200x0", "200x200", "0x200"],
+        "printable_height": 200,
+    }
+    monkeypatch.setattr(server, "_model_stl", model_stl)
+    monkeypatch.setattr(server, "_spool_temps", no_spool)
+    monkeypatch.setattr(server.slicer, "slice_stl", slice_stl)
+    monkeypatch.setattr(server.slicer, "flatten", lambda *a, **k: machine)
+    monkeypatch.setattr(server, "_submit_job", submit)
+    monkeypatch.setattr(server, "SPOOLMAN", Stock())
+    server._CORRECTIONS.clear()
+    for n in ("testp", "testq"):
+        server.JOBS.kv_delete(
+            f"active_spool:{n}"
+        )  # an earlier test's spool would be asked of this fake
+    _ready_printer("testp")
+    _ready_printer("testq")
+    items = [{"model": "box.3mf", "material": "pla", "plates": "all"}]
+    out = await server.submit_batch("testp,testq", items, name="box", save_as="usual")
+    assert len(timed) == 8
+    by_plate = {plate: printer for printer, plate, _ in submitted}
+    # LPT: the long plate 1 on the fast printer, the rest wherever finishes soonest
+    assert by_plate[1] == "testp"
+    assert sorted(by_plate.values()).count("testq") >= 1
+    assert out["printers_done_in_s"]["testp"] <= 6000
+    assert out["stock"] == [
+        "PLA: the batch needs 600 g; Spoolman has 500 g, 500 g after the rest of the queue"
+    ]
+    st = server.batch_status(out["batch_id"])
+    assert (st["name"], st["total"], st["done"]) == ("box", 4, 0)
+    server.JOBS.note(st["jobs"][0]["id"], "test", state="done")
+    assert server.batch_status(out["batch_id"])["done"] == 1
+    assert [b["name"] for b in server._open_batches()] == ["box"]
+    assert "usual" in server.list_saved_batches()
+    again = await server.queue_saved_batch("usual")
+    assert again["name"] == "usual" and len(submitted) == 8
+    assert server.delete_saved_batch("usual") == {"deleted": "usual"}
+    with pytest.raises(KeyError):
+        await server.queue_saved_batch("usual")
+    with pytest.raises(ValueError, match="needs model and material"):
+        await server.submit_batch("any", [{"model": "box.3mf"}])
+
+
+def test_status_page_shows_open_batches():
+    from print_warden import status
+
+    html = status.render(
+        {
+            "printers": {},
+            "batches": [
+                {
+                    "name": "<box>",
+                    "done": 1,
+                    "failed": 1,
+                    "total": 4,
+                    "remaining_s": 7200,
+                }
+            ],
+        }
+    )
+    assert (
+        "&lt;box&gt;: 1 of 4 done" in html
+        and "1 failed" in html
+        and "2h 00m to go" in html
+    )

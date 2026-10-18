@@ -7,6 +7,10 @@
   marks) and, without a zone, suggests one.
 - `print-warden profiles diff [--accept]`: snapshot the presets printers.yaml uses and list what changed after an
   OrcaSlicer upgrade; `print-warden check` warns while they differ.
+- Batches: `submit_batch(where, items)` queues several prints (a 3MF's plates with `plates: "all"`) across printers,
+  longest first to whichever would finish soonest, each an ordinary tap-started job; the result checks Spoolman stock
+  for the batch. `batch_status`, saved batches (`save_batch`, `queue_saved_batch`, `list_saved_batches`,
+  `delete_saved_batch`), and open batches on `/status`. New job column `batch_id`.
 - `print-warden check` validates `THINGIVERSE_TOKEN` when set; `--sites` also checks that Printables still answers the
   warden's query.
 

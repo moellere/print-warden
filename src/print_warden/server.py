@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -539,6 +540,7 @@ async def _submit_job(
     calibration: dict[str, Any] | None = None,
     file: str | None = None,
     source: intake.Page | None = None,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """The body of submit_job; `calibration` (a calibration tower spec) is set only by calibrate, `source` (the page
     an already-downloaded model came from) only by submit_split."""
@@ -619,6 +621,7 @@ async def _submit_job(
         source_title=page.title if page else None,
         author=page.author if page else None,
         license=page.license if page else None,
+        batch_id=batch_id,
     )
     if res.cached:
         JOBS.note(job["id"], "slice reused from cache")
@@ -678,6 +681,43 @@ async def _model_stl(
     return [], None
 
 
+def _where(where: str) -> list[str]:
+    """Printer names for a location, "any", or comma-separated printer names."""
+    key = where.lower()
+    if key == "any":
+        return list(WATCHERS)
+    if "," in key or key in WATCHERS:
+        names = [n.strip() for n in key.split(",") if n.strip()]
+        for n in names:
+            _w(n)
+        return names
+    names = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
+    if not names:
+        raise ValueError(f"{where!r} is not a location, 'any' or printer names")
+    return names
+
+
+async def _eligible(
+    names: list[str], mat: str, q: str, skipped: dict[str, str]
+) -> dict[str, float]:
+    """Printer -> seconds until it is free, for those with `mat` loaded, a `mat`/`q` profile and able to print; the
+    rest go into `skipped` with the reason."""
+    out: dict[str, float] = {}
+    for n in names:
+        p = _w(n).p
+        loaded = (await _loaded(n) or "").upper()
+        eta = _eta_free_s(n)
+        if loaded != mat:
+            skipped[n] = f"has {loaded or 'nothing'} loaded"
+        elif not p.machine or mat not in p.filaments or q not in p.processes:
+            skipped[n] = f"no {mat}/{q} profile"
+        elif eta is None:
+            skipped[n] = "cannot print right now"
+        else:
+            out[n] = eta
+    return out
+
+
 @mcp.tool()
 async def submit_split(
     where: str,
@@ -700,17 +740,7 @@ async def submit_split(
     submit_job: queued, offered and started exactly like any other (tap or auto_start). Returns the plan (copies,
     expected finish per printer, the single-printer time it beats) and the jobs."""
     mat, q = material.upper(), quality.lower()
-    key = where.lower()
-    if key == "any":
-        names = list(WATCHERS)
-    elif "," in key or key in WATCHERS:
-        names = [n.strip() for n in key.split(",") if n.strip()]
-        for n in names:
-            _w(n)
-    else:
-        names = [n for n, w in WATCHERS.items() if (w.p.location or "").lower() == key]
-        if not names:
-            raise ValueError(f"{where!r} is not a location, 'any' or printer names")
+    names = _where(where)
     src, page = await _resolve_model(model, file)
     work = JOBDIR / "_split" / f"{time.strftime('%Y%m%d-%H%M%S')}_{src.stem}"
     stl = work / f"{src.stem}.stl"
@@ -718,18 +748,9 @@ async def submit_split(
     dims = checks.stl_bounds(stl)
     cands: list[schedule.Candidate] = []
     skipped: dict[str, str] = {}
-    for n in names:
+    eligible = await _eligible(names, mat, q, skipped)
+    for n, eta in eligible.items():
         p = _w(n).p
-        loaded = (await _loaded(n) or "").upper()
-        eta = _eta_free_s(n)
-        if loaded != mat:
-            skipped[n] = f"has {loaded or 'nothing'} loaded"
-        elif not p.machine or mat not in p.filaments or q not in p.processes:
-            skipped[n] = f"no {mat}/{q} profile"
-        elif eta is None:
-            skipped[n] = "cannot print right now"
-        if n in skipped:
-            continue
         assert p.machine
         machine = slicer.flatten(slicer.search_dirs(CFG.slicer), "machine", p.machine)
         if checks.fit_problems(dims, machine, 1) and not orient:
@@ -787,6 +808,285 @@ async def submit_split(
         "skipped": skipped,
         "jobs": jobs,
     }
+
+
+ITEM_KEYS = {
+    "model",
+    "material",
+    "quality",
+    "plates",
+    "copies",
+    "file",
+    "overrides",
+    "name",
+}
+
+
+def _batch_units(item: dict[str, Any], src: Path, index: int) -> list[dict[str, Any]]:
+    """One unit (a future job) per plate of an item: `plates` is a number, a list, or "all" for every plate of a 3MF."""
+    unknown = set(item) - ITEM_KEYS
+    if unknown or "model" not in item or "material" not in item:
+        raise ValueError(
+            f"item {index + 1}: needs model and material; allowed keys {sorted(ITEM_KEYS)}"
+            + (f", not {sorted(unknown)}" if unknown else "")
+        )
+    plates = item.get("plates", 1)
+    if plates == "all":
+        plates = threemf.plate_numbers(src) if src.suffix.lower() == ".3mf" else [1]
+    elif isinstance(plates, int):
+        plates = [plates]
+    if not isinstance(plates, list) or not all(isinstance(n, int) for n in plates):
+        raise ValueError(f'item {index + 1}: plates is a number, a list or "all"')
+    base = (item.get("name") or src.stem).replace(" ", "_")
+    return [
+        {
+            "key": f"{index + 1}.{n}",
+            "model": src.name,
+            "material": str(item["material"]).upper(),
+            "quality": str(item.get("quality") or "standard").lower(),
+            "plate": n,
+            "copies": int(item.get("copies") or 1),
+            "overrides": item.get("overrides"),
+            "name": base + (f"_plate{n}" if len(plates) > 1 or n != 1 else ""),
+        }
+        for n in plates
+    ]
+
+
+async def _stock_warnings(jobs: list[dict[str, Any]]) -> list[str]:
+    """Per material the batch uses: whether Spoolman's stock covers it on top of the rest of the queue."""
+    if not SPOOLMAN:
+        return []
+    need: dict[str, float] = {}
+    for j in jobs:
+        need[j["material"]] = need.get(j["material"], 0.0) + float(
+            j.get("filament_g") or 0
+        )
+    try:
+        spools = await SPOOLMAN.spools()
+    except httpx.HTTPError as e:
+        return [f"Spoolman unreadable, stock not checked: {e or type(e).__name__}"]
+    ours = {j["id"] for j in jobs}
+    queued = [j for j in JOBS.list(None, 500, upkeep.QUEUED) if j["id"] not in ours]
+    out = []
+    for m, g in sorted(need.items()):
+        have = sum(
+            float(sp.get("remaining_g") or 0)
+            for sp in spools
+            if not sp.get("archived") and sp.get("material") == m
+        )
+        rest = sum(
+            float(j.get("filament_g") or 0) for j in queued if j["material"] == m
+        )
+        if have - rest < g:
+            out.append(
+                f"{m}: the batch needs {g:.0f} g; Spoolman has {have:.0f} g, "
+                f"{max(0.0, have - rest):.0f} g after the rest of the queue"
+            )
+    return out
+
+
+@mcp.tool()
+async def submit_batch(
+    where: str,
+    items: list[dict[str, Any]],
+    name: str | None = None,
+    save_as: str | None = None,
+    use_spool_temps: bool = True,
+) -> dict[str, Any]:
+    """Queue several prints as one batch across the printers at `where` (a location, "any", or printer names). Each
+    item is {model, material, quality?, plates?, copies?, file?, overrides?, name?}; `plates: "all"` makes one job
+    per plate of a 3MF project. Every job is timed on each printer that can take it (material loaded, profile, fits),
+    then the longest go first, each to the printer that would finish it soonest. Each job is ordinary: queued,
+    offered and started by tap or auto_start, one at a time. Returns the plan, when each printer should be done,
+    whether Spoolman's stock covers the batch, and the batch id for batch_status. `save_as` keeps the items for
+    queue_saved_batch."""
+    if not items:
+        raise ValueError("a batch needs at least one item")
+    names = _where(where)
+    units: list[dict[str, Any]] = []
+    pages: dict[str, intake.Page | None] = {}
+    for i, item in enumerate(items):
+        src, page = await _resolve_model(str(item.get("model", "")), item.get("file"))
+        pages[src.name] = page
+        units += _batch_units(item, src, i)
+    work = JOBDIR / "_batch" / time.strftime("%Y%m%d-%H%M%S")
+    skipped: dict[str, str] = {}
+    free: dict[str, float] = {}
+    durations: dict[str, dict[str, float]] = {}
+    for u in units:
+        eligible = await _eligible(names, u["material"], u["quality"], skipped)
+        free.update(eligible)
+        stl = work / u["key"] / "model.stl"
+        _, project = await _model_stl(
+            UPLOADS / u["model"], stl, None, u["plate"], project_ok=u["copies"] == 1
+        )
+        dims = checks.stl_bounds(stl)
+        durations[u["key"]] = {}
+        for n in eligible:
+            p = _w(n).p
+            assert p.machine
+            machine = slicer.flatten(
+                slicer.search_dirs(CFG.slicer), "machine", p.machine
+            )
+            if checks.fit_problems(dims, machine, u["copies"]):
+                continue
+            fil_over, _ = (
+                (await _spool_temps(n, u["material"]))
+                if use_spool_temps
+                else ({}, None)
+            )
+            timed = await slicer.slice_stl(
+                CFG.slicer,
+                stl,
+                work / u["key"] / n,
+                p.machine,
+                p.processes[u["quality"]],
+                p.filaments[u["material"]],
+                u["overrides"],
+                park=p.bed_check.pose if p.bed_check else None,
+                purge_zone=p.purge_zone,
+                material=u["material"],
+                copies=u["copies"],
+                filament_overrides=fil_over,
+                cache_dir=CFG.storage_dir / "slice-cache",
+                project=project,
+                plate=u["plate"],
+            )
+            durations[u["key"]][n] = (timed.est_seconds or 0) * _correction(n)
+    homeless = [k for k, d in durations.items() if not d]
+    if homeless:
+        raise ValueError(
+            f"no printer can take job(s) {homeless}: {skipped or 'they do not fit any plate'}"
+        )
+    plan, done_in = schedule.assign(durations, free)
+    batch_id = uuid.uuid4().hex[:8]
+    label = name or f"batch-{batch_id}"
+    jobs = []
+    for u in sorted(
+        units, key=lambda u: (plan[u["key"]], -durations[u["key"]][plan[u["key"]]])
+    ):
+        jobs.append(
+            await _submit_job(
+                plan[u["key"]],
+                u["model"],
+                u["material"],
+                u["quality"],
+                name=u["name"],
+                overrides=u["overrides"],
+                copies=u["copies"],
+                use_spool_temps=use_spool_temps,
+                plate=u["plate"],
+                source=pages.get(u["model"]),
+                batch_id=batch_id,
+            )
+        )
+    JOBS.kv_set(
+        f"batch:{batch_id}",
+        json.dumps(
+            {"name": label, "created": time.time(), "where": where, "items": items}
+        ),
+    )
+    if save_as:
+        _save_batch(save_as, where, items)
+    return {
+        "batch_id": batch_id,
+        "name": label,
+        "plan": [
+            {
+                "job_id": j["id"],
+                "name": j["name"],
+                "printer": j["printer"],
+                "est_seconds": j.get("est_seconds"),
+            }
+            for j in jobs
+        ],
+        "printers_done_in_s": {p: round(v) for p, v in done_in.items()},
+        "skipped": skipped,
+        "stock": await _stock_warnings(jobs),
+        "jobs": jobs,
+    }
+
+
+def _save_batch(name: str, where: str, items: list[dict[str, Any]]) -> None:
+    for i, item in enumerate(items):
+        if set(item) - ITEM_KEYS or "model" not in item or "material" not in item:
+            raise ValueError(
+                f"item {i + 1}: needs model and material; allowed keys {sorted(ITEM_KEYS)}"
+            )
+    JOBS.kv_set(f"saved_batch:{name}", json.dumps({"where": where, "items": items}))
+
+
+@mcp.tool()
+def batch_status(batch_id: str) -> dict[str, Any]:
+    """A batch's jobs with their state, how many are done, and the time and filament still to go."""
+    meta = JOBS.kv_get(f"batch:{batch_id}")
+    jobs = JOBS.by_batch(batch_id)
+    if not meta and not jobs:
+        raise KeyError(f"no batch {batch_id}")
+    info = json.loads(meta) if meta else {}
+    finished = [j for j in jobs if j["state"] in ("done", "failed", "skipped")]
+    left = [j for j in jobs if j not in finished]
+    return {
+        "batch_id": batch_id,
+        "name": info.get("name"),
+        "done": sum(1 for j in jobs if j["state"] == "done"),
+        "failed": sum(1 for j in jobs if j["state"] == "failed"),
+        "total": len(jobs),
+        "remaining_s": round(
+            sum((j.get("est_seconds") or 0) * _correction(j["printer"]) for j in left)
+        ),
+        "remaining_g": round(sum(float(j.get("filament_g") or 0) for j in left)),
+        "jobs": [
+            {
+                k: j.get(k)
+                for k in (
+                    "id",
+                    "name",
+                    "printer",
+                    "material",
+                    "state",
+                    "est_seconds",
+                    "outcome",
+                )
+            }
+            for j in jobs
+        ],
+    }
+
+
+@mcp.tool()
+def save_batch(name: str, where: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep a set of prints ("the usual set") to queue again with queue_saved_batch; items as in submit_batch."""
+    _save_batch(name, where, items)
+    return {"saved": name, "items": len(items)}
+
+
+@mcp.tool()
+def list_saved_batches() -> dict[str, Any]:
+    """Saved batches with where they print and their items."""
+    return {
+        k.split(":", 1)[1]: json.loads(v)
+        for k, v in JOBS.kv_prefix("saved_batch:").items()
+    }
+
+
+@mcp.tool()
+async def queue_saved_batch(name: str, where: str | None = None) -> dict[str, Any]:
+    """Queue a saved batch again (optionally somewhere else); the same as submit_batch with its items."""
+    raw = JOBS.kv_get(f"saved_batch:{name}")
+    if not raw:
+        raise KeyError(f"no saved batch {name!r}; see list_saved_batches")
+    saved = json.loads(raw)
+    return await submit_batch(where or saved["where"], saved["items"], name=name)
+
+
+@mcp.tool()
+def delete_saved_batch(name: str) -> dict[str, Any]:
+    """Forget a saved batch (jobs already queued from it stay)."""
+    if not JOBS.kv_delete(f"saved_batch:{name}"):
+        raise KeyError(f"no saved batch {name!r}")
+    return {"deleted": name}
 
 
 @mcp.tool()
@@ -1706,7 +2006,23 @@ async def status_data() -> dict[str, Any]:
         p["snapshot"] = _latest_snapshot(n)
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
+    report["batches"] = _open_batches()
     return report
+
+
+def _open_batches(days: float = 14) -> list[dict[str, Any]]:
+    """Batches from the last `days` with a job not yet finished."""
+    out = []
+    for k, v in JOBS.kv_prefix("batch:").items():
+        info = json.loads(v)
+        if info.get("created", 0) < time.time() - days * 86400:
+            continue
+        st = batch_status(k.split(":", 1)[1])
+        if st["done"] + st["failed"] < st["total"]:
+            out.append(
+                {f: st[f] for f in ("name", "done", "failed", "total", "remaining_s")}
+            )
+    return out
 
 
 async def status_page(request: Request) -> HTMLResponse:

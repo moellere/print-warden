@@ -78,6 +78,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 24. With `policy.cheap_power` and the price above `max_price`: a long job is not offered (`advance_queue` says why);
     when the price drops, it is offered within the hour.
 
+25b. `submit_batch("<location>", [{"model": "<4-plate project>.3mf", "material": "PLA", "plates": "all"}],
+    name="test batch")` with both printers idle and PLA loaded. Expect: four jobs across the two printers, the
+    longest plate on the faster printer; each starts only on its tap; `/status` shows "test batch: n of 4 done".
+
 ## 9. Calibration
 
 26. `set_active_spool`, then `calibrate(printer, "temp")`; tap Start. Expect: the tower changes temperature at 8, 16,
@@ -152,3 +156,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 32 | Imported Orca preset bundle sliced with its settings | | |
 | 33 | `profiles diff` after an Orca upgrade | | |
 | 34 | `check --sites`: Thingiverse token and Printables query | | |
+| 35 | A 4-plate project as one batch across both printers (row 25b) | | |

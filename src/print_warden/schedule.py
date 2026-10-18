@@ -5,6 +5,10 @@ Splitting: each candidate printer has a time until it is free, a (corrected) tim
 its plate. Copies go one at a time to the printer that would finish its share soonest, so a busy printer takes fewer.
 Nothing here starts anything: each share becomes an ordinary job, offered and gated like any other.
 
+Batches: each job of a batch (a plate, or a model) has a time on every printer it fits. Longest first, each goes to
+the printer that would finish it soonest given what that printer already has; the classic longest-processing-time
+rule, within a third of the best possible finish.
+
 Cheap power: an offer for a job expected to run at least `min_hours` waits while the price entity reads above
 `max_price`. An unreadable price never holds a job; an explicit `request_start` is never held.
 """
@@ -49,6 +53,25 @@ def allocate(copies: int, cands: list[Candidate]) -> dict[str, int]:
 def finishes(share: dict[str, int], cands: list[Candidate]) -> dict[str, float]:
     by = {c.printer: c for c in cands}
     return {p: by[p].free_in_s + n * by[p].per_copy_s for p, n in share.items()}
+
+
+def assign(
+    durations: dict[str, dict[str, float]], free_in_s: dict[str, float]
+) -> tuple[dict[str, str], dict[str, float]]:
+    """Job key -> printer, and when each printer would finish its part. `durations[job][printer]` is the job's time
+    on each printer it fits; a job with none raises."""
+    load = dict(free_in_s)
+    out: dict[str, str] = {}
+    for job in sorted(
+        durations, key=lambda j: (-max(durations[j].values(), default=0), j)
+    ):
+        fits = durations[job]
+        if not fits:
+            raise ValueError(f"{job} fits none of the printers")
+        best = min(fits, key=lambda p: (load[p] + fits[p], p))
+        load[best] += fits[best]
+        out[job] = best
+    return out, {p: load[p] for p in sorted(set(out.values()))}
 
 
 def power_hold(
