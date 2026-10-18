@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+Phases 19–22. No config changes are required: new job columns are added on start-up, and every new setting
+(`purge_zone`, `power_entity`, `energy`, `policy.cheap_power.min_kwh`) is optional. Two things may show on upgrade:
+
+- `print-warden check` notes that there is no profile snapshot yet; `print-warden profiles diff` takes one.
+- A slice whose start gcode purges outside the printable area is now reported as a start-gcode purge (with a suggested
+  `purge_zone`), no longer as the part extruding off the bed.
 
 - `purge_zone` per printer: the start gcode's purge may extrude there, outside the printable area; the part is still
   held to the printable area. The extents check now tells the start gcode's purge apart from the part (Orca's `;TYPE:`
