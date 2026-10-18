@@ -227,7 +227,7 @@ def _ready_printer(name, state="standby", material="PLA"):
 def phone(monkeypatch):
     sent = []
 
-    async def notify(title, message, actions, image=None, tag=None):
+    async def notify(title, message, actions, image=None, tag=None, **kw):
         sent.append(tag)
         return True
 
@@ -597,7 +597,7 @@ def _labelled_job(state="done", **kw):
 async def test_outcome_taps_label_the_job(monkeypatch):
     prompts, cleared = [], []
 
-    async def notify(title, message, actions, image=None, tag=None):
+    async def notify(title, message, actions, image=None, tag=None, **kw):
         prompts.append([a for a, _ in actions])
         return True
 
@@ -665,7 +665,7 @@ async def test_upkeep_alerts_once_a_day_and_a_tap_resets(monkeypatch):
     )
     sent, cleared = [], []
 
-    async def notify(title, message, actions, image=None, tag=None):
+    async def notify(title, message, actions, image=None, tag=None, **kw):
         sent.append((tag, [a for a, _ in actions]))
         return True
 
@@ -868,7 +868,7 @@ async def test_calibration_tower_flow(monkeypatch, clean_queues):
         server.JOBS.transition(job["id"], s)
     prompts, cleared = [], []
 
-    async def notify(title, message, actions, image=None, tag=None):
+    async def notify(title, message, actions, image=None, tag=None, **kw):
         prompts.append([a for a, _ in actions])
         return True
 
