@@ -259,7 +259,7 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload`, `/status` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status`, `/stage` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
@@ -268,6 +268,12 @@ Access:
 `/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
 progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
 dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
+
+`/stage` (also opened with `?token=…`) adds a print from a browser: a file or a link, where, material, quality,
+copies and 3MF plate. Slice shows the preview, estimate, warnings and blockers; **Add to queue** puts it in the
+printer's queue, where it is offered on the phone like any job, and **Discard** drops it. The page never starts,
+cancels or waives anything, and its buttons only act on jobs staged from it. Forms carry a CSRF token (valid for up to
+two hours) and must be posted from the page's own origin.
 
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
@@ -303,8 +309,9 @@ src/print_warden/
   calibration.py  temperature / flow / pressure-advance towers and their results
   intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
   status.py     the read-only /status page
+  stage.py      the /stage page: slice and queue from a browser, never start
   profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
-  server.py     MCP tools + HTTP routes (/upload, /status, /obico/webhook, /ha/action, /files, /healthz)
+  server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 
 ## Develop

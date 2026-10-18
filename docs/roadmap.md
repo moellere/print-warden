@@ -241,12 +241,16 @@ Each plate is timed on every printer as the job itself will be sliced (the proje
 real job usually comes from the slice cache. Assignment is the longest-processing-time rule: longest first, each to
 the printer that would finish it soonest.
 
-## Phase 21 — A staging page
+## Phase 21 — A staging page ✅ (build)
 
 - `/status` gains upload, material and quality, a slice preview and "add to queue". Nothing on it starts, cancels or
   waives: those stay on the phone tap. Same token, plus a CSRF token on its forms.
 
 Done when: someone on the household network uploads an STL and it appears as an offer on the phone.
+
+Slicing stages the job without queueing it, so a look at the preview comes before the queue; Add to queue and Discard
+only touch jobs the page staged. The CSRF token is an HMAC of the hour (a per-process secret when the warden runs
+without a token, which is when it matters most).
 
 ## Phase 22 — Real energy and cost per print
 

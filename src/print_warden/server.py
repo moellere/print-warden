@@ -47,6 +47,7 @@ from . import (
     rules,
     schedule,
     slicer,
+    stage,
     stats,
     status,
     threemf,
@@ -2029,6 +2030,131 @@ async def status_page(request: Request) -> HTMLResponse:
     return HTMLResponse(status.render(await status_data()))
 
 
+def _stage_choices() -> dict[str, list[str]]:
+    places = sorted({w.p.location for w in WATCHERS.values() if w.p.location})
+    return {
+        "where": [*WATCHERS, *places, *(["any"] if len(WATCHERS) > 1 else [])],
+        "materials": sorted({m for w in WATCHERS.values() for m in w.p.filaments}),
+        "qualities": sorted({q for w in WATCHERS.values() for q in w.p.processes}),
+    }
+
+
+def _same_origin(request: Request) -> bool:
+    """A browser's Origin (or Referer) must name this host; a client that sends neither is let through (it already
+    holds the token)."""
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if not origin or origin == "null":
+        return not request.headers.get("origin")
+    return httpx.URL(origin).netloc.decode() == request.headers.get("host", "")
+
+
+async def _stage_form(request: Request) -> tuple[Any, str | None]:
+    """The posted form after the CSRF and origin checks, or the reason it is refused."""
+    form = await request.form()
+    if not _same_origin(request) or not stage.csrf_ok(
+        str(form.get("csrf") or ""), CFG.api_token
+    ):
+        return form, "this form expired or came from another page; reload and try again"
+    return form, None
+
+
+async def stage_page(request: Request) -> HTMLResponse:
+    token = request.query_params.get("token")
+    csrf = stage.csrf_token(CFG.api_token)
+    if request.method == "GET":
+        return HTMLResponse(stage.form(_stage_choices(), csrf, token))
+    length = request.headers.get("content-length") or "0"
+    if not length.isdigit() or int(length) > MAX_MODEL_BYTES + 65536:
+        return HTMLResponse(
+            stage.form(_stage_choices(), csrf, token, "file too large"), status_code=413
+        )
+    form, refused = await _stage_form(request)
+    last = {
+        k: str(form.get(k) or "")
+        for k in ("url", "page_file", "where", "material", "quality", "copies", "plate")
+    }
+    if refused:
+        return HTMLResponse(
+            stage.form(_stage_choices(), csrf, token, refused, last), status_code=403
+        )
+    try:
+        f = form.get("file")
+        if isinstance(f, UploadFile) and f.filename:
+            model = _model_name(f.filename)
+            data = await f.read()
+            if len(data) > MAX_MODEL_BYTES:
+                raise ValueError("file too large")
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            (UPLOADS / model).write_bytes(data)
+        elif last["url"]:
+            model = last["url"]
+        else:
+            raise ValueError("choose a file or give a link")
+        job = await _submit_job(
+            last["where"],
+            model,
+            last["material"],
+            last["quality"] or "standard",
+            copies=int(last["copies"] or 1),
+            plate=int(last["plate"] or 1),
+            offer=False,
+            file=last["page_file"] or None,
+        )
+    except (
+        ValueError,
+        KeyError,
+        FileNotFoundError,
+        httpx.HTTPError,
+        RuntimeError,
+    ) as e:
+        return HTMLResponse(
+            stage.form(_stage_choices(), csrf, token, str(e) or type(e).__name__, last),
+            status_code=400,
+        )
+    JOBS.kv_set(f"staged_page:{job['id']}", "1")
+    JOBS.note(job["id"], "staged from the /stage page")
+    return HTMLResponse(stage.sliced(job, csrf, token))
+
+
+async def _staged_job(request: Request) -> tuple[dict[str, Any] | None, str | None]:
+    form, refused = await _stage_form(request)
+    if refused:
+        return None, refused
+    job_id = str(form.get("job_id") or "")
+    if not JOBS.kv_get(f"staged_page:{job_id}"):
+        return None, "that job was not staged from this page"
+    job = JOBS.get(job_id)
+    if job["state"] != "staged" or job.get("offer"):
+        return (
+            None,
+            f"{job['name']} is already {'queued' if job.get('offer') else job['state']}",
+        )
+    return job, None
+
+
+async def stage_queue(request: Request) -> HTMLResponse:
+    token = request.query_params.get("token")
+    job, why = await _staged_job(request)
+    if job is None:
+        return HTMLResponse(stage.done(why or "", token), status_code=400)
+    JOBS.note(job["id"], "queued from the /stage page", offer=1)
+    res = await advance_queue(job["printer"])
+    if res.get("action") == "offered" and res.get("job_id") == job["id"]:
+        msg = f"{job['name']} is offered on {job['printer']}: tap Start on the phone."
+    else:
+        msg = f"{job['name']} is queued on {job['printer']}; it is offered when the printer is free ({res.get('why') or 'next in line'})."
+    return HTMLResponse(stage.done(msg, token))
+
+
+async def stage_discard(request: Request) -> HTMLResponse:
+    token = request.query_params.get("token")
+    job, why = await _staged_job(request)
+    if job is None:
+        return HTMLResponse(stage.done(why or "", token), status_code=400)
+    await skip_job(job["id"], "discarded on the /stage page")
+    return HTMLResponse(stage.done(f"{job['name']} discarded.", token))
+
+
 async def expire_approvals(now: float | None = None) -> list[str]:
     """Return unanswered start requests older than the TTL to staged and withdraw their phone notifications."""
     now = now or time.time()
@@ -2370,6 +2496,9 @@ app = Starlette(
     routes=[
         Route("/healthz", health),
         Route("/status", status_page),
+        Route("/stage", stage_page, methods=["GET", "POST"]),
+        Route("/stage/queue", stage_queue, methods=["POST"]),
+        Route("/stage/discard", stage_discard, methods=["POST"]),
         Route("/obico/webhook", obico_webhook, methods=["POST"]),
         Route("/upload", upload, methods=["POST"]),
         Route("/ha/action", ha_action, methods=["POST"]),

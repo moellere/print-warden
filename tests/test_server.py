@@ -1073,3 +1073,103 @@ def test_status_page_shows_open_batches():
         and "1 failed" in html
         and "2h 00m to go" in html
     )
+
+
+def test_stage_slices_queues_and_discards_but_never_starts(
+    client, clean_queues, monkeypatch
+):
+    import re
+
+    from print_warden import stage
+
+    assert client.get("/stage").status_code == 401
+    page = client.get("/stage?token=test-token")
+    assert page.status_code == 200 and "testp" in page.text and "PLA" in page.text
+    csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page.text)[1]
+    assert stage.csrf_ok(csrf, server.CFG.api_token)
+    calls = []
+
+    async def submit(where, model, material, quality, **kw):
+        calls.append((where, model, material, kw["offer"], kw["copies"]))
+        j = server.JOBS.create(printer="testp", name="part", material="PLA", quality="standard",
+                               remote_name="warden/p.gcode", offer=False, est_seconds=3720,
+                               filament_g=12.4, slice_blockers=[], warnings=["<b>careful</b>"])  # fmt: skip
+        return server._job_public(server.JOBS.transition(j["id"], "staged", "test"))
+
+    offered = []
+
+    async def advance(printer):
+        offered.append(printer)
+        return {"action": "offered", "job_id": server.JOBS.queue(printer)[0]["id"]}
+
+    monkeypatch.setattr(server, "_submit_job", submit)
+    monkeypatch.setattr(server, "advance_queue", advance)
+    form = {
+        "where": "testp",
+        "material": "PLA",
+        "quality": "standard",
+        "copies": "2",
+        "plate": "1",
+    }
+    bad = client.post("/stage?token=test-token", data={**form, "csrf": "0" * 64},
+                      files={"file": ("part.stl", b"solid x")})  # fmt: skip
+    assert bad.status_code == 403 and calls == []
+    other = client.post("/stage?token=test-token", data={**form, "csrf": csrf},
+                        files={"file": ("part.stl", b"solid x")},
+                        headers={"origin": "http://evil.example"})  # fmt: skip
+    assert other.status_code == 403 and calls == []
+    ok = client.post("/stage?token=test-token", data={**form, "csrf": csrf},
+                     files={"file": ("part.stl", b"solid x")})  # fmt: skip
+    assert ok.status_code == 200, ok.text
+    assert calls == [("testp", "part.stl", "PLA", False, 2)]
+    assert (
+        "1h 02m" in ok.text
+        and "&lt;b&gt;careful" in ok.text
+        and "Add to queue" in ok.text
+    )
+    job_id = re.search(r'name="job_id" value="(\w+)"', ok.text)[1]
+    assert not server.JOBS.get(job_id).get("offer")
+    q = client.post(
+        "/stage/queue?token=test-token", data={"csrf": csrf, "job_id": job_id}
+    )
+    assert q.status_code == 200 and "tap Start on the phone" in q.text
+    assert server.JOBS.get(job_id)["offer"] and offered == ["testp"]
+    again = client.post(
+        "/stage/queue?token=test-token", data={"csrf": csrf, "job_id": job_id}
+    )
+    assert again.status_code == 400 and "already queued" in again.text
+    # a job staged elsewhere is not this page's to touch
+    elsewhere = server.JOBS.transition(
+        server.JOBS.create(printer="testp", name="chat", material="PLA", offer=False)[
+            "id"
+        ],
+        "staged",
+        "x",
+    )
+    nope = client.post(
+        "/stage/discard?token=test-token",
+        data={"csrf": csrf, "job_id": elsewhere["id"]},
+    )
+    assert (
+        nope.status_code == 400
+        and server.JOBS.get(elsewhere["id"])["state"] == "staged"
+    )
+    ok2 = client.post(
+        "/stage?token=test-token", data={**form, "csrf": csrf, "url": "https://x/y.stl"}
+    )
+    job2 = re.search(r'name="job_id" value="(\w+)"', ok2.text)[1]
+    gone = client.post(
+        "/stage/discard?token=test-token", data={"csrf": csrf, "job_id": job2}
+    )
+    assert gone.status_code == 200 and server.JOBS.get(job2)["state"] == "skipped"
+    empty = client.post("/stage?token=test-token", data={**form, "csrf": csrf})
+    assert empty.status_code == 400 and "choose a file or give a link" in empty.text
+
+
+def test_csrf_tokens_expire_after_the_next_hour():
+    from print_warden import stage
+
+    t = stage.csrf_token("k", now=10_000)
+    assert stage.csrf_ok(t, "k", now=10_000 + 3600)
+    assert not stage.csrf_ok(t, "k", now=10_000 + 2 * 3600)
+    assert not stage.csrf_ok(t, "other", now=10_000)

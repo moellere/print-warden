@@ -11,6 +11,9 @@
   longest first to whichever would finish soonest, each an ordinary tap-started job; the result checks Spoolman stock
   for the batch. `batch_status`, saved batches (`save_batch`, `queue_saved_batch`, `list_saved_batches`,
   `delete_saved_batch`), and open batches on `/status`. New job column `batch_id`.
+- `/stage`: add a print from a browser (file or link, where, material, quality, copies, plate): slice, see the
+  preview, then Add to queue (offered on the phone as usual) or Discard. It never starts, cancels or waives; forms
+  carry a CSRF token and must come from the page's own origin.
 - `print-warden check` validates `THINGIVERSE_TOKEN` when set; `--sites` also checks that Printables still answers the
   warden's query.
 
