@@ -212,3 +212,63 @@ Found by slicing for real (OrcaSlicer 2.4.2):
   bundle, sliced a cube with the generated block. All but one had no blocker: the Anycubic Kobra 2 Pro's start gcode
   purges at Y226 on a 220 mm printable area, which the extents check blocks.
 
+
+## Phase 19 — Profile and check polish ✅ (build)
+
+- A per-printer `purge_zone`: the start gcode's purge may extrude there, outside the printable area, while the part
+  stays strictly on it (bundled start gcode such as the Anycubic Kobra 2 Pro's purges at Y226 on a 220 mm area).
+- `print-warden profiles diff`: a snapshot of every preset printers.yaml uses, flattened; after an Orca upgrade, the
+  settings that changed per printer, so a profile change does not alter prints silently.
+- `print-warden check` validates the Thingiverse token, and with `--sites` that Printables still takes the warden's
+  query.
+
+Done when: the Kobra 2 Pro slices without a waiver, and an Orca upgrade lists what changed per printer.
+
+Found by slicing for real: after `G28` the Kobra's X is unknown to the gcode, so only the purge line's end is known;
+the suggested zone is therefore the strip along the bed edge the purge crossed, not the purge's own (partial) box.
+With `purge_zone: [0, 222, 220, 230]` the Kobra 2 Pro's bundled profile slices with no blocker.
+
+## Phase 20 — Multi-plate projects and batches ✅ (build)
+
+- A 3MF with several plates becomes one batch of jobs, routed across printers like `submit_split`; each job still
+  starts on its own tap.
+- Saved batches ("the usual set") re-queued with one call; a batch's combined estimate and filament checked against
+  Spoolman stock.
+
+Done when: a 4-plate project is queued in one call, prints across both printers, and its batch shows progress.
+
+Each plate is timed on every printer as the job itself will be sliced (the project, its printer's settings), so the
+real job usually comes from the slice cache. Assignment is the longest-processing-time rule: longest first, each to
+the printer that would finish it soonest.
+
+## Phase 21 — A staging page ✅ (build)
+
+- `/status` gains upload, material and quality, a slice preview and "add to queue". Nothing on it starts, cancels or
+  waives: those stay on the phone tap. Same token, plus a CSRF token on its forms.
+
+Done when: someone on the household network uploads an STL and it appears as an offer on the phone.
+
+Slicing stages the job without queueing it, so a look at the preview comes before the queue; Add to queue and Discard
+only touch jobs the page staged. The CSRF token is an HMAC of the hour (a per-process secret when the warden runs
+without a token, which is when it matters most).
+
+## Phase 22 — Real energy and cost per print ✅ (build)
+
+- Optional `power_entity` per printer (a Home Assistant energy or power sensor): the kWh of each print, times a
+  configured or live price, is a cost on the job; `printer_stats` splits filament from energy and shows idle heat-up.
+  The cheap-power hold uses the measured draw.
+
+Done when: a print's cost includes measured kWh within a few percent of the sensor's own total.
+
+An energy counter is read at start, first layer and end; a power sensor is sampled every 30 s and integrated, with the
+running total in the job store so a restart mid-print keeps it. The hold uses a printer's mean draw over the last
+90 days of metered prints. A measured price per print uses the mean of the price at start and end, not an hourly
+integral: close enough for a price that changes hourly and a print of a few hours, and said so here.
+
+## Phase 23 — Multi-material (MMU and toolchangers)
+
+- Klipper MMUs (Happy Hare / ERCF) and toolchangers: a filament per gate or tool, each its own Spoolman spool;
+  per-tool material checks; Orca's multi-filament slicing with flush volumes from its profiles; spool usage per tool.
+- Only if a multi-material printer is (or will be) in use: the MMU behaviour needs real hardware to validate.
+
+Done when: a two-colour print is sliced, checked, started by tap and deducts both spools.

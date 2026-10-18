@@ -173,6 +173,43 @@ async def _printables(url: str, model: str, client: httpx.AsyncClient) -> Page:
     )
 
 
+async def site_problems(
+    client: httpx.AsyncClient, thingiverse_token: str | None, printables: bool
+) -> dict[str, str | None]:
+    """Per site, why model pages from it would fail now (None when they work). Thingiverse: the token is accepted.
+    Printables: the warden's own query still validates against its schema; GraphQL checks the fields before it looks
+    the model up, so a missing model still proves the query."""
+    out: dict[str, str | None] = {}
+    if thingiverse_token:
+        try:
+            r = await client.get(
+                f"{THINGIVERSE_API}/users/me",
+                headers={"Authorization": f"Bearer {thingiverse_token}"},
+            )
+            out["thingiverse"] = (
+                None
+                if r.status_code == 200
+                else f"token refused (HTTP {r.status_code})"
+            )
+        except httpx.HTTPError as e:
+            out["thingiverse"] = f"unreachable: {type(e).__name__}"
+    if printables:
+        try:
+            r = await client.post(
+                PRINTABLES_API, json={"query": _PRINT_QUERY, "variables": {"id": "0"}}
+            )
+            body = r.json() if r.status_code == 200 else {}
+            errors = body.get("errors") if isinstance(body, dict) else None
+            out["printables"] = (
+                None
+                if r.status_code == 200 and "data" in body and not errors
+                else f"its API no longer takes the warden's query (HTTP {r.status_code}: {str(errors)[:200]})"
+            )
+        except (httpx.HTTPError, ValueError) as e:
+            out["printables"] = f"unreachable: {type(e).__name__}"
+    return out
+
+
 class _Links(HTMLParser):
     def __init__(self) -> None:
         super().__init__()

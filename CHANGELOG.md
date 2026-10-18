@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- `purge_zone` per printer: the start gcode's purge may extrude there, outside the printable area; the part is still
+  held to the printable area. The extents check now tells the start gcode's purge apart from the part (Orca's `;TYPE:`
+  marks) and, without a zone, suggests one.
+- `print-warden profiles diff [--accept]`: snapshot the presets printers.yaml uses and list what changed after an
+  OrcaSlicer upgrade; `print-warden check` warns while they differ.
+- Batches: `submit_batch(where, items)` queues several prints (a 3MF's plates with `plates: "all"`) across printers,
+  longest first to whichever would finish soonest, each an ordinary tap-started job; the result checks Spoolman stock
+  for the batch. `batch_status`, saved batches (`save_batch`, `queue_saved_batch`, `list_saved_batches`,
+  `delete_saved_batch`), and open batches on `/status`. New job column `batch_id`.
+- `/stage`: add a print from a browser (file or link, where, material, quality, copies, plate): slice, see the
+  preview, then Add to queue (offered on the phone as usual) or Discard. It never starts, cancels or waives; forms
+  carry a CSRF token and must come from the page's own origin.
+- Energy per print: a printer's `power_entity` (an HA kWh counter or W sensor) gives each job `energy_kwh`,
+  `heatup_kwh` (before the first layer) and `energy_cost` (`energy.price_per_kwh` or a price entity);
+  `printer_stats` reports kWh and energy cost per month and mean draw and heat-up per printer; `check` validates the
+  entity's unit. `policy.cheap_power.min_kwh` holds by expected energy (measured draw) instead of hours.
+- `print-warden check` validates `THINGIVERSE_TOKEN` when set; `--sites` also checks that Printables still answers the
+  warden's query.
+
 ## 0.5.0
 
 Phases 13–18. No config changes are required: new job columns are added on start-up, and every new setting is

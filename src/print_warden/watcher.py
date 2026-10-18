@@ -17,6 +17,7 @@ from . import (
     bedcheck,
     calibration,
     cameras,
+    energy,
     footprint,
     moonraker,
     outcome,
@@ -93,6 +94,12 @@ class PrinterWatcher:
         self.job_dir: Path | None = None
         self.last_alert: dict[str, float] = {}
         self.last_update = 0.0
+        self.meter = (
+            energy.Meter(jobs, self._read_power)
+            if printer.power_entity and ha and jobs
+            else None
+        )
+        self._metering: str | None = None
 
     async def run(self) -> None:
         await self.mr.run()
@@ -141,6 +148,8 @@ class PrinterWatcher:
         except ValueError as e:
             log.warning("%s job tracking: %s", self.p.name, e)
             job = None
+        if self.meter:
+            self._meter_event(ev, job)
         frames = self.job_dir
         deferred = False
         if ev.kind in FINAL_KINDS:
@@ -172,6 +181,57 @@ class PrinterWatcher:
             (ev.data.get("obico") or {}).get("event") or {}
         ).get("print_paused"):
             self._spawn(self._pause_prompt(ev))
+
+    async def _read_power(self) -> dict[str, Any] | None:
+        assert self.ha and self.p.power_entity
+        return await self.ha.state_full(self.p.power_entity)
+
+    async def _price(self) -> float | None:
+        e = self.cfg.energy
+        if e.price_per_kwh is not None:
+            return e.price_per_kwh
+        if e.price_entity and self.ha:
+            try:
+                return float(await self.ha.state(e.price_entity) or "")
+            except ValueError:
+                return None
+        return None
+
+    def _meter_event(self, ev: Event, job: dict[str, Any] | None) -> None:
+        """Start metering a tracked print, mark its first layer, and settle it at the end."""
+        if ev.kind == "print_started" and job:
+            self._spawn(self._meter_job(job["id"], start=True))
+        elif ev.kind == "layer_changed" and self.jobs:
+            active = self.jobs.find_active(self.p.name)
+            if active:
+                assert self.meter
+                self._spawn(self.meter.first_layer(active["id"]))
+                if self._metering != active["id"]:
+                    # the warden restarted mid-print: carry on sampling what was started
+                    self._spawn(self._meter_job(active["id"], start=False))
+        elif ev.kind in FINAL_KINDS and job:
+            self._spawn(self._meter_stop(job["id"]))
+
+    async def _meter_job(self, job_id: str, start: bool) -> None:
+        assert self.meter and self.jobs
+        if start:
+            await self.meter.start(job_id, await self._price())
+        if self.jobs.kv_get(f"energy:{job_id}") is None:
+            return
+        self._metering = job_id
+        try:
+            while self.jobs.get(job_id)["state"] == "printing":
+                await asyncio.sleep(energy.SAMPLE_S)
+                await self.meter.sample(job_id)
+        finally:
+            if self._metering == job_id:
+                self._metering = None
+
+    async def _meter_stop(self, job_id: str) -> None:
+        assert self.meter and self.jobs
+        fields = await self.meter.stop(job_id, await self._price())
+        if fields:
+            self.jobs.note(job_id, f"used {fields['energy_kwh']:.2f} kWh", **fields)
 
     def _track_job(self, ev: Event) -> dict[str, Any] | None:
         if not self.jobs:

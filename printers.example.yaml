@@ -22,6 +22,7 @@ printers:
     auto_start: false        # true: start newly staged jobs without a tap when the bed check allows it
     auto_start_hours: "08:00-22:00"    # local time; unattended starts only inside this window
     finish_window: "07:00-23:00"       # unattended starts only if the estimated finish falls inside
+    # purge_zone: [0, 220, 220, 228]   # bed mm the start gcode may purge in, outside the printable area
     slicer:                  # OrcaSlicer preset names; `print-warden profiles block "<printer>"` writes this block
       machine: Artillery Sidewinder X4 Plus 0.4 nozzle
       processes:
@@ -55,6 +56,7 @@ printers:
     moonraker: http://x1.local:7125
     track_spool_usage: true   # false if this Moonraker's own [spoolman] component already reports usage
     power_device: printer     # Moonraker [power printer] (Sonoff); off between prints, MCU stays on USB power.
+    # power_entity: sensor.x4_plug_energy   # HA kWh counter or W sensor on the plug: kWh and energy cost per print
                               # Start = power on, FIRMWARE_RESTART until Klipper is ready (two after MCU comm loss), then print.
     cameras:
       bed: http://x1.local/webcam/?action=snapshot   # crowsnest PiCam
@@ -120,6 +122,10 @@ policy:
   #   entity: sensor.electricity_price
   #   max_price: 0.20
   #   min_hours: 3
+  #   min_kwh: 0.5            # with a metered printer: hold by expected kWh instead of hours
+
+# energy:
+#   price_per_kwh: 0.28       # or price_entity (defaults to policy.cheap_power.entity)
 
 storage:
   dir: ./data          # events.db + snapshots/

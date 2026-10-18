@@ -78,6 +78,8 @@ class Printer:
     bed_check: BedCheck | None = None
     auto_start_hours: str | None = None
     finish_window: str | None = None
+    purge_zone: tuple[float, float, float, float] | None = None
+    power_entity: str | None = None
     maintenance: dict[str, Interval] = field(default_factory=dict)
 
     @property
@@ -95,6 +97,13 @@ class CheapPower:
     entity: str
     max_price: float
     min_hours: float = 3.0
+    min_kwh: float | None = None
+
+
+@dataclass(frozen=True)
+class Energy:
+    price_per_kwh: float | None = None
+    price_entity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +155,7 @@ class Config:
     quiet_states: tuple[str, ...] = ("on",)
     upkeep: Upkeep = Upkeep()
     cheap_power: CheapPower | None = None
+    energy: Energy = Energy()
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -190,6 +200,18 @@ def _bed_check(raw: dict[str, Any] | None) -> BedCheck | None:
     )
 
 
+def _purge_zone(name: str, raw: Any) -> tuple[float, float, float, float] | None:
+    """[x0, y0, x1, y1] in bed mm: where the printer's start gcode may purge outside the printable area."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or len(raw) != 4:
+        raise ValueError(f"{name}: purge_zone must be [x0, y0, x1, y1]")
+    x0, y0, x1, y1 = (float(v) for v in raw)
+    if x0 > x1 or y0 > y1:
+        raise ValueError(f"{name}: purge_zone needs x0 <= x1 and y0 <= y1")
+    return x0, y0, x1, y1
+
+
 def _slicer(raw: dict[str, Any]) -> SlicerConfig:
     raw = dict(raw)
     if "blocking_warnings" in raw:
@@ -225,6 +247,8 @@ def load(path: str | Path) -> Config:
             bed_check=_bed_check(p.get("bed_check")),
             auto_start_hours=p.get("auto_start_hours") or None,
             finish_window=p.get("finish_window") or None,
+            purge_zone=_purge_zone(name, p.get("purge_zone")),
+            power_entity=p.get("power_entity") or None,
             maintenance=parse_maintenance(p.get("maintenance")),
         )
     ha = None
@@ -280,9 +304,17 @@ def load(path: str | Path) -> Config:
             entity=str(cp["entity"]),
             max_price=float(cp["max_price"]),
             min_hours=float(cp.get("min_hours", 3)),
+            min_kwh=float(cp["min_kwh"]) if cp.get("min_kwh") is not None else None,
         )
         if (cp := pol.get("cheap_power"))
         else None,
+        energy=Energy(
+            price_per_kwh=float(en["price_per_kwh"])
+            if (en := raw.get("energy") or {}).get("price_per_kwh") is not None
+            else None,
+            price_entity=en.get("price_entity")
+            or ((pol.get("cheap_power") or {}).get("entity")),
+        ),
         upkeep=Upkeep(
             reorder_below_g=float(
                 (raw.get("upkeep") or {}).get("reorder_below_g", 200)

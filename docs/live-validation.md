@@ -78,6 +78,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 24. With `policy.cheap_power` and the price above `max_price`: a long job is not offered (`advance_queue` says why);
     when the price drops, it is offered within the hour.
 
+35. `submit_batch("<location>", [{"model": "<4-plate project>.3mf", "material": "PLA", "plates": "all"}],
+    name="test batch")` with both printers idle and PLA loaded. Expect: four jobs across the two printers, the
+    longest plate on the faster printer; each starts only on its tap; `/status` shows "test batch: n of 4 done".
+
 ## 9. Calibration
 
 26. `set_active_spool`, then `calibrate(printer, "temp")`; tap Start. Expect: the tower changes temperature at 8, 16,
@@ -106,6 +110,24 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 32. Export a printer or filament preset from OrcaSlicer (File → Export → Export Preset Bundle), then
     `print-warden profiles import <bundle>` and slice with the printed block. Expect: the job's gcode carries your
     preset's settings (e.g. its nozzle temperature).
+
+## 12. Checks and profile changes
+
+33. `print-warden profiles diff` (takes the snapshot), then after the next OrcaSlicer image upgrade run it again.
+    Expect: either "no changes" or the changed settings per printer; `print-warden check` warns until `--accept`.
+34. `print-warden check --sites`. Expect: `thingiverse` ok when `THINGIVERSE_TOKEN` is set, `printables` ok.
+
+## 13. Staging page
+
+36. On a phone, open `http://<host>:8720/stage?token=…`, upload an STL, pick a printer, PLA, standard; Slice. Expect:
+    the preview and estimate within a minute. Add to queue: the phone gets the Start offer (or, if the printer is busy,
+    the page says it is queued). A second form opened in another tab and posted after two hours is refused.
+
+## 14. Energy
+
+37. Set `power_entity` on one printer (an HA energy counter on its plug, or a power sensor), `print-warden check`
+    (the entity reads as an energy or power sensor), then print. Expect: `print_history` shows `energy_kwh` within a
+    few percent of the counter's rise in HA over the print, `heatup_kwh` well under it, and an `energy_cost`.
 
 ## Sign-off
 
@@ -144,3 +166,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 30 | Printables page → named file printed, license on the job | | |
 | 31 | Profile from Klipper: block, check, a cube printed | | |
 | 32 | Imported Orca preset bundle sliced with its settings | | |
+| 33 | `profiles diff` after an Orca upgrade | | |
+| 34 | `check --sites`: Thingiverse token and Printables query | | |
+| 35 | A 4-plate project as one batch across both printers | | |
+| 36 | `/stage`: upload, slice, queue, offer on the phone | | |
+| 37 | kWh per print within a few percent of the plug's counter | | |

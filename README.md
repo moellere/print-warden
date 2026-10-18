@@ -55,6 +55,13 @@ filament's), the cost. `printer_stats(days=90)` reports estimate accuracy per pr
 printer / material / quality with the commonest reasons, and prints, hours, grams and cost per month;
 `print_history(printer, days, state)` lists the jobs behind it.
 
+**Energy.** With a printer's `power_entity` (a Home Assistant sensor on its plug), every print records its kWh, the
+heat-up before the first layer, and an energy cost. An energy counter (kWh, Wh) gives the exact rise from start to
+end; a power sensor (W, kW) is sampled every 30 s and integrated, and a gap over 5 minutes (the warden was down)
+counts nothing. The price is `energy.price_per_kwh`, or the mean of `energy.price_entity` (default: the cheap-power
+entity) at start and end. `printer_stats` adds kWh and energy cost per month and, per printer, mean draw while
+printing and mean heat-up; `print-warden check` confirms each power entity reports a unit it can use.
+
 Klipper knows a print completed, not whether it is any good. After every print the phone gets the end photo with
 **Good** / **Failed** (a cancelled or errored print goes straight to the reasons): adhesion, spaghetti, layer shift,
 under-extrusion, other. The label (or `label_print(job_id, result, labelled_by, reason)` from chat) wins over how the
@@ -162,9 +169,18 @@ go to whichever printer would finish its share soonest, within what fits on its 
 offered and started by tap or `auto_start` like any other. The result shows the expected finish against one printer
 doing it all.
 
+**Batches.** `submit_batch(where, items)` queues several prints at once; each item is `{model, material, quality?,
+plates?, copies?, file?, overrides?, name?}`, and `plates: "all"` makes one job per plate of a 3MF project. Every job
+is timed on each printer that can take it (material loaded, profile, fits its plate); the longest go first, each to the
+printer that would finish it soonest. Every job is ordinary: queued, offered and started by tap or `auto_start`. The
+result says when each printer should be done and whether Spoolman's stock covers the batch after the rest of the
+queue. `batch_status(batch_id)` shows progress (also on `/status`); `save_batch` / `submit_batch(..., save_as=...)`
+keep a set ("the usual set") for `queue_saved_batch(name)`; `list_saved_batches`, `delete_saved_batch`.
+
 **Cheap power.** With `policy.cheap_power` (`entity`, `max_price`, `min_hours`), the offer of a job expected to run at
-least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. An unreadable price
-never holds a job, and an explicit `request_start` is never held.
+least `min_hours` waits while the price entity reads above `max_price`, and is retried hourly. With `min_kwh` and a
+metered printer, the job's expected energy (its corrected estimate times the printer's measured draw over 90 days)
+decides instead of its hours. An unreadable price never holds a job, and an explicit `request_start` is never held.
 
 **Slice checks.** Before slicing, the model's bounding box (rotated 90° if that fits) and `copies` are checked against
 the machine's printable area and height; a model that cannot fit is refused. After slicing, the extrusion extents are
@@ -224,8 +240,15 @@ the macro reads, e.g. `BED_TEMP` / `EXTRUDER_TEMP`); it inherits Orca's generic 
 processes and Orca's universal filaments apply. Without a start macro it heats, homes and draws a purge line; check that
 start gcode before the first print. Then run `print-warden check`.
 
-Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm bed);
-the warden's extents check blocks those jobs. Waive it per job, or import a copy of the printer with your own purge.
+Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm
+bed). The part must always extrude on the printable area; the start gcode's purge may also use the printer's
+`purge_zone` (`[x0, y0, x1, y1]` in bed mm, a strip the head reaches). Without one, the job is blocked and the
+blocker suggests the zone to set: check that the printer really reaches it before setting it.
+
+`print-warden profiles diff` takes a snapshot of every preset printers.yaml uses, flattened; run it again after an
+OrcaSlicer upgrade to see each setting that changed per printer, then `--accept` the new snapshot.
+`print-warden check` warns while the presets differ from the snapshot. `check` also validates `THINGIVERSE_TOKEN`
+when it is set, and with `--sites` that Printables still answers the warden's query.
 
 ## Run
 
@@ -244,7 +267,7 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload`, `/status` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status`, `/stage` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
@@ -253,6 +276,12 @@ Access:
 `/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
 progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
 dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
+
+`/stage` (also opened with `?token=…`) adds a print from a browser: a file or a link, where, material, quality,
+copies and 3MF plate. Slice shows the preview, estimate, warnings and blockers; **Add to queue** puts it in the
+printer's queue, where it is offered on the phone like any job, and **Discard** drops it. The page never starts,
+cancels or waives anything, and its buttons only act on jobs staged from it. Forms carry a CSRF token (valid for up to
+two hours) and must be posted from the page's own origin.
 
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
@@ -288,8 +317,9 @@ src/print_warden/
   calibration.py  temperature / flow / pressure-advance towers and their results
   intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
   status.py     the read-only /status page
+  stage.py      the /stage page: slice and queue from a browser, never start
   profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
-  server.py     MCP tools + HTTP routes (/upload, /status, /obico/webhook, /ha/action, /files, /healthz)
+  server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 
 ## Develop

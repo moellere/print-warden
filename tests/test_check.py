@@ -206,3 +206,51 @@ def test_main_reports_a_bad_config(tmp_path, capsys):
     bad.write_text("printers: [")
     assert check.main([str(bad)]) == 1
     assert capsys.readouterr().out.startswith("fail")
+
+
+async def test_model_sites_only_when_asked(tmp_path, monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(check.shutil, "which", lambda name: f"/usr/bin/{name}")
+    cfg = _cfg(tmp_path)
+    results = await _run(cfg, _handler())
+    assert not [r for r in results if r.area in ("thingiverse", "printables")]
+    cfg = dataclasses.replace(cfg, thingiverse_token="t")
+
+    async def probe(m):
+        return None
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler())) as c:
+        results = await check.run(cfg, c, probe, sites=True)
+    sites = {
+        r.area: r.status for r in results if r.area in ("thingiverse", "printables")
+    }
+    assert sites == {"thingiverse": check.WARN, "printables": check.WARN}
+
+
+async def test_power_entity_needs_a_known_unit(tmp_path, monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(check.shutil, "which", lambda name: f"/usr/bin/{name}")
+    cfg = _cfg(tmp_path)
+    (name, p), *_ = cfg.printers.items()
+    cfg = dataclasses.replace(
+        cfg, printers={name: dataclasses.replace(p, power_entity="sensor.plug")}
+    )
+    base = _handler()
+
+    def handler(unit):
+        def h(r):
+            if str(r.url) == "http://ha/api/states/sensor.plug":
+                return httpx.Response(
+                    200,
+                    json={"state": "12", "attributes": {"unit_of_measurement": unit}},
+                )
+            return base(r)
+
+        return h
+
+    ok = await _run(cfg, handler("W"))
+    assert any("power entity sensor.plug: power sensor" in r.detail for r in ok)
+    bad = await _run(cfg, handler("A"))
+    assert any(r.status == check.FAIL and "not in kWh/Wh/W/kW" in r.detail for r in bad)

@@ -40,3 +40,21 @@ def test_power_hold():
     assert schedule.power_hold(1 * H, "0.31", 0.2, 3) is None
     assert schedule.power_hold(4 * H, None, 0.2, 3) is None
     assert schedule.power_hold(4 * H, "unavailable", 0.2, 3) is None
+
+
+def test_assign_puts_long_jobs_first_on_the_soonest_printer():
+    durations = {
+        "a": {"fast": 100, "slow": 200},
+        "b": {"fast": 60, "slow": 120},
+        "c": {"fast": 60, "slow": 120},
+        "big": {"slow": 300},  # only fits the slow printer
+    }
+    plan, done = schedule.assign(durations, {"fast": 0, "slow": 0})
+    assert plan == {"big": "slow", "a": "fast", "b": "fast", "c": "fast"}
+    assert done == {"fast": 220, "slow": 300}
+    busy, _ = schedule.assign(
+        {"x": {"fast": 100, "slow": 200}}, {"fast": 500, "slow": 0}
+    )
+    assert busy == {"x": "slow"}
+    with pytest.raises(ValueError, match="fits none"):
+        schedule.assign({"x": {}}, {})

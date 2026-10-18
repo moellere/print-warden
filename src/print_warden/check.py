@@ -1,7 +1,8 @@
 """`print-warden check`: is this config ready to run, before it is deployed.
 
-Read-only: every probe is a GET (Moonraker, cameras, Home Assistant, Spoolman), a profile resolution, a file test or
-an MQTT connect-and-disconnect. Nothing is printed, moved, heated or published. Each result is ok, warn (works, but
+Read-only: every probe is a GET (Moonraker, cameras, Home Assistant, Spoolman, Thingiverse when a token is set), a
+profile resolution, a file test or an MQTT connect-and-disconnect; with `--sites`, also one GraphQL query to
+Printables for a model that does not exist. Nothing is printed, moved, heated or published. Each result is ok, warn (works, but
 something an operator probably wants is missing) or fail (the warden will not do its job); the exit code is 1 when
 anything fails.
 """
@@ -21,7 +22,7 @@ import aiomqtt
 import httpx
 import yaml
 
-from . import config
+from . import config, energy
 from .slicer import flatten, search_dirs
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -92,6 +93,29 @@ def _slicer(cfg: config.Config) -> list[Result]:
     if not shutil.which("xvfb-run"):
         out.append(Result(FAIL, "slicer", "xvfb-run not found; Orca's CLI needs it"))
     return out
+
+
+def _snapshot(cfg: config.Config) -> list[Result]:
+    from .profiles import changed_since_snapshot
+
+    changes = changed_since_snapshot(cfg)
+    if changes is None:
+        return [
+            Result(
+                OK,
+                "profiles",
+                "no profile snapshot yet: `print-warden profiles diff` takes one, so an Orca upgrade's changes show",
+            )
+        ]
+    if changes:
+        return [
+            Result(
+                WARN,
+                "profiles",
+                f"{len(changes)} preset setting(s) changed since the snapshot; `print-warden profiles diff`",
+            )
+        ]
+    return [Result(OK, "profiles", "presets match the snapshot")]
 
 
 def _profiles(cfg: config.Config, p: config.Printer) -> list[Result]:
@@ -244,6 +268,24 @@ async def _home_assistant(c: httpx.AsyncClient, cfg: config.Config) -> list[Resu
             if found
             else Result(FAIL, "home assistant", f"{label} {entity} does not exist")
         )
+    for p in cfg.printers.values():
+        if not p.power_entity:
+            continue
+        r = await c.get(f"{ha.url}/api/states/{p.power_entity}", headers=h)
+        reading = energy.parse(r.json()) if r.status_code == 200 else None
+        out.append(
+            Result(
+                OK,
+                "home assistant",
+                f"{p.name} power entity {p.power_entity}: {reading.kind} sensor",
+            )
+            if reading
+            else Result(
+                FAIL,
+                "home assistant",
+                f"{p.name} power entity {p.power_entity} is missing, unavailable or not in kWh/Wh/W/kW",
+            )
+        )
     return out
 
 
@@ -262,6 +304,20 @@ async def _spoolman(c: httpx.AsyncClient, cfg: config.Config) -> list[Result]:
     except httpx.HTTPError as e:
         return [Result(FAIL, "spoolman", f"{cfg.spoolman_url}: {_why(e)}")]
     return [Result(OK, "spoolman", cfg.spoolman_url)]
+
+
+async def _sites(
+    c: httpx.AsyncClient, cfg: config.Config, printables: bool
+) -> list[Result]:
+    from .intake import site_problems
+
+    found = await site_problems(c, cfg.thingiverse_token, printables)
+    return [
+        Result(WARN, site, f"model pages will fail: {why}")
+        if why
+        else Result(OK, site, "model pages resolve")
+        for site, why in found.items()
+    ]
 
 
 async def _mqtt(cfg: config.Config, probe: MqttProbe) -> list[Result]:
@@ -298,6 +354,7 @@ async def run(
     cfg: config.Config,
     client: httpx.AsyncClient | None = None,
     mqtt_probe: MqttProbe = _mqtt_connect,
+    sites: bool = False,
 ) -> list[Result]:
     own = client is None
     c = client or httpx.AsyncClient(timeout=10, follow_redirects=True)
@@ -311,9 +368,11 @@ async def run(
         for p in cfg.printers.values():
             results += _profiles(cfg, p)
             results += await _printer(c, p)
+        results += _snapshot(cfg)
         results += await _home_assistant(ha_c, cfg)
         results += await _spoolman(c, cfg)
         results += await _mqtt(cfg, mqtt_probe)
+        results += await _sites(c, cfg, sites)
         return results
     finally:
         if own:
@@ -323,6 +382,8 @@ async def run(
 
 
 def main(argv: list[str]) -> int:
+    sites = "--sites" in argv
+    argv = [a for a in argv if a != "--sites"]
     path = argv[0] if argv else os.environ.get("PRINT_WARDEN_CONFIG", "printers.yaml")
     try:
         cfg = config.load(path)
@@ -330,7 +391,7 @@ def main(argv: list[str]) -> int:
         print(f"fail  config        {path}: {_why(e)}")
         return 1
     print(f"ok    config        {path}: {len(cfg.printers)} printer(s)")
-    results = asyncio.run(run(cfg))
+    results = asyncio.run(run(cfg, sites=sites))
     for r in results:
         print(f"{r.status:<5} {r.area:<13} {r.detail}")
     fails = sum(r.status == FAIL for r in results)

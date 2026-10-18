@@ -254,3 +254,38 @@ def test_the_cli(lib, tmp_path, monkeypatch, capsys):
     assert (user / "machine" / "Voron.json").exists()
     assert "machine: Voron" in capsys.readouterr().out
     assert profiles.main(["--config", str(cfg), "block", "missing"]) == 1
+
+
+def test_diff_names_what_an_orca_upgrade_changed(lib, tmp_path, capsys):
+    dirs, user = lib
+    root = dirs[1].parent
+    cfg_path = tmp_path / "printers.yaml"
+    cfg_path.write_text(
+        f"printers:\n  a:\n    moonraker: http://a:7125\n    cameras: {{}}\n    slicer:\n"
+        f"      machine: A One 0.4\n      processes: {{standard: '0.20mm Standard @A'}}\n"
+        f"      filaments: {{PLA: A Generic PLA}}\n"
+        f"slicer:\n  vendor_dir: {root / 'A'}\n  user_dir: {user}\nstorage:\n  dir: {tmp_path}\n"
+    )
+    from print_warden import check, config
+
+    cfg = config.load(cfg_path)
+    assert profiles.changed_since_snapshot(cfg) is None
+    assert check._snapshot(cfg)[0].status == check.OK
+    assert profiles.main(["--config", str(cfg_path), "diff"]) == 0
+    assert "snapshot of 3 presets" in capsys.readouterr().out
+    assert profiles.main(["--config", str(cfg_path), "diff"]) == 0
+    assert "no changes" in capsys.readouterr().out
+    # an Orca upgrade changes the parent the vendor PLA inherits, and the process's layer height
+    _put(root, "OrcaFilamentLibrary", "filament", {"from": "system", "name": "fdm_filament_pla", "instantiation": "false",
+                                                   "filament_type": ["PLA"], "nozzle_temperature": ["215"]})  # fmt: skip
+    _put(root, "A", "process", {"from": "system", "name": "0.20mm Standard @A", "instantiation": "true",
+                                "layer_height": "0.18", "compatible_printers": ["A One 0.4"]})  # fmt: skip
+    changes = profiles.changed_since_snapshot(cfg)
+    assert changes == [
+        'a filament A Generic PLA: nozzle_temperature: ["210"] -> ["215"]',
+        "a process 0.20mm Standard @A: layer_height: 0.2 -> 0.18",
+    ]
+    assert check._snapshot(cfg)[0].status == check.WARN
+    assert profiles.main(["--config", str(cfg_path), "diff"]) == 1
+    assert profiles.main(["--config", str(cfg_path), "diff", "--accept"]) == 0
+    assert profiles.changed_since_snapshot(cfg) == []

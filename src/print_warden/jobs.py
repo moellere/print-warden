@@ -80,6 +80,10 @@ FIELDS = (
     "source_title",
     "author",
     "license",
+    "batch_id",
+    "energy_kwh",
+    "heatup_kwh",
+    "energy_cost",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides", "calibration")
 JSON_DEFAULTS = {"overrides": "{}", "calibration": "null"}
@@ -109,6 +113,10 @@ ADDED_COLUMNS = {
     "source_title": "text",
     "author": "text",
     "license": "text",
+    "batch_id": "text",
+    "energy_kwh": "real",
+    "heatup_kwh": "real",
+    "energy_cost": "real",
 }
 
 
@@ -247,6 +255,12 @@ class JobStore:
             args.append(printer)
         return [self.get(r[0]) for r in self._db.execute(q + " order by created", args)]
 
+    def by_batch(self, batch_id: str) -> builtins.list[dict[str, Any]]:
+        ids = self._db.execute(
+            "select id from jobs where batch_id=? order by created", (batch_id,)
+        )
+        return [self.get(r[0]) for r in ids]
+
     def find_active(self, printer: str) -> dict[str, Any] | None:
         rows = self.list(printer, 1, ("printing",))
         return rows[0] if rows else None
@@ -254,6 +268,18 @@ class JobStore:
     def kv_get(self, k: str, default: str | None = None) -> str | None:
         r = self._db.execute("select v from kv where k=?", (k,)).fetchone()
         return r[0] if r else default
+
+    def kv_prefix(self, prefix: str) -> dict[str, str]:
+        rows = self._db.execute(
+            "select k, v from kv where substr(k, 1, ?) = ? order by k",
+            (len(prefix), prefix),
+        )
+        return {k: v for k, v in rows}
+
+    def kv_delete(self, k: str) -> bool:
+        cur = self._db.execute("delete from kv where k=?", (k,))
+        self._db.commit()
+        return cur.rowcount > 0
 
     def kv_set(self, k: str, v: str) -> None:
         self._db.execute(

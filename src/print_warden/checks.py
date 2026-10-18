@@ -4,6 +4,7 @@ the operator has marked as blocking. A blocker keeps the job from starting; it n
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 from pathlib import Path
@@ -78,17 +79,29 @@ def fit_problems(
     return out
 
 
+def _grow(ext: list[float] | None, x: float, y: float) -> list[float]:
+    if ext is None:
+        return [x, y, x, y]
+    return [min(ext[0], x), min(ext[1], y), max(ext[2], x), max(ext[3], y)]
+
+
 def gcode_facts(text: str) -> dict[str, Any]:
     """Extrusion extents and the temperatures the gcode sets (ignoring the 0s that switch heaters off). Extrusion only
-    counts once the head has been sent to a known XY: a prime before the first move is at an unknown position."""
+    counts once the head has been sent to a known XY: a prime before the first move is at an unknown position. In
+    gcode with Orca's `;TYPE:` marks, extrusion before the first printed feature (the start gcode's purge) is kept
+    apart as `start_points`."""
     x: float | None = None
     y: float | None = None
     e = 0.0
     relative_e = False
     ext: list[float] | None = None
+    start: list[tuple[float, float]] = []
+    in_start = ";TYPE:" in text
     nozzle: list[float] = []
     bed: list[float] = []
     for raw in text.splitlines():
+        if in_start and raw.startswith(";TYPE:") and not raw.startswith(";TYPE:Custom"):
+            in_start = False
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
@@ -107,37 +120,70 @@ def gcode_facts(text: str) -> dict[str, Any]:
                 (nozzle if m[1].upper() in ("M104", "M109") else bed).append(t)
         elif _MOVE.match(line):
             axes = {k.upper(): float(v) for k, v in AXIS.findall(line)}
+            px, py = x, y
             x, y = axes.get("X", x), axes.get("Y", y)
             if "E" in axes:
                 de = axes["E"] if relative_e else axes["E"] - e
                 if not relative_e:
                     e = axes["E"]
                 if de > 0 and x is not None and y is not None:
-                    ext = (
-                        [x, y, x, y]
-                        if ext is None
-                        else [
-                            min(ext[0], x),
-                            min(ext[1], y),
-                            max(ext[2], x),
-                            max(ext[3], y),
-                        ]
-                    )
-    return {"extents": tuple(ext) if ext else None, "nozzle": nozzle, "bed": bed}
+                    if in_start:
+                        if px is not None and py is not None:
+                            start.append((px, py))
+                        start.append((x, y))
+                    else:
+                        ext = _grow(ext, x, y)
+    return {
+        "extents": tuple(ext) if ext else None,
+        "start_points": start,
+        "nozzle": nozzle,
+        "bed": bed,
+    }
+
+
+def _outside(ext: tuple[float, ...], rect: tuple[float, float, float, float]) -> bool:
+    t = EDGE_TOLERANCE_MM
+    return (
+        ext[0] < rect[0] - t
+        or ext[1] < rect[1] - t
+        or ext[2] > rect[2] + t
+        or ext[3] > rect[3] + t
+    )
 
 
 def gcode_problems(
-    facts: dict[str, Any], machine: dict[str, Any], material: str
+    facts: dict[str, Any],
+    machine: dict[str, Any],
+    material: str,
+    purge_zone: tuple[float, float, float, float] | None = None,
 ) -> list[str]:
+    """The part must extrude on the printable area. The start gcode's purge may also use `purge_zone` (bed mm, a
+    reachable strip outside the printable area the printer's own start gcode uses)."""
     out = []
-    if facts["extents"]:
-        x0, y0, x1, y1 = bed_rect(machine)
-        ex0, ey0, ex1, ey1 = facts["extents"]
-        t = EDGE_TOLERANCE_MM
-        if ex0 < x0 - t or ey0 < y0 - t or ex1 > x1 + t or ey1 > y1 + t:
-            out.append(
-                f"extrudes at X{ex0:.0f}..{ex1:.0f} Y{ey0:.0f}..{ey1:.0f}, outside the bed X{x0:.0f}..{x1:.0f} Y{y0:.0f}..{y1:.0f}"
+    bed = bed_rect(machine)
+    x0, y0, x1, y1 = bed
+    where = f"the bed X{x0:.0f}..{x1:.0f} Y{y0:.0f}..{y1:.0f}"
+    if (ext := facts["extents"]) and _outside(ext, bed):
+        out.append(
+            f"extrudes at X{ext[0]:.0f}..{ext[2]:.0f} Y{ext[1]:.0f}..{ext[3]:.0f}, outside {where}"
+        )
+    off = [
+        (px, py)
+        for px, py in facts.get("start_points") or []
+        if _outside((px, py, px, py), bed)
+        and (purge_zone is None or _outside((px, py, px, py), purge_zone))
+    ]
+    if off:
+        xs, ys = [p[0] for p in off], [p[1] for p in off]
+        zone = _strip(bed, min(xs), min(ys), max(xs), max(ys))
+        out.append(
+            f"the start gcode purges at X{min(xs):.0f}..{max(xs):.0f} Y{min(ys):.0f}..{max(ys):.0f}, outside {where}"
+            + (
+                ""
+                if purge_zone
+                else f"; if the printer reaches it, set purge_zone: {zone} on this printer"
             )
+        )
     rng = MATERIAL_TEMPS.get(material.upper())
     if rng:
         # Start gcode sets lower temperatures on the way up (a 140°C probing preheat, a nozzle wait while the bed
@@ -152,6 +198,26 @@ def gcode_problems(
                 f"bed {max(facts['bed']):.0f}°C is outside {material} range {bmin}-{bmax}°C"
             )
     return out
+
+
+def _strip(
+    bed: tuple[float, float, float, float], ax: float, ay: float, bx: float, by: float
+) -> str:
+    """A purge zone to suggest: the strip along the bed edge the purge crossed (its points may only be partly known,
+    e.g. X after homing), or the purge's own box when it crossed more than one edge."""
+    x0, y0, x1, y1 = bed
+    z: tuple[float, float, float, float]
+    if ay > y1:
+        z = (x0, y1, x1, math.ceil(by) + 1)
+    elif by < y0:
+        z = (x0, math.floor(ay) - 1, x1, y0)
+    elif ax > x1:
+        z = (x1, y0, math.ceil(bx) + 1, y1)
+    elif bx < x0:
+        z = (math.floor(ax) - 1, y0, x0, y1)
+    else:
+        z = (ax, ay, bx, by)
+    return "[" + ", ".join(f"{v:g}" for v in z) + "]"
 
 
 def log_problems(log: str, patterns: tuple[str, ...]) -> list[str]:

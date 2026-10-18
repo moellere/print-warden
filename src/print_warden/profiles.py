@@ -361,14 +361,70 @@ def _yaml_block(b: dict[str, Any]) -> str:
     )
 
 
-def _setup(path: str) -> tuple[list[Path], Path]:
+def in_use(cfg: config.Config) -> dict[str, dict[str, Any]]:
+    """Every preset printers.yaml names, flattened, keyed "<printer> <kind> <name>"; unresolvable ones map to {}."""
+    dirs = search_dirs(cfg.slicer)
+    out: dict[str, dict[str, Any]] = {}
+    for p in cfg.printers.values():
+        if not p.machine:
+            continue
+        wanted = [("machine", p.machine)]
+        wanted += [("process", v) for v in p.processes.values()]
+        wanted += [("filament", v) for v in p.filaments.values()]
+        for kind, name in wanted:
+            try:
+                out[f"{p.name} {kind} {name}"] = flatten(dirs, kind, name)
+            except (FileNotFoundError, ValueError):
+                out[f"{p.name} {kind} {name}"] = {}
+    return out
+
+
+def snapshot_path(cfg: config.Config) -> Path:
+    return cfg.storage_dir / "profile-snapshot.json"
+
+
+def _short(v: Any) -> str:
+    t = json.dumps(v) if not isinstance(v, str) else v
+    t = t.replace("\n", " ")
+    return t if len(t) <= 60 else t[:57] + "..."
+
+
+def diff(old: dict[str, dict[str, Any]], new: dict[str, dict[str, Any]]) -> list[str]:
+    """What changed in the presets the printers use since `old`, one line per preset and setting."""
+    out = []
+    for key in sorted(set(old) | set(new)):
+        a, b = old.get(key), new.get(key)
+        if a is None:
+            out.append(f"{key}: now in use")
+        elif b is None:
+            out.append(f"{key}: no longer in use")
+        elif not b and a:
+            out.append(f"{key}: no longer resolves")
+        else:
+            for k in sorted(set(a) | set(b)):
+                if a.get(k) != b.get(k):
+                    out.append(f"{key}: {k}: {_short(a.get(k))} -> {_short(b.get(k))}")
+    return out
+
+
+def changed_since_snapshot(cfg: config.Config) -> list[str] | None:
+    """The diff against the saved snapshot, or None when there is none."""
+    path = snapshot_path(cfg)
+    if not path.exists():
+        return None
+    return diff(json.loads(path.read_text()), in_use(cfg))
+
+
+def _setup(path: str) -> tuple[list[Path], Path, config.Config | None]:
     if Path(path).exists():
-        s = config.load(path).slicer
+        cfg = config.load(path)
+        s = cfg.slicer
     else:
+        cfg = None
         s = SlicerConfig(user_dir="data/profiles")
         print(f"# no {path}: using {s.vendor_dir} and {s.user_dir}", file=sys.stderr)
     user = Path(s.user_dir or "data/profiles")
-    return search_dirs(s), user
+    return search_dirs(s), user, cfg
 
 
 def main(argv: list[str]) -> int:
@@ -391,9 +447,18 @@ def main(argv: list[str]) -> int:
     kl.add_argument("name", help="name for the new printer preset")
     kl.add_argument("moonraker", help="Moonraker URL, e.g. http://printer.local:7125")
     kl.add_argument("--base", help="machine preset to inherit (default: MyKlipper)")
+    df = sub.add_parser(
+        "diff", help="what changed in the printers' presets since the last snapshot"
+    )
+    df.add_argument("--accept", action="store_true", help="take a new snapshot")
     a = ap.parse_args(argv)
-    dirs, user = _setup(a.config)
+    dirs, user, cfg = _setup(a.config)
     try:
+        if a.cmd == "diff":
+            if cfg is None:
+                print(f"fail: diff needs {a.config}", file=sys.stderr)
+                return 1
+            return _diff(cfg, a.accept)
         if a.cmd == "vendors":
             print("\n".join(vendors(dirs)))
         elif a.cmd == "printers":
@@ -425,6 +490,23 @@ def main(argv: list[str]) -> int:
         print(f"fail: {e}", file=sys.stderr)
         return 1
     return 0
+
+
+def _diff(cfg: config.Config, accept: bool) -> int:
+    changes = changed_since_snapshot(cfg)
+    if changes is None or accept:
+        path = snapshot_path(cfg)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(in_use(cfg), sort_keys=True))
+        print(f"snapshot of {len(in_use(cfg))} presets written to {path}")
+        return 0
+    print("\n".join(changes) if changes else "no changes since the snapshot")
+    if changes:
+        print(
+            f"\n{len(changes)} change(s); review them, then `print-warden profiles diff --accept`",
+            file=sys.stderr,
+        )
+    return 1 if changes else 0
 
 
 async def _settings(moonraker: str) -> dict[str, Any]:

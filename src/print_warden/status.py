@@ -100,6 +100,20 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
             + "".join(rows)
             + "</section>"
         )
+    batches = [
+        f"<p>{_e(b['name'])}: {_e(b['done'])} of {_e(b['total'])} done"
+        + (
+            f', <span class="bad">{_e(b["failed"])} failed</span>'
+            if b.get("failed")
+            else ""
+        )
+        + f' <span class="mute">· {_dur(b.get("remaining_s"))} to go</span></p>'
+        for b in data.get("batches") or []
+    ]
+    if batches:
+        cards.append(
+            '<section class="card"><h2>Batches</h2>' + "".join(batches) + "</section>"
+        )
     upkeep = []
     for r in data.get("reorder") or []:
         upkeep.append(

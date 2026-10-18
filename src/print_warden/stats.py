@@ -93,7 +93,7 @@ def outcomes(jobs: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
 
 
 def monthly(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per calendar month (local time): prints, hours, grams and cost of finished jobs."""
+    """Per calendar month (local time): prints, hours, grams, filament cost, kWh and energy cost of finished jobs."""
     rows: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for j in jobs:
         if j.get("state") not in FINISHED:
@@ -107,6 +107,8 @@ def monthly(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         r["hours"] += (j.get("print_duration_s") or 0) / 3600
         r["grams"] += j.get("grams_used") or 0
         r["cost"] += j.get("cost") or 0
+        r["kwh"] += j.get("energy_kwh") or 0
+        r["energy_cost"] += j.get("energy_cost") or 0
     return [
         {
             "month": m,
@@ -115,6 +117,29 @@ def monthly(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "hours": round(r["hours"], 1),
             "grams": round(r["grams"]),
             "cost": round(r["cost"], 2),
+            "kwh": round(r["kwh"], 2),
+            "energy_cost": round(r["energy_cost"], 2),
         }
         for m, r in sorted(rows.items())
     ]
+
+
+def energy(jobs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per printer, over metered finished jobs: kWh, mean draw while printing, mean heat-up and energy cost."""
+    by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for j in jobs:
+        if j.get("state") in FINISHED and j.get("energy_kwh") is not None:
+            by[j["printer"]].append(j)
+    out = {}
+    for p, js in sorted(by.items()):
+        hours = sum((j.get("print_duration_s") or 0) for j in js) / 3600
+        kwh = sum(j["energy_kwh"] for j in js)
+        heat = [j["heatup_kwh"] for j in js if j.get("heatup_kwh") is not None]
+        out[p] = {
+            "prints": len(js),
+            "kwh": round(kwh, 2),
+            "avg_kw": round(kwh / hours, 3) if hours else None,
+            "avg_heatup_kwh": round(sum(heat) / len(heat), 3) if heat else None,
+            "energy_cost": round(sum(j.get("energy_cost") or 0 for j in js), 2),
+        }
+    return out
