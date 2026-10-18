@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `purge_zone` per printer: the start gcode's purge may extrude there, outside the printable area; the part is still
+  held to the printable area. The extents check now tells the start gcode's purge apart from the part (Orca's `;TYPE:`
+  marks) and, without a zone, suggests one.
+- `print-warden profiles diff [--accept]`: snapshot the presets printers.yaml uses and list what changed after an
+  OrcaSlicer upgrade; `print-warden check` warns while they differ.
+- `print-warden check` validates `THINGIVERSE_TOKEN` when set; `--sites` also checks that Printables still answers the
+  warden's query.
+
 ## 0.5.0
 
 Phases 13–18. No config changes are required: new job columns are added on start-up, and every new setting is

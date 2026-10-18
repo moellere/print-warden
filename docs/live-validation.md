@@ -107,6 +107,12 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     `print-warden profiles import <bundle>` and slice with the printed block. Expect: the job's gcode carries your
     preset's settings (e.g. its nozzle temperature).
 
+## 12. Checks and profile changes
+
+33. `print-warden profiles diff` (takes the snapshot), then after the next OrcaSlicer image upgrade run it again.
+    Expect: either "no changes" or the changed settings per printer; `print-warden check` warns until `--accept`.
+34. `print-warden check --sites`. Expect: `thingiverse` ok when `THINGIVERSE_TOKEN` is set, `printables` ok.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -144,3 +150,5 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 30 | Printables page → named file printed, license on the job | | |
 | 31 | Profile from Klipper: block, check, a cube printed | | |
 | 32 | Imported Orca preset bundle sliced with its settings | | |
+| 33 | `profiles diff` after an Orca upgrade | | |
+| 34 | `check --sites`: Thingiverse token and Printables query | | |

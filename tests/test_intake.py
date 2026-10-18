@@ -150,3 +150,33 @@ async def test_a_page_with_no_models_says_so():
         page = await intake.resolve("https://example.com/", c)
     with pytest.raises(ValueError, match="no .stl/.3mf/.scad"):
         page.pick(None)
+
+
+async def test_site_problems():
+    def handler(r):
+        if r.url.host == "api.thingiverse.com":
+            return httpx.Response(
+                200 if r.headers["authorization"] == "Bearer good" else 401
+            )
+        body = json.loads(r.content)
+        assert body["variables"] == {"id": "0"}
+        return httpx.Response(200, json={"data": {"print": None}})
+
+    async with _client(handler) as c:
+        assert await intake.site_problems(c, "good", True) == {
+            "thingiverse": None,
+            "printables": None,
+        }
+        bad = await intake.site_problems(c, "bad", False)
+        assert bad == {"thingiverse": "token refused (HTTP 401)"}
+        assert await intake.site_problems(c, None, False) == {}
+
+    def changed(r):
+        return httpx.Response(
+            200,
+            json={"errors": [{"message": 'Cannot query field "stls"'}], "data": None},
+        )
+
+    async with _client(changed) as c:
+        out = await intake.site_problems(c, None, True)
+    assert out["printables"].startswith("its API no longer takes the warden's query")

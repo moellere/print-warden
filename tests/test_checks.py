@@ -103,3 +103,40 @@ def test_values_without_a_leading_zero_count():
         ("E", "1."),
         ("Z", "12"),
     ]
+
+
+def test_start_gcode_purge_outside_the_bed_needs_a_purge_zone():
+    # Anycubic Kobra 2 Pro style: purge at Y226 on a 220 mm printable area
+    kobra = {"printable_area": ["0x0", "220x0", "220x220", "0x220"]}
+    text = (
+        ";TYPE:Custom\nM83\nG1 X100 Y226 F1800\nG1 X180 E25 F500\n"
+        ";TYPE:Outer wall\nG1 X100 Y100\nG1 X120 Y100 E1\n"
+    )
+    facts = checks.gcode_facts(text)
+    assert facts["extents"] == (120, 100, 120, 100)
+    probs = checks.gcode_problems(facts, kobra, "PLA")
+    assert len(probs) == 1 and "start gcode purges at X100..180 Y226..226" in probs[0]
+    assert "set purge_zone: [0, 220, 220, 227]" in probs[0]
+    assert checks.gcode_problems(facts, kobra, "PLA", (0, 222, 220, 230)) == []
+    # the zone does not excuse the part, nor a purge that misses the zone
+    part_off = text + "G1 X120 Y228 E1\n"
+    assert (
+        "extrudes at"
+        in checks.gcode_problems(
+            checks.gcode_facts(part_off), kobra, "PLA", (0, 222, 220, 230)
+        )[0]
+    )
+    assert (
+        "start gcode purges"
+        in checks.gcode_problems(facts, kobra, "PLA", (0, 228, 220, 230))[0]
+    )
+
+
+def test_unmarked_gcode_has_no_start_section():
+    facts = checks.gcode_facts("M83\nG1 X10 Y226 E1\n")
+    assert facts["start_points"] == [] and facts["extents"] == (10, 226, 10, 226)
+    kobra = {"printable_area": ["0x0", "220x0", "220x220", "0x220"]}
+    assert (
+        "extrudes at"
+        in checks.gcode_problems(facts, kobra, "PLA", (0, 222, 220, 230))[0]
+    )

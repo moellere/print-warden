@@ -213,7 +213,7 @@ Found by slicing for real (OrcaSlicer 2.4.2):
   purges at Y226 on a 220 mm printable area, which the extents check blocks.
 
 
-## Phase 19 — Profile and check polish
+## Phase 19 — Profile and check polish ✅ (build)
 
 - A per-printer `purge_zone`: the start gcode's purge may extrude there, outside the printable area, while the part
   stays strictly on it (bundled start gcode such as the Anycubic Kobra 2 Pro's purges at Y226 on a 220 mm area).
@@ -223,6 +223,10 @@ Found by slicing for real (OrcaSlicer 2.4.2):
   query.
 
 Done when: the Kobra 2 Pro slices without a waiver, and an Orca upgrade lists what changed per printer.
+
+Found by slicing for real: after `G28` the Kobra's X is unknown to the gcode, so only the purge line's end is known;
+the suggested zone is therefore the strip along the bed edge the purge crossed, not the purge's own (partial) box.
+With `purge_zone: [0, 222, 220, 230]` the Kobra 2 Pro's bundled profile slices with no blocker.
 
 ## Phase 20 — Multi-plate projects and batches
 

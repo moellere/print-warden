@@ -1,4 +1,4 @@
-"""`print-warden` runs the server; `print-warden check [config]` checks a config without starting it;
+"""`print-warden` runs the server; `print-warden check [config] [--sites]` checks a config without starting it;
 `print-warden profiles ...` finds, imports or generates printer profiles."""
 
 from __future__ import annotations

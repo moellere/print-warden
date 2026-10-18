@@ -224,8 +224,15 @@ the macro reads, e.g. `BED_TEMP` / `EXTRUDER_TEMP`); it inherits Orca's generic 
 processes and Orca's universal filaments apply. Without a start macro it heats, homes and draws a purge line; check that
 start gcode before the first print. Then run `print-warden check`.
 
-Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm bed);
-the warden's extents check blocks those jobs. Waive it per job, or import a copy of the printer with your own purge.
+Some bundled start gcode purges outside the printable area (the Anycubic Kobra 2 Pro purges at Y226 on a 220 mm
+bed). The part must always extrude on the printable area; the start gcode's purge may also use the printer's
+`purge_zone` (`[x0, y0, x1, y1]` in bed mm, a strip the head reaches). Without one, the job is blocked and the
+blocker suggests the zone to set: check that the printer really reaches it before setting it.
+
+`print-warden profiles diff` takes a snapshot of every preset printers.yaml uses, flattened; run it again after an
+OrcaSlicer upgrade to see each setting that changed per printer, then `--accept` the new snapshot.
+`print-warden check` warns while the presets differ from the snapshot. `check` also validates `THINGIVERSE_TOKEN`
+when it is set, and with `--sites` that Printables still answers the warden's query.
 
 ## Run
 

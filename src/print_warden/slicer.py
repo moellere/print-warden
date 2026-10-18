@@ -285,6 +285,7 @@ async def slice_stl(
     project: Path | None = None,
     plate: int = 1,
     calibration: dict[str, Any] | None = None,
+    purge_zone: tuple[float, float, float, float] | None = None,
 ) -> SliceResult:
     """Raises ValueError before slicing when the model cannot fit; problems found in the sliced gcode come back as
     `blockers`, which keep the job from starting. With `cache_dir`, an identical request (same model bytes, same
@@ -342,6 +343,7 @@ async def slice_stl(
                 "orca": _orca_identity(cfg.orca),
                 "plate": plate if project else None,
                 "calibration": calibration,
+                **({"purge_zone": purge_zone} if purge_zone else {}),
             },
         )
         entry = cache_dir / key
@@ -427,7 +429,7 @@ async def slice_stl(
                 preview = None
         meta = parse_gcode_header(text)
         blockers = checks.gcode_problems(
-            checks.gcode_facts(text), machine_cfg, material
+            checks.gcode_facts(text), machine_cfg, material, purge_zone
         )
         blockers += checks.log_problems(log, cfg.blocking_warnings)
         defined = set(machine_cfg) | set(process_cfg) | set(filament_cfg)

@@ -206,3 +206,23 @@ def test_main_reports_a_bad_config(tmp_path, capsys):
     bad.write_text("printers: [")
     assert check.main([str(bad)]) == 1
     assert capsys.readouterr().out.startswith("fail")
+
+
+async def test_model_sites_only_when_asked(tmp_path, monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(check.shutil, "which", lambda name: f"/usr/bin/{name}")
+    cfg = _cfg(tmp_path)
+    results = await _run(cfg, _handler())
+    assert not [r for r in results if r.area in ("thingiverse", "printables")]
+    cfg = dataclasses.replace(cfg, thingiverse_token="t")
+
+    async def probe(m):
+        return None
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler())) as c:
+        results = await check.run(cfg, c, probe, sites=True)
+    sites = {
+        r.area: r.status for r in results if r.area in ("thingiverse", "printables")
+    }
+    assert sites == {"thingiverse": check.WARN, "printables": check.WARN}
