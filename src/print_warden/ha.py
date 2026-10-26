@@ -51,11 +51,14 @@ class HAClient:
         actions: list[tuple[str, str]],
         image: str | None = None,
         tag: str | None = None,
-        sticky: bool = False,
+        sticky: bool = True,
+        persistent: bool = False,
+        click_url: str | None = None,
     ) -> bool:
-        """`sticky` keeps the notification in the phone's shade after a tap on its body and stops a swipe from
-        dismissing it (Android companion `sticky` + `persistent`), so only its buttons or `clear_notification`
-        remove it. Use it for prompts the warden withdraws itself once they are answered or expire."""
+        """Every button prompt is `sticky` (Android companion): a tap on its body does not dismiss it, so the
+        buttons stay until they are used, the card is swiped away, or `clear_notification` withdraws it.
+        `persistent` also stops the swipe; use it only for prompts the warden withdraws itself (start, skip, expiry).
+        A body tap opens `click_url`, by default the attached image, instead of the companion app's start page."""
         if not self.cfg.notify_service:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)
@@ -67,9 +70,12 @@ class HAClient:
         }
         if sticky:
             data["sticky"] = True
+        if persistent:
             data["persistent"] = True
         if image:
             data["image"] = image
+        if click_url or image:
+            data["clickAction"] = click_url or image
         try:
             r = await self._c.post(
                 f"/api/services/{domain}/{service}",

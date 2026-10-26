@@ -4,6 +4,9 @@
 
 - The Start / Skip approval notification is sent sticky and persistent (Android companion), so tapping its body or
   swiping no longer loses the request; the warden still withdraws it on start, skip or expiry.
+- Every other button prompt (first layers, Obico pause, bed cleared, outcome, calibration, upkeep) is sticky too: a
+  tap on its body no longer dismisses it, and opens the attached picture (`clickAction`) instead of the companion
+  app's start page. They can still be swiped away.
 
 ## 0.6.0
 

@@ -1462,7 +1462,7 @@ async def request_start(job_id: str) -> dict[str, Any]:
             ],
             image=preview,
             tag=f"print_warden_{job_id}",
-            sticky=True,
+            persistent=True,
         )
     )
     note = "asked via phone notification" if sent else "notification failed"
