@@ -24,10 +24,11 @@ up to three FIRMWARE_RESTARTs before the print command goes out; the tap still g
 `policy.can_start` is plain Python: Moonraker connected, Klipper ready, printer idle, gcode staged,
 loaded material matches the job, and the active spool has the job's grams plus 10%. No model is consulted in the gate.
 A phone tap answers one `request_start` and is honoured only within `policy.approval_ttl_minutes` (default 15);
-unanswered requests go back to `staged` and the notification is withdrawn. The Start / Skip notification is sticky on
-Android: a tap on its body or a swipe does not dismiss it, only its buttons or the warden's own withdrawal (start, skip,
-expiry) do. Starts on one printer are serialised, so a
-double tap sends one print.
+unanswered requests go back to `staged` and the notification is withdrawn. Every button prompt the warden sends is
+sticky on Android: a tap on its body does not dismiss it, and opens the attached picture (the preview or camera frame)
+instead of the companion app's start page. The Start / Skip one is also persistent, so a swipe does not lose it either;
+only its buttons or the warden's own withdrawal (start, skip, expiry) remove it. Starts on one printer are serialised,
+so a double tap sends one print.
 
 ## Monitoring
 

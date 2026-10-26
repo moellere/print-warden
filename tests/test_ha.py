@@ -25,11 +25,11 @@ def _client(calls):
     return ha
 
 
-async def test_sticky_prompt_sets_companion_flags():
+async def test_persistent_prompt_sets_both_companion_flags():
     calls: list = []
     ha = _client(calls)
     assert await ha.notify_actionable(
-        "Start print?", "body", [("A", "Start")], tag="print_warden_x", sticky=True
+        "Start print?", "body", [("A", "Start")], tag="print_warden_x", persistent=True
     )
     path, raw = calls[0]
     assert path == "/api/services/notify/phone"
@@ -39,9 +39,30 @@ async def test_sticky_prompt_sets_companion_flags():
     assert data["actions"] == [{"action": "A", "title": "Start"}]
 
 
-async def test_plain_prompt_has_no_sticky_flags():
+async def test_every_prompt_is_sticky_but_swipeable():
     calls: list = []
     ha = _client(calls)
     assert await ha.notify_actionable("Bed?", "body", [("B", "Cleared")])
     data = httpx.Response(200, content=calls[0][1]).json()["data"]
-    assert "sticky" not in data and "persistent" not in data
+    assert data["sticky"] is True
+    assert "persistent" not in data and "clickAction" not in data
+
+
+async def test_body_tap_opens_the_image_unless_a_url_is_given():
+    calls: list = []
+    ha = _client(calls)
+    img = "http://warden.test/files/snapshots/x.jpg"
+    assert await ha.notify_actionable(
+        "Layers?", "body", [("L", "Looks good")], image=img
+    )
+    data = httpx.Response(200, content=calls[0][1]).json()["data"]
+    assert data["image"] == img and data["clickAction"] == img
+    assert await ha.notify_actionable(
+        "Layers?",
+        "body",
+        [("L", "Looks good")],
+        image=img,
+        click_url="http://warden.test/status",
+    )
+    data = httpx.Response(200, content=calls[1][1]).json()["data"]
+    assert data["clickAction"] == "http://warden.test/status"
