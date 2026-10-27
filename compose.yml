@@ -4,7 +4,7 @@ services:
     # image: ghcr.io/moellere/print-warden:latest   # a released image instead of building
     container_name: print-warden
     restart: unless-stopped
-    ports: ["8720:8720"]
+    ports: ["8710:8710"]
     volumes:
       - ./printers.yaml:/config/printers.yaml:ro
       - ./data:/app/data

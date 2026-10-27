@@ -92,7 +92,7 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 
 ## 10. Status page and model pages
 
-28. Open `http://<host>:8720/status?token=…` on a phone and a desktop while one printer prints. Expect: both printers,
+28. Open `http://<host>:8710/status?token=…` on a phone and a desktop while one printer prints. Expect: both printers,
     the printing one with progress and a finish time, the queue with estimates, the latest snapshot; without the
     token, 401.
 29. `model_page("https://www.thingiverse.com/thing:<id>")` with `THINGIVERSE_TOKEN` set, then
@@ -119,7 +119,7 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 
 ## 13. Staging page
 
-36. On a phone, open `http://<host>:8720/stage?token=…`, upload an STL, pick a printer, PLA, standard; Slice. Expect:
+36. On a phone, open `http://<host>:8710/stage?token=…`, upload an STL, pick a printer, PLA, standard; Slice. Expect:
     the preview and estimate within a minute. Add to queue: the phone gets the Start offer (or, if the printer is busy,
     the page says it is queued). A second form opened in another tab and posted after two hours is refused.
 

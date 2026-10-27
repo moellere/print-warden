@@ -15,5 +15,5 @@ COPY src ./src
 COPY slicer/house-rules.json /opt/slicer/house-rules.json
 RUN python3 -m venv /venv && /venv/bin/pip install --no-cache-dir . && rm -rf /root/.cache
 ENV PATH=/venv/bin:$PATH PRINT_WARDEN_CONFIG=/config/printers.yaml
-EXPOSE 8720
+EXPOSE 8710
 CMD ["print-warden"]

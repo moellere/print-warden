@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Default port is 8710 again.** The 0.3 move to 8720 avoided homelab-helper's status endpoint, which
+  runs on its own host, not the warden's; every deployment kept `server.port: 8710` and a hand-edited
+  compose file to match. `compose.yml`, the image's `EXPOSE`, the docs and the example config follow.
+  A config that sets `server.port` is unaffected.
 - The Start / Skip approval notification is sent sticky and persistent (Android companion), so tapping its body or
   swiping no longer loses the request; the warden still withdraws it on start, skip or expiry.
 - Every other button prompt (first layers, Obico pause, bed cleared, outcome, calibration, upkeep) is sticky too: a

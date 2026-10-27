@@ -133,5 +133,5 @@ storage:
 
 server:
   host: 0.0.0.0
-  port: 8720   # 8710 until 0.3; moved off homelab-helper's status port
+  port: 8710   # the default; homelab-helper's status endpoint runs on its own host, not here
   token_env: PRINT_WARDEN_TOKEN   # bearer token for /mcp and /upload

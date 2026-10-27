@@ -98,7 +98,7 @@ Done when: CI green; `/files/events.db` 404; `/mcp` without the token 401; webho
 - `print-warden check`: profiles resolve; Moonraker (and its power device), cameras (must return an image), Home
   Assistant (token, notify service, lights, quiet entity), Spoolman and the broker answer. Read-only; exit 1 on failure.
 - `docs/live-validation.md`: a runbook and sign-off table per printer.
-- Default port 8720, off homelab-helper's 8710.
+- Default port 8710 again (0.7): the 0.3 move to 8720 assumed homelab-helper's status endpoint shared the host; it does not.
 
 Done when: every sign-off row is signed on both printers, or has an issue.
 
