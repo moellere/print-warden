@@ -139,7 +139,7 @@ person still decides. `footprint_check(job_id)` runs it on demand. Deterministic
 ## Job flow
 
 ```
-curl -F file=@part.stl http://nas.local:8720/upload           # or a .scad / .3mf
+curl -F file=@part.stl http://nas.local:8710/upload           # or a .scad / .3mf
 submit_job(printer="garagex4", model="part.stl", material="PETG", quality="standard", copies=1)
    -> checks the model fits, slices (tree supports, no brim), checks the gcode, uploads it to Moonraker as
       warden/<job>_<name>_<mat>.gcode and queues it; printer may be a location ("wyola")
@@ -260,7 +260,7 @@ cp printers.example.yaml printers.yaml   # edit
 printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
 docker compose run --rm --build print-warden print-warden check   # every profile, service and camera answers
 docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppImage + OpenSCAD + ffmpeg
-curl localhost:8720/healthz
+curl localhost:8710/healthz
 ```
 
 Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
@@ -289,7 +289,7 @@ two hours) and must be posted from the page's own origin.
 Snapshots and timelapse frames older than `storage.keep_days` are deleted daily along with old events; rendered
 timelapses, job artifacts and uploads are kept.
 
-Obico → Preferences → Notifications → Webhook URL: `http://<host>:8720/obico/webhook?secret=<OBICO_WEBHOOK_SECRET>`.
+Obico → Preferences → Notifications → Webhook URL: `http://<host>:8710/obico/webhook?secret=<OBICO_WEBHOOK_SECRET>`.
 Phone buttons come back through HA's websocket event bus (`mobile_app_notification_action`), no HA config needed.
 
 ## Layout

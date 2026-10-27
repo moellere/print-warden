@@ -270,7 +270,7 @@ def load(path: str | Path) -> Config:
     sv = raw.get("server") or {}
     pol = raw.get("policy") or {}
     host = sv.get("host", "0.0.0.0")
-    port = int(sv.get("port", 8720))
+    port = int(sv.get("port", 8710))
     storage = Path(st.get("dir", "./data"))
     return Config(
         printers=printers,
