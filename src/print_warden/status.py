@@ -49,7 +49,10 @@ def _img(path: str | None) -> str:
 def _state_class(p: dict[str, Any]) -> str:
     if not p.get("connected"):
         return "bad"
-    if p.get("klippy") not in ("ready", None) or p.get("last_shutdown"):
+    sd = p.get("last_shutdown") or {}
+    if sd.get("expected"):
+        return ""
+    if p.get("klippy") not in ("ready", None) or sd:
         return "bad"
     return "ok" if p.get("state") in ("printing", "paused") else ""
 
@@ -66,8 +69,13 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         rows = []
         if p.get("last_shutdown"):
             sd = p["last_shutdown"]
+            cls, label = (
+                ("", "Klipper shut down with mains off")
+                if sd.get("expected")
+                else ("bad", "Klipper shut down")
+            )
             rows.append(
-                f'<p class="bad">Klipper shut down: {_e(str(sd["cause"]).replace("_", " "))} — {_e(sd["hint"])}</p>'
+                f'<p class="{cls}">{label}: {_e(str(sd["cause"]).replace("_", " "))} — {_e(sd["hint"])}</p>'
             )
         prog = p.get("progress_pct")
         if prog is not None:

@@ -1937,11 +1937,16 @@ def _last_shutdown(printer: str, now: float) -> dict[str, Any] | None:
         if ev["kind"] == "klippy_ready":
             return None
         if ev["kind"] == "klippy_shutdown":
-            cause = (ev.get("data") or {}).get("cause") or "unknown"
+            data = ev.get("data") or {}
+            cause = data.get("cause") or "unknown"
+            expected = data.get("mains") == "off"
             return {
                 "cause": cause,
-                "hint": rules.SHUTDOWN_HINTS.get(cause, rules.UNKNOWN_HINT),
+                "hint": rules.MAINS_OFF_HINT
+                if expected
+                else rules.SHUTDOWN_HINTS.get(cause, rules.UNKNOWN_HINT),
                 "s_ago": round(now - ev["ts"]),
+                "expected": expected,
             }
     return None
 
@@ -1961,7 +1966,8 @@ def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
 def health_report() -> dict[str, Any]:
     """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
     within an api version; no file names, job names or URLs. Added after 0.3.0: `last_shutdown` (classified cause of
-    a shutdown Klipper has not recovered from), `outcomes_7d` and `maintenance_due`."""
+    a shutdown Klipper has not recovered from; `expected` when it happened with mains off), `outcomes_7d` and
+    `maintenance_due`."""
     now = time.time()
     printers = {}
     for n, w in WATCHERS.items():

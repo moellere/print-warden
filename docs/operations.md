@@ -71,7 +71,8 @@ added to existing databases). Read `CHANGELOG.md` first: some releases change de
 - `last_shutdown`: `{cause, hint, s_ago}` for a Klipper shutdown in the last week that Klipper has not been ready
   since. `cause` is the classification (`thermal_runaway`, `heater_not_heating`, `thermistor_out_of_range`,
   `mcu_comm_lost`, `mcu_timing`, `tmc_driver_error`, ..., `unknown`) and `hint` its fixed advice; never the raw
-  message.
+  message. `expected` is true when the shutdown happened with the printer's `power_device` off (a USB-backfed
+  board losing its link is normal then); monitors should not treat that one as a fault.
 - `outcomes_7d`: `{prints, failed}`, with labels winning over how the job ended.
 - `maintenance_due`: the names of the printer's maintenance items that are due.
 

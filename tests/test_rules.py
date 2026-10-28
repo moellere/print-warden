@@ -213,3 +213,15 @@ def test_first_layer_check_not_sent_late_after_a_restart():
     r.evaluate(st, "snapshot", now=1000)
     st = {"print_stats": {"state": "printing", "info": {"current_layer": 151}}}
     assert "first_layer_check" not in _kinds(r.evaluate(st, None, now=1001))
+
+
+def test_with_mains_off_downgrades_a_shutdown_without_losing_its_cause():
+    from print_warden.rules import MAINS_OFF_HINT, with_mains_off
+
+    r = RuleEngine("p", Rules())
+    st = {"webhooks": {"state_message": "Lost communication with MCU 'mcu'"}}
+    ev = with_mains_off(r.evaluate(st, "notify_klippy_shutdown", now=1000)[0])
+    assert ev.kind == "klippy_shutdown"
+    assert ev.severity == "info" and ev.alert is False
+    assert ev.data["cause"] == "mcu_comm_lost" and ev.data["mains"] == "off"
+    assert MAINS_OFF_HINT in ev.message
