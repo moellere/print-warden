@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A Klipper shutdown while the printer's `power_device` reads off is no longer a critical alert: the X1's board
+  runs on USB backfeed with mains off and its link stalls hours later, which the start path already recovers
+  (power on, FIRMWARE_RESTART). The event is logged at info, `/healthz` marks that `last_shutdown` `expected`,
+  and the status page stops showing the printer as faulted. A failed power read still alerts.
 - **Default port is 8710 again.** The 0.3 move to 8720 avoided homelab-helper's status endpoint, which
   runs on its own host, not the warden's; every deployment kept `server.port: 8710` and a hand-edited
   compose file to match. `compose.yml`, the image's `EXPOSE`, the docs and the example config follow.

@@ -41,7 +41,9 @@ discovered from Moonraker's object list on each (re)subscribe:
 - **Temperature sensors**: any whose name looks like a board or host (mcu, host, rpi, cpu) over 75°C, or any sensor
   over its `rules.temp_limits` entry → warning, once until it cools 5°C.
 - **Klipper shutdowns** are classified (thermal runaway, heater not heating, thermistor out of range, MCU comms lost,
-  timer too close, TMC driver error, move out of range) with what to check.
+  timer too close, TMC driver error, move out of range) with what to check. A shutdown while the printer's
+  `power_device` reads off is expected (a USB-backfed board stalls without mains) and is logged at info without an
+  alert; the next start powers the printer on and restarts Klipper.
 
 At layer `first_layer_check` (default 2; 0 disables) the phone gets the nozzle camera frame with **Looks good** /
 **Cancel print**. When Obico pauses a print the phone gets **Resume** / **Cancel print**. Both are bound to the job:

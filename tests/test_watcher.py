@@ -147,3 +147,42 @@ async def test_outcome_records_duration_grams_and_cost(tmp_path):
     assert got["print_duration_s"] == 3600.0
     assert got["grams_used"] == pytest.approx(10.0)
     assert got["cost"] == pytest.approx(0.2)
+
+
+async def _shutdown_through(tmp_path, monkeypatch, power_state):
+    import dataclasses
+
+    from print_warden import moonraker
+
+    cfg, p = _cfg(tmp_path)
+    p = dataclasses.replace(p, power_device="printer")
+
+    async def fake_power(base_url, device, action=None):
+        if isinstance(power_state, Exception):
+            raise power_state
+        return power_state
+
+    monkeypatch.setattr(moonraker, "power", fake_power)
+    store = EventStore(tmp_path / "e.db")
+    w = PrinterWatcher(cfg, p, store, None, JobStore(tmp_path / "jobs.db"))
+    st = {"webhooks": {"state_message": "Lost communication with MCU 'mcu'"}}
+    await w._on_update(st, "notify_klippy_shutdown")
+    return next(
+        e for e in store.query("p", since=0, limit=10) if e["kind"] == "klippy_shutdown"
+    )
+
+
+async def test_shutdown_with_mains_off_is_expected(tmp_path, monkeypatch):
+    ev = await _shutdown_through(tmp_path, monkeypatch, "off")
+    assert ev["severity"] == "info" and not ev["alert"]
+    assert ev["data"]["mains"] == "off" and ev["data"]["cause"] == "mcu_comm_lost"
+
+
+async def test_shutdown_with_mains_on_still_alerts(tmp_path, monkeypatch):
+    ev = await _shutdown_through(tmp_path, monkeypatch, "on")
+    assert ev["severity"] == "critical" and ev["alert"]
+
+
+async def test_shutdown_alerts_when_the_power_read_fails(tmp_path, monkeypatch):
+    ev = await _shutdown_through(tmp_path, monkeypatch, httpx.ConnectError("down"))
+    assert ev["severity"] == "critical" and ev["alert"]

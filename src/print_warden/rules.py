@@ -57,6 +57,10 @@ SHUTDOWN_CAUSES: tuple[tuple[str, str, str], ...] = (
 
 UNKNOWN_HINT = "see Klipper's log for the shutdown reason"
 SHUTDOWN_HINTS = {cause: hint for _, cause, hint in SHUTDOWN_CAUSES}
+MAINS_OFF_HINT = (
+    "mains was off, so the board ran on USB backfeed and its link stalled; "
+    "the next start powers it on and restarts Klipper"
+)
 
 
 def classify_shutdown(message: str) -> tuple[str, str]:
@@ -65,6 +69,16 @@ def classify_shutdown(message: str) -> tuple[str, str]:
         if needle in low:
             return cause, hint
     return "unknown", UNKNOWN_HINT
+
+
+def with_mains_off(ev: Event) -> Event:
+    """A Klipper shutdown while the printer's power device reads off is expected, not a fault: info, no alert."""
+    ev.severity = "info"
+    ev.alert = False
+    ev.data["mains"] = "off"
+    cause = str(ev.data.get("cause") or "unknown").replace("_", " ")
+    ev.message = f"Klipper shutdown with mains off ({cause}): {MAINS_OFF_HINT}"
+    return ev
 
 
 def watched_object(name: str) -> bool:

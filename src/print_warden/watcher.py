@@ -32,7 +32,7 @@ from .events import Event, EventStore
 from .ha import HAClient
 from .jobs import JobStore
 from .moonraker import MoonrakerClient
-from .rules import RuleEngine
+from .rules import RuleEngine, with_mains_off
 from .spoolman import Spoolman
 
 log = logging.getLogger(__name__)
@@ -107,9 +107,23 @@ class PrinterWatcher:
     async def _on_update(self, state: dict[str, Any], signal: str | None) -> None:
         self.last_update = time.time()
         for ev in self.rules.evaluate(state, signal):
+            if (
+                ev.kind == "klippy_shutdown"
+                and self.p.power_device
+                and await self._mains_off()
+            ):
+                with_mains_off(ev)
             await self.handle(ev)
         if signal == "snapshot":
             await self.reconcile_jobs()
+
+    async def _mains_off(self) -> bool:
+        """The power device reads off. A failed read counts as on, so a real fault still alerts."""
+        assert self.p.power_device
+        try:
+            return await moonraker.power(self.p.moonraker, self.p.power_device) == "off"
+        except httpx.HTTPError:
+            return False
 
     def _spawn(self, coro: Any) -> None:
         t = asyncio.create_task(coro)

@@ -1173,3 +1173,46 @@ def test_csrf_tokens_expire_after_the_next_hour():
     assert stage.csrf_ok(t, "k", now=10_000 + 3600)
     assert not stage.csrf_ok(t, "k", now=10_000 + 2 * 3600)
     assert not stage.csrf_ok(t, "other", now=10_000)
+
+
+def test_healthz_marks_a_mains_off_shutdown_expected():
+    from print_warden import rules, status
+
+    server.STORE.add(
+        Event(
+            "testq",
+            "klippy_shutdown",
+            "info",
+            "Klipper shutdown with mains off (mcu comm lost)",
+            {"cause": "mcu_comm_lost", "mains": "off"},
+            alert=False,
+        )
+    )
+    p = server.health_report()["printers"]["testq"]
+    assert p["last_shutdown"]["expected"] is True
+    assert p["last_shutdown"]["hint"] == rules.MAINS_OFF_HINT
+    assert (
+        status._state_class(
+            {
+                "connected": True,
+                "klippy": "shutdown",
+                "last_shutdown": p["last_shutdown"],
+            }
+        )
+        == ""
+    )
+    assert "with mains off" in status.render(
+        {
+            "printers": {
+                "testq": {
+                    "connected": True,
+                    "klippy": "shutdown",
+                    "last_shutdown": p["last_shutdown"],
+                }
+            }
+        }
+    )
+    server.STORE.add(
+        Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
+    )
+    assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
