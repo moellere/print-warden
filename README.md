@@ -72,6 +72,12 @@ requested_by)` from chat) uploads the job's own gcode again as a new job and que
 any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
 printer (`klipper_errors`).
 
+`fault_test(printer, requested_by)` is the live check of all that: a 20 mm cube whose gcode holds, at the start of
+layer 2, a move far past the X limit. Klipper refuses it ("Move out of range") before anything moves and stops the
+print with an error. It is queued and offered like any job, so it starts only on a tap. The move goes in after the
+slice checks, which would otherwise block it. The job is kept out of failure stats, "failed before", repeat-cause
+warnings and `/healthz`'s `outcomes_7d`.
+
 **Spool inventory.** Spoolman stays the system of record; the warden runs the physical side, from chat or the
 `/spools` page (same token as `/status`):
 - `register_spool(vendor, material, color, registered_by, net_weight_g=1000, spool_weight_g, price, location)`: the
@@ -328,6 +334,15 @@ docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppIm
 curl localhost:8710/healthz
 ```
 
+After a deploy that changes behaviour, run the live-validation runbook (`docs/live-validation.md`) with
+`print-warden validate` in the container:
+- `validate` lists the rows and their sign-off per printer;
+- `validate <row> --printer P --setup` sets up what the row needs (after a y/N), then checks the outcome against
+  the warden's own state;
+- `--by <initials>` signs a passing run; `validate sign` records a row judged by eye, or `--issue <url>` for one
+  that failed;
+- `validate report` prints the sign-off table.
+
 Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
 `docs/operations.md`; releases: `docs/releasing.md`; changes: `CHANGELOG.md`.
 
@@ -387,11 +402,12 @@ src/print_warden/
   spoolman.py   Spoolman client (materials, remaining weight)
   threemf.py    3MF plates to STL, project sanitizing (no project gcode reaches the printer)
   footprint.py  bed-camera homography, first-layer footprint, part-on-bed verdict
-  calibration.py  temperature / flow / pressure-advance towers and their results
+  calibration.py  temperature / flow / pressure-advance towers and their results; the fault test
   intake.py     model pages (Thingiverse, Printables, any page) -> files, title, author, license
   status.py     the read-only /status page
   stage.py      the /stage page: slice and queue from a browser, never start
   profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
+  validate.py   the live-validation runbook against the running warden (an MCP client), with sign-offs
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

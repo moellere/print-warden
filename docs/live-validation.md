@@ -10,6 +10,27 @@ and the broker answer, without printing or publishing anything.
 
 Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a row says otherwise.
 
+`print-warden validate` (in the container: `docker compose exec print-warden print-warden validate …`) runs this
+runbook against the running warden. It reaches the warden over `/mcp` with `PRINT_WARDEN_TOKEN`, so it starts
+nothing: a setup that offers a job still waits for the tap.
+- `validate` lists every row with its kind and sign-off per printer:
+  - **auto** rows check themselves;
+  - **assisted** rows check what follows from your step on the phone or printer;
+  - **manual** rows are judged by eye or with another tool.
+- `validate <row> --printer P [--setup] [--by EM]` prints your step, sets up what it can with `--setup` (after a
+  y/N), then checks the outcome against the warden's own state, polling for the row's time (`--wait` minutes
+  overrides it). A run whose checks pass is signed with `--by`. Each run is kept in `<storage>/validation.json`.
+- What the setups do:
+  - row 1 slices and stages a test cube;
+  - rows 4 and 5 send its Start offer;
+  - row 23 splits six cubes;
+  - row 35 queues a batch of four cubes (or every plate of `--model`);
+  - row 38 sends `PAUSE` to the printer's running warden print;
+  - row 39 queues `fault_test`;
+  - row 41 takes the printer-health snapshot.
+- `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
+- `validate report` prints the table below, filled in, for pasting here.
+
 ## 1. Slice and stage
 
 1. `submit_job(printer, model="cube.stl", material="PLA", quality="draft", offer=False)`.
@@ -18,7 +39,8 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
    `submit_job(..., plate=2)`. Expect: the plate's objects only, a warning naming the plates, no project gcode in
    the job's gcode (its start gcode is the printer profile's). One with a negative part (a hole cut by a volume):
    the hole is in the print.
-3. A model larger than the bed. Expect: refused before slicing, with the axis that does not fit.
+3. A model larger than the bed. Expect: refused before slicing, saying what does not fit (the footprint against the
+   bed, or the height).
 
 ## 2. Start, watch, finish
 
@@ -53,9 +75,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     print, send a gcode that errors mid-print (or cancel it from Fluidd on a printer whose `CANCEL_PRINT` keeps the
     heaters on): within two minutes the targets read 0 and an alert says the warden switched them off.
 
-39. Start a print whose gcode errors early (e.g. `G1 X9999` sent from the console mid-print, or a file calling an
-    undefined macro). Expect: the phone prompt names the cause ("move out of range", "unknown command") with what
-    Klipper said and the last command; **Reprint** stages the same gcode as a new job and offers it for a tap.
+39. `fault_test(printer, "<you>")` (or `validate 39 --setup`) queues a cube whose gcode errors at layer 2; tap
+    Start. Expect: the phone prompt names the cause ("move out of range") with what Klipper said and the last
+    command; within two minutes the heater targets read 0; **Reprint** stages the same gcode as a new job and offers
+    it for a tap (Skip it). `printer_stats` does not count the fault test's failure.
 
 ## 5. Alerts
 

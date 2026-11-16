@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- `print-warden validate` runs the live-validation runbook against the running warden, over `/mcp` as any client
+  does, so it starts nothing.
+  - `validate` lists the rows with their sign-off per printer.
+  - `validate <row> --printer P --setup --by <initials>` sets up what a row needs after a y/N: a test cube, its
+    Start offer, a split, a batch, a `PAUSE` to a running warden print, the fault test, or the printer-health
+    snapshot. It then checks the outcome against the warden's state and signs the row when the checks pass.
+  - `validate sign` records a row judged by eye, or an issue link for one that failed.
+  - `validate report` prints the sign-off table.
+  - Results live in `<storage>/validation.json`.
+- `fault_test(printer, requested_by)` queues a 20 mm cube that stops itself at layer 2: a move Klipper refuses
+  ("Move out of range") before anything moves. It exercises error diagnosis, the Reprint prompt and the cool-down
+  live, starts only on a tap, and stays out of failure stats, "failed before", repeat-cause warnings and `/healthz`'s
+  `outcomes_7d`.
+- The `mcp` dependency floor is now 1.30 (`validate` uses its `streamable_http_client`).
+
 ## 0.8.0
 
 Failure diagnosis, away mode, printer health, spool inventory and filament logistics since 0.7.0. **Upgrade notes:**

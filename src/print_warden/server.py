@@ -1304,7 +1304,7 @@ def _repeat_causes(printer: str, days: float = REPEAT_DAYS) -> list[str]:
     counts: dict[str, int] = {}
     for j in JOBS.since(time.time() - days * 86400, printer):
         cause = j.get("failure_cause")
-        if cause and cause != "unknown":
+        if cause and cause != "unknown" and not calibration.is_fault(j):
             counts[cause] = counts.get(cause, 0) + 1
     return [
         f"{printer} stopped with '{failures.label(c)}' {n} times in {days:g} days: {failures.HINTS.get(c, '')}"
@@ -1323,6 +1323,7 @@ def _failed_before(
         for j in JOBS.by_model(model_hash)
         if j["state"] in ("done", "failed")
         and outcome.failed(j)
+        and not calibration.is_fault(j)
         and j["material"] == material
         and j["quality"] == quality
         and (j["overrides"] or {}) == overrides
@@ -1448,7 +1449,9 @@ def printer_stats(days: int = 90) -> dict[str, Any]:
     printer's ETAs now use), failure rates by printer / material / quality with the commonest reasons, prints,
     hours, grams, filament cost, kWh and energy cost per month, and per metered printer its kWh, mean draw while
     printing, mean heat-up and energy cost."""
-    rows = JOBS.since(time.time() - days * 86400)
+    rows = [
+        j for j in JOBS.since(time.time() - days * 86400) if not calibration.is_fault(j)
+    ]
     return {
         "estimate_accuracy": stats.estimate_accuracy(rows),
         "eta_correction": {n: _correction(n) for n in WATCHERS},
@@ -1829,6 +1832,35 @@ async def calibrate(
             ),
         ]
     res["sections"] = [calibration.label(kind, v) for v in vals]
+    return res
+
+
+@mcp.tool()
+async def fault_test(printer: str, requested_by: str) -> dict[str, Any]:
+    """Stage the live test of error handling: a 20 mm cube whose gcode stops itself at the start of layer 2 with a
+    move far past the X limit, which Klipper refuses ("Move out of range") before anything moves. It is queued and
+    offered like any job and starts only on a tap or chat consent. Then the stop is diagnosed, the phone offers
+    Reprint, and an idle printer still heating is switched off. The job stays out of failure stats, "failed before"
+    and repeat-cause warnings. `requested_by` is recorded on the job (e.g. "validate row 39")."""
+    if not requested_by.strip():
+        raise ValueError("requested_by: say who asked for the fault test")
+    w = _w(printer)
+    mat = await _loaded(printer) or min(w.p.filaments, default=None)
+    if not mat or mat not in w.p.filaments:
+        raise ValueError(f"{printer} has no filament profile for {mat}")
+    quality = "draft" if "draft" in w.p.processes else min(w.p.processes)
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    model = "fault_test_cube.stl"
+    (UPLOADS / model).write_bytes(calibration.tower_stl(1, 10.0))
+    res = await _submit_job(
+        printer,
+        model,
+        mat,
+        quality,
+        name="fault_test",
+        calibration=calibration.fault_spec(),
+    )
+    JOBS.note(res["id"], f"fault test requested by {requested_by.strip()}")
     return res
 
 
@@ -2286,7 +2318,7 @@ def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
     finished = [
         j
         for j in JOBS.since(now - 7 * 86400, printer)
-        if j["state"] in ("done", "failed")
+        if j["state"] in ("done", "failed") and not calibration.is_fault(j)
     ]
     return {
         "prints": len(finished),

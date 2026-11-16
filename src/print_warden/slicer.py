@@ -19,6 +19,7 @@ from typing import Any
 from . import checks
 from . import park as parking
 from .calibration import apply as calibrate_gcode
+from .calibration import fault as fault_gcode
 from .config import Pose, SlicerConfig
 from .preview import render as render_preview
 from .threemf import leaked as project_leaks
@@ -390,7 +391,7 @@ async def slice_stl(
                 raise RuntimeError(f"no gcode inside 3mf: {log[-2000:]}")
             text = z.read(gcodes[0]).decode(errors="ignore")
             leaks = project_leaks(text) if project else []
-            if calibration:
+            if calibration and calibration["kind"] != "fault":
                 text = calibrate_gcode(
                     text,
                     calibration["kind"],
@@ -432,6 +433,8 @@ async def slice_stl(
             checks.gcode_facts(text), machine_cfg, material, purge_zone
         )
         blockers += checks.log_problems(log, cfg.blocking_warnings)
+        if calibration and calibration["kind"] == "fault":
+            gcode.write_text(fault_gcode(text, calibration.get("layer", 2)))
         defined = set(machine_cfg) | set(process_cfg) | set(filament_cfg)
         blockers += [
             f"the project's {k} reached the gcode although the printer profile sets it; not printing this slice"

@@ -263,3 +263,26 @@ async def test_a_user_printer_slices_as_its_bundled_parent(fake_orca, tmp_path):
     assert fake_orca["machine"]["inherits"] == "Vendor P"
     assert fake_orca["machine"]["from"] == "User"
     assert fake_orca["process"]["compatible_printers"] == ["Mine", "Vendor P"]
+
+
+async def test_fault_test_goes_in_after_the_checks(vendor, fake_orca, tmp_path):
+    from print_warden import calibration
+
+    fake_orca["body"] = (
+        ";Z:0.2\nG1 X10 Y10 E1\n;Z:0.4\nG1 X20 Y10 E1\n;Z:0.6\nG1 X30 E1\n"
+    )
+    stl = _binary_stl(tmp_path / "m.stl", 20, 20, 10)
+    res = await slicer.slice_stl(
+        _cfg(vendor),
+        stl,
+        tmp_path / "out",
+        "p",
+        "p",
+        "p",
+        material="PLA",
+        calibration=calibration.fault_spec(),
+    )
+    assert res.blockers == []
+    lines = res.gcode.read_text().splitlines()
+    i = lines.index(calibration.FAULT_LINE)
+    assert lines[i - 1] == ";Z:0.4"

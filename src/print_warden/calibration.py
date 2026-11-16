@@ -11,6 +11,11 @@ command at the first layer of each section, so one print tries five values:
 The values are fixed in code and checked after insertion like any slice (temperatures against the material's range).
 After the print, the phone asks which section looked best; the answer is written to the spool in Spoolman
 (`pw_nozzle_temp`, `pw_flow_ratio`, `pw_pressure_advance`) and applied to that spool's later jobs.
+
+A `fault` spec is not a tower: it is the live check of error handling. `FAULT_LINE`, a move far past any axis limit,
+goes in at the start of layer 2, so Klipper refuses it ("Move out of range") before anything moves and stops the
+print with an error. It is inserted after the slice checks (which would rightly block it) and the job is left out of
+the failure stats.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ FIELDS = {
 }
 PA_DIRECT = (0.01, 0.025, 0.04, 0.055, 0.07)
 PA_BOWDEN = (0.2, 0.35, 0.5, 0.65, 0.8)
+FAULT_LAYER = 2
+FAULT_LINE = "G1 X9999 F600 ; print-warden fault test: Klipper refuses this move and stops the print"
 _Z = re.compile(r"^G[01]\b.*?\bZ(-?\d*\.?\d+)", re.IGNORECASE)
 
 
@@ -136,6 +143,28 @@ def apply(
     if reset:
         out.append(f"{reset} ; print-warden calibration reset")
     return "\n".join(out) + "\n"
+
+
+def fault(gcode: str, layer: int = FAULT_LAYER) -> str:
+    """`FAULT_LINE` after the `layer`-th layer mark (Orca's `;Z:`, else `;LAYER_CHANGE`), counted from the first."""
+    lines = gcode.splitlines()
+    mark = ";Z:" if any(ln.startswith(";Z:") for ln in lines) else ";LAYER_CHANGE"
+    seen = 0
+    for i, line in enumerate(lines):
+        if line.startswith(mark):
+            seen += 1
+            if seen == layer:
+                return "\n".join([*lines[: i + 1], FAULT_LINE, *lines[i + 1 :]]) + "\n"
+    raise ValueError(f"the gcode has fewer than {layer} layers to place the fault in")
+
+
+def fault_spec() -> dict[str, Any]:
+    return {"kind": "fault", "layer": FAULT_LAYER}
+
+
+def is_fault(job: dict[str, Any]) -> bool:
+    """A fault test: it fails on purpose, so it stays out of failure stats and warnings."""
+    return (job.get("calibration") or {}).get("kind") == "fault"
 
 
 def spec(

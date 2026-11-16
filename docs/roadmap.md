@@ -339,9 +339,13 @@ against a mocked Spoolman; row 42 is the first real one.
 
 Done when: a low material appears on the HA list by itself, and a scale reading corrects Spoolman.
 
-## Phase 29 — Live sign-off sprint
+## Phase 29 — Live sign-off sprint ✅ (build)
 
-- `print-warden validate <row>` sets up what a live-validation row needs where it can (a pause left alone, an error
-  gcode, a test batch), checks the result against the warden's own state, and records it.
+- ✅ `print-warden validate <row>` sets up what a live-validation row needs where it can (a pause left alone, an
+  error gcode, a test batch), checks the result against the warden's own state, and records it: 21 rows check
+  themselves or what follows from the operator's step, the rest are signed by hand; `validate report` fills in the
+  sign-off table.
+- ✅ `fault_test`: the error gcode, as a job that stops itself at layer 2 with a move Klipper refuses, kept out of
+  the failure stats.
 
 Done when: every row of `docs/live-validation.md` is signed or has an issue.
