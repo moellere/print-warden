@@ -108,3 +108,21 @@ async def test_spoolman_tuning_round_trip():
     assert seen[1] == ("PATCH", "/api/v1/spool/7", {"extra": {"pw_flow_ratio": "0.97"}})
     with pytest.raises(ValueError):
         await sm.set_tuning(7, "colour", 1)
+
+
+def test_fault_lands_at_layer_two_and_marks_the_job():
+    text = ";TYPE:Custom\nG28\n;Z:0.2\nG1 X1 E1\n;Z:0.4\nG1 X2 E1\n"
+    out = calibration.fault(text).splitlines()
+    assert out[out.index(";Z:0.4") + 1] == calibration.FAULT_LINE
+    assert out.count(calibration.FAULT_LINE) == 1
+    bare = calibration.fault(
+        ";LAYER_CHANGE\nG1 X1 E1\n;LAYER_CHANGE\nG1 X2 E1\n"
+    ).splitlines()
+    assert bare[3] == calibration.FAULT_LINE
+    with pytest.raises(ValueError, match="fewer than 2"):
+        calibration.fault(";Z:0.2\nG1 X1 E1\n")
+    assert calibration.is_fault({"calibration": calibration.fault_spec()})
+    assert not calibration.is_fault({"calibration": None})
+    assert not calibration.is_fault(
+        {"calibration": calibration.spec("flow", (1.0,), 1)}
+    )

@@ -1274,3 +1274,45 @@ def test_a_repeated_klipper_error_warns_on_submit():
     assert len(warn) == 1 and warn[0].startswith(
         "testq stopped with 'move out of range' 2 times in 14 days"
     )
+
+
+async def test_fault_test_is_staged_and_kept_out_of_the_stats(
+    monkeypatch, clean_queues
+):
+    from print_warden import calibration
+
+    _ready_printer("testp")
+    submitted = {}
+
+    async def submit(printer, model, material, quality, **kw):
+        submitted.update(kw, printer=printer, model=model, material=material)
+        return server.JOBS.create(printer=printer, name=kw["name"], material=material)
+
+    monkeypatch.setattr(server, "_submit_job", submit)
+    with pytest.raises(ValueError, match="requested_by"):
+        await server.fault_test("testp", " ")
+    res = await server.fault_test("testp", "validate row 39")
+    assert submitted["calibration"] == calibration.fault_spec()
+    assert (server.UPLOADS / submitted["model"]).exists()
+    assert "validate row 39" in server.JOBS.get(res["id"])["log"][-1]["note"]
+
+    before = server._outcomes_7d("testp", time.time())
+    errors = server.printer_stats()["klipper_errors"]
+    repeats = server._repeat_causes("testp")
+    for i in range(2):
+        j = server.JOBS.create(
+            printer="testp",
+            name=f"f{i}",
+            material="PLA",
+            calibration=calibration.fault_spec(),
+        )
+        server.JOBS.transition(
+            j["id"],
+            "failed",
+            "x",
+            failure_cause="move_out_of_range",
+            error="Move out of range",
+        )
+    assert server._repeat_causes("testp") == repeats
+    assert server.printer_stats()["klipper_errors"] == errors
+    assert server._outcomes_7d("testp", time.time()) == before

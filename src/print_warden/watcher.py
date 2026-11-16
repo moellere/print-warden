@@ -767,7 +767,7 @@ class PrinterWatcher:
         )
         completed = ev.kind == "print_complete"
         cal = job.get("calibration")
-        if cal and completed:
+        if cal and completed and cal["kind"] in calibration.KINDS:
             await self.ha.notify_actionable(
                 f"Which section of the {cal['kind']} tower looked best?",
                 f"{self.p.name}: sections count from the bottom. The answer is saved to the spool.",
