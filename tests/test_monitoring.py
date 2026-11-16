@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 
 import httpx
@@ -265,3 +266,127 @@ async def test_a_finished_tower_asks_for_the_best_section(w):
     title, actions, _, _ = w.ha.prompts[-1]
     assert title.startswith("Which section of the temp tower")
     assert actions[0] == f"PRINT_WARDEN_CALIB_{job['id']}:1"
+
+
+def _paused(w, job, state="paused", klippy="ready", targets=(0, 0)):
+    w.mr.connected = True
+    w.mr.state = {
+        "print_stats": {"state": state, "filename": job["remote_name"] if job else ""},
+        "webhooks": {"state": klippy},
+        "extruder": {"target": targets[0]},
+        "heater_bed": {"target": targets[1]},
+    }
+
+
+@pytest.fixture
+def mr_calls(monkeypatch):
+    calls = []
+
+    async def cancel(base):
+        calls.append("cancel")
+
+    async def heaters_off(base):
+        calls.append("heaters_off")
+
+    monkeypatch.setattr(watcher_mod.moonraker, "cancel_print", cancel)
+    monkeypatch.setattr(watcher_mod.moonraker, "heaters_off", heaters_off)
+    monkeypatch.setattr(watcher_mod, "PAUSE_POLL_S", 0.01)
+    monkeypatch.setattr(watcher_mod, "COOL_GRACE_S", 0.01)
+    return calls
+
+
+async def _settle(w):
+    for _ in range(100):
+        if not w._tasks:
+            return
+        await asyncio.sleep(0.01)
+
+
+async def test_a_paused_print_nobody_answers_is_cancelled_heaters_off(w, mr_calls):
+    w.cfg = dataclasses.replace(w.cfg, paused_cancel_minutes=0.001)
+    job = _printing_job(w.jobs)
+    _paused(w, job)
+    w._watch_pause()
+    await _settle(w)
+    assert mr_calls == ["cancel"]
+    assert w.ha.alerts == ["warning"]
+    assert f"print_warden_pause_{job['id']}" in w.ha.cleared
+    assert any("cancelled after" in e["note"] for e in w.jobs.get(job["id"])["log"])
+    assert w.jobs.kv_get(f"paused_since:{job['id']}") is None
+
+
+async def test_a_resume_ends_the_watch(w, mr_calls):
+    w.cfg = dataclasses.replace(w.cfg, paused_cancel_minutes=0.05)
+    job = _printing_job(w.jobs)
+    _paused(w, job)
+    w._watch_pause()
+    await asyncio.sleep(0.03)
+    _paused(w, job, state="printing")
+    await _settle(w)
+    assert mr_calls == []
+    assert w.jobs.kv_get(f"paused_since:{job['id']}") is None
+
+
+async def test_the_pause_start_survives_a_restart_and_zero_turns_it_off(w, mr_calls):
+    import time
+
+    job = _printing_job(w.jobs)
+    _paused(w, job)
+    w.cfg = dataclasses.replace(w.cfg, paused_cancel_minutes=0)
+    w._watch_pause()
+    await _settle(w)
+    assert mr_calls == [] and not w._tasks
+    w.cfg = dataclasses.replace(w.cfg, paused_cancel_minutes=30)
+    w.jobs.kv_set(f"paused_since:{job['id']}", str(time.time() - 31 * 60))
+    w._watch_pause()
+    await _settle(w)
+    assert mr_calls == ["cancel"]
+
+
+async def test_heaters_still_on_after_a_failed_print_are_switched_off(w, mr_calls):
+    job = _printing_job(w.jobs)
+    _paused(w, job, state="error", targets=(210, 60))
+    await w._cool_after_failure("print_error")
+    assert mr_calls == ["heaters_off"]
+    assert w.ha.alerts == ["warning"]
+    for state, klippy, targets in (
+        ("error", "ready", (0, 0)),  # already cold
+        ("printing", "ready", (210, 60)),  # a new print started
+        (
+            "error",
+            "shutdown",
+            (210, 60),
+        ),  # Klipper shut down: heaters are off and gcode would fail
+    ):
+        _paused(w, job, state=state, klippy=klippy, targets=targets)
+        await w._cool_after_failure("print_cancelled")
+    assert mr_calls == ["heaters_off"]
+
+
+async def test_the_pause_alert_says_when_it_cancels(w, mr_calls):
+    w.cfg = dataclasses.replace(w.cfg, paused_cancel_minutes=30)
+    ev = Event("p", "print_paused", "warning", "Paused a.gcode: runout", alert=True)
+    await w.handle(ev)
+    assert "cancels itself at" in ev.message and (
+        "AM" in ev.message or "PM" in ev.message
+    )
+
+
+async def test_cancel_print_switches_the_heaters_off(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append((req.url.path, req.url.params.get("script")))
+        return httpx.Response(200, json={"result": "ok"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        moonraker.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
+    )
+    await moonraker.cancel_print("http://x")
+    assert seen == [
+        ("/printer/print/cancel", None),
+        ("/printer/gcode/script", "TURN_OFF_HEATERS"),
+    ]

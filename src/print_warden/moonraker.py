@@ -163,9 +163,17 @@ async def power(base_url: str, device: str, action: str | None = None) -> str:
 
 
 async def cancel_print(base_url: str) -> None:
-    """Cancel the running print. Only called for an operator's Cancel tap on a notification bound to that job."""
+    """Cancel the running print and switch the heaters off. Called for an operator's Cancel tap on a notification
+    bound to that job, or when a paused print runs past `policy.paused_cancel_minutes` unanswered."""
     async with httpx.AsyncClient(timeout=30) as c:
         (await c.post(f"{base_url}/printer/print/cancel")).raise_for_status()
+    await heaters_off(base_url)
+
+
+async def heaters_off(base_url: str) -> None:
+    """Klipper's TURN_OFF_HEATERS. Klipper's own CANCEL_PRINT leaves the heaters on unless the printer's cancel macro
+    switches them off, and a print that ends in an error leaves them as they were."""
+    await gcode_script(base_url, "TURN_OFF_HEATERS", timeout=30)
 
 
 async def resume_print(base_url: str) -> None:
@@ -175,7 +183,7 @@ async def resume_print(base_url: str) -> None:
 
 
 async def gcode_script(base_url: str, script: str, timeout: float = 120) -> None:
-    """Run G-code and wait for it to finish. The only caller is the opt-in bed-pose rehome (G28 Y + a Y move)."""
+    """Run G-code and wait for it to finish. Callers: the opt-in bed-pose rehome (G28 Y + a Y move) and heaters_off."""
     async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.post(f"{base_url}/printer/gcode/script", params={"script": script})
         r.raise_for_status()

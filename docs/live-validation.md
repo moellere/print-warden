@@ -48,6 +48,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     **Resume** resumes.
 15. Restart the warden mid-print. Expect: the job still `printing` after reconnect; on finish it is settled from
     Moonraker's history.
+38. With `policy.paused_cancel_minutes: 2`, `PAUSE` a print and leave it. Expect: the pause alert names the time;
+    two minutes later the print is cancelled, both heater targets read 0 and a warning alert says why. Then start a
+    print, send a gcode that errors mid-print (or cancel it from Fluidd on a printer whose `CANCEL_PRINT` keeps the
+    heaters on): within two minutes the targets read 0 and an alert says the warden switched them off.
 
 ## 5. Alerts
 
@@ -171,3 +175,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 35 | A 4-plate project as one batch across both printers | | |
 | 36 | `/stage`: upload, slice, queue, offer on the phone | | |
 | 37 | kWh per print within a few percent of the plug's counter | | |
+| 38 | A paused print cancels itself, heaters off; a failed print is cooled | | |
