@@ -45,6 +45,7 @@ from . import (
     outcome,
     park,
     policy,
+    presence,
     retention,
     rules,
     schedule,
@@ -301,6 +302,14 @@ async def _auto_gate(
     bc = w.p.bed_check
     if not w.p.auto_start:
         return False, [f"auto_start is off for {w.p.name}"], None
+    pr = CFG.presence
+    if pr and not pr.auto_start_when_away and presence.STATE["home"] is not True:
+        why = "nobody is home" if presence.away() else "presence is unknown"
+        return (
+            False,
+            [f"{why}: no unattended start (presence.auto_start_when_away)"],
+            None,
+        )
     if not bc:
         return False, [f"{w.p.name} has no bed_check configured"], None
     check = await w.check_bed()
@@ -1130,6 +1139,16 @@ async def advance_queue(printer: str) -> dict[str, Any]:
     if not head:
         why = "queue empty" if not queue else "every queued job has slice blockers"
         return {"action": "none", "why": why}
+    pr = CFG.presence
+    if pr and pr.away_offer_max_hours is not None and presence.away():
+        est_h = _corrected_est(head) / 3600
+        if est_h > pr.away_offer_max_hours:
+            return {
+                "action": "none",
+                "why": f"nobody is home: {head['name']} runs {est_h:.1f} h, over presence.away_offer_max_hours "
+                f"({pr.away_offer_max_hours:g})",
+                "job_id": head["id"],
+            }
     if CFG.cheap_power and HA:
         cp = CFG.cheap_power
         est = _corrected_est(head)
@@ -2116,6 +2135,7 @@ async def status_data() -> dict[str, Any]:
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
     report["batches"] = _open_batches()
+    report["away"] = presence.away()
     return report
 
 
@@ -2436,6 +2456,47 @@ async def upkeep_alerts(now: float | None = None) -> int:
     return sent
 
 
+async def presence_tick(now: float | None = None) -> str | None:
+    """Read the presence entity once; on coming home, send the summary and offer what waited. Returns the change."""
+    pr = CFG.presence
+    if not (pr and HA):
+        return None
+    now = now or time.time()
+    since = presence.STATE["away_since"]
+    change = presence.update(
+        presence.is_home(await HA.state(pr.entity), pr.home_states), now
+    )
+    if change == "back" and since:
+        printers = {
+            n: {
+                "bed": BED.state(n)["state"],
+                "queued": len(JOBS.queue(n)),
+                "awaiting": bool(JOBS.list(n, 1, ("awaiting_approval",))),
+            }
+            for n in WATCHERS
+        }
+        msg = presence.summary(JOBS.since(since), printers, (now - since) / 3600)
+        STORE.add(Event("warden", "welcome_home", "info", msg, alert=False))
+        await HA.alert("warden", "info", "while you were out", msg)
+        presence.STATE["away_since"] = None
+        for n in WATCHERS:
+            try:
+                await advance_queue(n)
+            except Exception:
+                log.exception("welcome-home offer %s", n)
+    return change
+
+
+async def presence_loop() -> None:
+    assert CFG.presence
+    while True:
+        try:
+            await presence_tick()
+        except Exception:
+            log.exception("presence")
+        await asyncio.sleep(CFG.presence.poll_s)
+
+
 async def upkeep_loop(interval_s: float = 3600) -> None:
     """Hourly: upkeep alerts, and a fresh look at queues held for cheaper power (prices move by the hour)."""
     while True:
@@ -2582,6 +2643,8 @@ async def lifespan(app: Starlette):
     tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
     tasks.append(asyncio.create_task(entity_loop(), name="ha-entities"))
     tasks.append(asyncio.create_task(upkeep_loop(), name="upkeep"))
+    if CFG.presence and HA:
+        tasks.append(asyncio.create_task(presence_loop(), name="presence"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(

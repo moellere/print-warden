@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Away mode (`presence.entity`, optional): while nobody is home, no unattended start (also while presence is
+  unknown), quiet hours stop muting alerts, and `away_offer_max_hours` holds longer jobs. Coming home sends a "while
+  you were out" summary and offers what waited. Presence is kept in memory only. `/status` shows "away".
 - A print that stops with a Klipper error is diagnosed: the cause (not homed, move out of range, cold extrusion,
   extrusion limits, unknown command, probe, file, or a shutdown cause) and what Klipper said, with the last command,
   are kept on the job (`failure_cause`, `failure_detail`). The phone prompt leads with them and offers **Reprint**;

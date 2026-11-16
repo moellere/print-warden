@@ -140,6 +140,8 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta http-equiv="refresh" content="30"><title>print-warden</title>'
         f"<style>{CSS}</style></head><body><main>"
-        f'<h1>print-warden <span class="mute">{_e(data.get("version"))} · {now:%H:%M}</span></h1>'
+        f'<h1>print-warden <span class="mute">{_e(data.get("version"))} · {now:%H:%M}</span>'
+        + (' <span class="warn">· away</span>' if data.get("away") else "")
+        + "</h1>"
         f'<div class="grid">{"".join(cards)}</div></main></body></html>'
     )

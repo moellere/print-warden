@@ -62,6 +62,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 16. Inside `quiet_hours`, or with `quiet_entity` in a quiet state: a warning (unplug a fan's tach or set a low
     `temp_limits` value) is held; a critical alert still arrives.
 17. Toggle `quiet_entity` off. Expect: the next warning arrives.
+40. With `presence.entity` set and `presence.away_offer_max_hours: 1`, leave home (or set the person `not_home` in
+    Developer tools) with a 2 h job queued and `auto_start` on. Expect: no offer and no start (`offer_next` says
+    "nobody is home"); a warning inside quiet hours still arrives. Come back: one "while you were out" alert, then
+    the offer.
 
 ## 6. Integrations
 
@@ -181,3 +185,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 37 | kWh per print within a few percent of the plug's counter | | |
 | 38 | A paused print cancels itself, heaters off; a failed print is cooled | | |
 | 39 | An errored print names its cause; Reprint queues it | | |
+| 40 | Away mode: no offer or auto-start away; summary and offer on return | | |

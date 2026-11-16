@@ -13,7 +13,7 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Slice, stage gcode, snapshots, alerts, work light | the warden, automatically |
 | Mark the bed clear | the operator: the "Bed cleared" phone button, or quoted chat permission (`mark_bed_clear`) |
 | Start a print | the operator: a phone tap (`request_start`) or quoted chat permission (`start_print`), and `policy.can_start` must pass |
-| Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours` |
+| Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours`, and (with `presence`) while someone is home |
 | Pause on detected failure | Obico |
 | Cancel or resume a running print | a human: at the printer, or the Cancel / Resume button on a warden notification for that job (no MCP tool can) |
 | Cancel a print left paused | the warden, once it has been paused `policy.paused_cancel_minutes` (default 30; `0` never) with no Resume |
@@ -71,6 +71,13 @@ extrusion, extrude-only move too long, extrusion too wide or fast, unknown comma
 requested_by)` from chat) uploads the job's own gcode again as a new job and queues it; it starts on its own tap like
 any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
 printer (`klipper_errors`).
+
+**Away mode.** With `presence.entity` (a `person.*`, a group, or `zone.home`, whose state is a head count), the
+warden reads Home Assistant every `presence.poll_s` (60) and keeps only the current answer and when the house emptied,
+in memory; presence is never written to disk. While nobody is home: no unattended start (unless
+`presence.auto_start_when_away`; an unreadable entity also blocks auto-start), quiet hours stop muting alerts, and with
+`presence.away_offer_max_hours` a longer job is not offered. Coming home sends one "while you were out" alert (what
+finished or failed, each printer's bed and queue) and offers whatever waited.
 
 `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
 that Home Assistant entity is in `alerts.quiet_states` (default `["on"]`; an unreadable entity never mutes); critical alerts and
@@ -331,6 +338,7 @@ src/print_warden/
   policy.py     can_start(), approval_expired()
   reconcile.py  settle jobs from Moonraker history after a restart or outage
   failures.py   why a print stopped with a Klipper error, and what to check
+  presence.py   away mode: what changes while nobody is home
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)

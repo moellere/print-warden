@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .presence import Presence
 from .upkeep import Interval, parse_maintenance
 
 
@@ -157,6 +158,7 @@ class Config:
     upkeep: Upkeep = Upkeep()
     cheap_power: CheapPower | None = None
     energy: Energy = Energy()
+    presence: Presence | None = None
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -211,6 +213,19 @@ def _purge_zone(name: str, raw: Any) -> tuple[float, float, float, float] | None
     if x0 > x1 or y0 > y1:
         raise ValueError(f"{name}: purge_zone needs x0 <= x1 and y0 <= y1")
     return x0, y0, x1, y1
+
+
+def _presence(raw: dict[str, Any] | None) -> Presence | None:
+    if not raw or not raw.get("entity"):
+        return None
+    cap = raw.get("away_offer_max_hours")
+    return Presence(
+        entity=str(raw["entity"]),
+        home_states=tuple(str(s) for s in raw.get("home_states") or ("home",)),
+        auto_start_when_away=bool(raw.get("auto_start_when_away", False)),
+        away_offer_max_hours=float(cap) if cap is not None else None,
+        poll_s=float(raw.get("poll_s", 60)),
+    )
 
 
 def _slicer(raw: dict[str, Any]) -> SlicerConfig:
@@ -310,6 +325,7 @@ def load(path: str | Path) -> Config:
         )
         if (cp := pol.get("cheap_power"))
         else None,
+        presence=_presence(raw.get("presence")),
         energy=Energy(
             price_per_kwh=float(en["price_per_kwh"])
             if (en := raw.get("energy") or {}).get("price_per_kwh") is not None

@@ -284,12 +284,15 @@ Done when: a two-colour print is sliced, checked, started by tap and deducts bot
 
 Done when: an error print, replayed, shows its cause on the phone and Reprint queues it.
 
-## Phase 25 — Away mode
+## Phase 25 — Away mode ✅ (build)
 
 - From Home Assistant presence (state only, never recorded): away, no auto-start and long prints are not offered
   unless allowed; alerts and the pause/cancel prompts ignore quiet hours. Back home: a "while you were out" summary.
 
 Done when: away, a queued job is neither offered nor auto-started, and coming home brings the summary.
+
+Offers are not held while away by default: a tap can come from anywhere, so only `away_offer_max_hours` holds them.
+Unattended starts are, and an unreadable presence entity counts as away for them (the safe side) but not for alerts.
 
 ## Phase 26 — Printer health and config drift
 

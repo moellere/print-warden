@@ -24,6 +24,7 @@ from . import (
     outcome,
     park,
     policy,
+    presence,
     reconcile,
     timelapse,
 )
@@ -885,7 +886,9 @@ class PrinterWatcher:
 
     async def quiet(self) -> bool:
         """Inside the quiet_hours window, or the quiet_entity in Home Assistant is in one of quiet_states. An
-        unreadable entity is not quiet: alerts fail loud."""
+        unreadable entity is not quiet: alerts fail loud. Never quiet while the house is known to be away."""
+        if presence.away():
+            return False
         if policy.in_window(self.cfg.quiet_hours, datetime.now().astimezone()):
             return True
         if not (self.ha and self.cfg.quiet_entity):
