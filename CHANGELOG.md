@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Filament logistics: `upkeep.todo_entity` puts each material to reorder on a Home Assistant to-do list and takes it
+  off when stock recovers; `upkeep.dry_boxes` alerts on humidity over a box's limit; a run-out forecast per material
+  (30 days of use) in `upkeep_status` and on `/status`; a printer's `spool_scale_entity` weighs its spool while idle.
+- Spool inventory, with Spoolman as the record: `register_spool` (vendor and filament matched or created; the spool's
+  code `S<id>` for a label), `weigh_spool` (remaining from a scale reading and the empty-spool weight; counted against
+  weighed use, with a flag over 5 % drift), `swap_spool` (outgoing weighed, new one active, checked against the queue
+  and drying), `retire_spool`. The `/spools` page does all four. `upkeep.weigh_every_days` sends a weigh-in prompt
+  that takes the grams as a typed reply.
+- Printer health, read-only: `printer_health(printer, accept)` and an hourly check compare each printer with a
+  known-good snapshot: changed Klipper settings (includes resolved), a pending `SAVE_CONFIG`, MCU firmware from a
+  different Klipper release, waiting updates, and saved meshes whose range grew. One warning alert per new set of
+  findings; `/healthz` adds `health` (the finding kinds).
+- Away mode (`presence.entity`, optional): while nobody is home, no unattended start (also while presence is
+  unknown), quiet hours stop muting alerts, and `away_offer_max_hours` holds longer jobs. Coming home sends a "while
+  you were out" summary and offers what waited. Presence is kept in memory only. `/status` shows "away".
+- A print that stops with a Klipper error is diagnosed: the cause (not homed, move out of range, cold extrusion,
+  extrusion limits, unknown command, probe, file, or a shutdown cause) and what Klipper said, with the last command,
+  are kept on the job (`failure_cause`, `failure_detail`). The phone prompt leads with them and offers **Reprint**;
+  a failure labelled by hand is followed by the same offer. `reprint(job_id, requested_by)` queues the job's own gcode
+  again (starts on its own tap). A cause seen twice on one printer in 14 days warns on `submit_job`;
+  `printer_stats` reports `klipper_errors` per printer. New job columns are added on start-up.
+
 ## 0.7.0
 
 Safety and notification fixes since 0.6.0. **Upgrade notes:** a print left paused 30 minutes with no Resume is now

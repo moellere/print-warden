@@ -53,11 +53,22 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     print, send a gcode that errors mid-print (or cancel it from Fluidd on a printer whose `CANCEL_PRINT` keeps the
     heaters on): within two minutes the targets read 0 and an alert says the warden switched them off.
 
+39. Start a print whose gcode errors early (e.g. `G1 X9999` sent from the console mid-print, or a file calling an
+    undefined macro). Expect: the phone prompt names the cause ("move out of range", "unknown command") with what
+    Klipper said and the last command; **Reprint** stages the same gcode as a new job and offers it for a tap.
+
 ## 5. Alerts
 
 16. Inside `quiet_hours`, or with `quiet_entity` in a quiet state: a warning (unplug a fan's tach or set a low
     `temp_limits` value) is held; a critical alert still arrives.
 17. Toggle `quiet_entity` off. Expect: the next warning arrives.
+40. With `presence.entity` set and `presence.away_offer_max_hours: 1`, leave home (or set the person `not_home` in
+    Developer tools) with a 2 h job queued and `auto_start` on. Expect: no offer and no start (`offer_next` says
+    "nobody is home"); a warning inside quiet hours still arrives. Come back: one "while you were out" alert, then
+    the offer.
+41. `printer_health(printer)` (takes the snapshot), then change a harmless setting in `printer.cfg` (e.g.
+    `max_accel`) and restart Klipper. Expect: `printer_health` lists `[printer] max_accel: a -> b`, an hourly alert
+    says so once, `/healthz` shows `health: ["config_changed"]`; `accept=True` clears it.
 
 ## 6. Integrations
 
@@ -133,6 +144,20 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     (the entity reads as an energy or power sensor), then print. Expect: `print_history` shows `energy_kwh` within a
     few percent of the counter's rise in HA over the print, `heatup_kwh` well under it, and an `energy_cost`.
 
+## 15. Spool inventory
+
+42. On `/spools`, register a spool from a new box (vendor, material, colour, empty-spool weight from the vendor or
+    an empty spool on the scale). Expect: it appears in Spoolman with its filament, and the page gives its code; write
+    it on the spool. Swap it onto a printer with the outgoing spool on the scale. Expect: the old spool's remaining
+    weight is corrected, the new one is active, and a material that does not suit the queue is named.
+43. With `upkeep.weigh_every_days: 1`, wait for the weigh-in prompt, type the scale reading into the reply. Expect:
+    Spoolman's remaining weight follows the scale; a filament with a deliberately wrong density in Spoolman shows a
+    drift over 5 % after ~100 g of printing.
+
+44. With `upkeep.todo_entity` set and a material under `reorder_below_g`: within the hour "PLA filament" is on the
+    HA list once; register a new spool and it comes off. With a `spool_scale_entity`: lift the spool off and back
+    while the printer is idle; the next hourly pass records a weigh-in.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -176,3 +201,9 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 36 | `/stage`: upload, slice, queue, offer on the phone | | |
 | 37 | kWh per print within a few percent of the plug's counter | | |
 | 38 | A paused print cancels itself, heaters off; a failed print is cooled | | |
+| 39 | An errored print names its cause; Reprint queues it | | |
+| 40 | Away mode: no offer or auto-start away; summary and offer on return | | |
+| 41 | Printer health: a printer.cfg change is a finding until accepted | | |
+| 42 | Spool registered, labelled, swapped on with the old one weighed | | |
+| 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
+| 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |

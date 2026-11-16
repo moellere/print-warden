@@ -57,6 +57,15 @@ def correction(jobs: list[dict[str, Any]], printer: str) -> float:
     return round(min(hi, max(lo, statistics.median(rs))), 3)
 
 
+def failure_causes(jobs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Per printer, how often each Klipper error cause stopped a print."""
+    out: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for j in jobs:
+        if j.get("failure_cause"):
+            out[j["printer"]][j["failure_cause"]] += 1
+    return {p: dict(sorted(c.items())) for p, c in sorted(out.items())}
+
+
 def outcomes(jobs: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     """Done vs failed grouped by `key` (printer, material or quality), with the commonest failure reasons. A human's
     label (outcome) wins over how the job ended; `labelled` says how many of the prints carry one."""

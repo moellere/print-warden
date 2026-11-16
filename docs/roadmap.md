@@ -272,3 +272,76 @@ integral: close enough for a price that changes hourly and a print of a few hour
 - Only if a multi-material printer is (or will be) in use: the MMU behaviour needs real hardware to validate.
 
 Done when: a two-colour print is sliced, checked, started by tap and deducts both spools.
+
+## Phase 24 — Why a print failed, and Reprint ✅ (build)
+
+- A print that stops with a Klipper error records why: `print_stats.message`, the shutdown message, and the `!! `
+  errors and last command from Moonraker's gcode store, classified (not homed, move out of range, cold extrusion,
+  extrusion limits, unknown command, probe, file, and every shutdown cause) with what to check.
+- The failure prompt leads with the cause and offers **Reprint**: the job's own gcode queued again, started by tap
+  like any job. A failure labelled by hand is followed by the same offer.
+- A cause seen twice on one printer in 14 days warns on `submit_job`; `printer_stats` counts causes per printer.
+
+Done when: an error print, replayed, shows its cause on the phone and Reprint queues it.
+
+## Phase 25 — Away mode ✅ (build)
+
+- From Home Assistant presence (state only, never recorded): away, no auto-start and long prints are not offered
+  unless allowed; alerts and the pause/cancel prompts ignore quiet hours. Back home: a "while you were out" summary.
+
+Done when: away, a queued job is neither offered nor auto-started, and coming home brings the summary.
+
+Offers are not held while away by default: a tap can come from anywhere, so only `away_offer_max_hours` holds them.
+Unattended starts are, and an unreadable presence entity counts as away for them (the safe side) but not for alerts.
+
+## Phase 26 — Printer health and config drift ✅ (build)
+
+- Read-only through Moonraker: `printer.cfg` (and includes) diffed against a snapshot, Klipper / Moonraker / MCU
+  firmware versions and mismatches, probe and mesh drift from the saved `bed_mesh` profiles. Findings feed
+  homelab-helper's printwarden source.
+
+Done when: a changed `printer.cfg` or a version mismatch shows as a finding before the next print.
+
+The diff is of Klipper's parsed settings rather than the files, so includes need no fetching and comments or
+reordering are not changes. `/healthz` carries only the finding kinds (details can name files); homelab-helper's
+printwarden source still needs to turn them into findings.
+
+## Phase 27 — Spool inventory ✅ (build)
+
+Spoolman stays the system of record; the warden runs the physical workflows around it, from chat, the phone and a
+`/spools` page (same token as `/status`, forms like `/stage`).
+
+- **Register:** a new spool in one step (vendor, material, colour, net weight, empty-spool weight, price, where it is
+  stored). The filament is matched or created in Spoolman, and a short spool code is shown for a label. Optional:
+  an NFC sticker on the spool, bound with one Home Assistant tag scan.
+- **Weigh-ins:** record a gross weight (scale reading); remaining = gross − empty-spool weight, written to Spoolman.
+  The difference from the warden's counted use is kept per spool; a drift over ~5 % flags a wrong density or diameter.
+  Periodic validation: a spool not weighed for `upkeep.weigh_every_days`, or after a set amount used, gets a phone
+  prompt that takes the number as a reply.
+- **Swap:** a guided switch-out per printer: weigh the outgoing spool (optional), pick or scan the incoming one, and
+  the warden sets it active, checks it against the printer's queue (material, enough grams), and says if it is due
+  for drying. A spool can be retired (empty) or moved to storage.
+
+Done when: a new spool goes from the box to registered, loaded and weighed again with no Spoolman UI, and a
+mis-set density shows as drift.
+
+Built without the NFC sticker: the spool code on a label does the same job with no tag setup, and a Home Assistant
+tag scan can follow when the codes prove too slow. The Spoolman writes (vendor, filament, spool, PATCH) are tested
+against a mocked Spoolman; row 42 is the first real one.
+
+## Phase 28 — Filament logistics ✅ (build)
+
+- Reorder findings land on a Home Assistant to-do list. Optional humidity sensor per dry box replaces the days-open
+  drying guess. Run-out forecast per material from recent use.
+- Optional `spool_scale_entity` per printer (a load cell under the spool holder, e.g. HX711 + ESPHome): read while
+  the printer is idle, less the spool's empty weight from Spoolman, it corrects the spool's remaining weight through
+  the same weigh-in path as Phase 27.
+
+Done when: a low material appears on the HA list by itself, and a scale reading corrects Spoolman.
+
+## Phase 29 — Live sign-off sprint
+
+- `print-warden validate <row>` sets up what a live-validation row needs where it can (a pause left alone, an error
+  gcode, a test batch), checks the result against the warden's own state, and records it.
+
+Done when: every row of `docs/live-validation.md` is signed or has an issue.

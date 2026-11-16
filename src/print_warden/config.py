@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .presence import Presence
 from .upkeep import Interval, parse_maintenance
 
 
@@ -80,6 +81,7 @@ class Printer:
     finish_window: str | None = None
     purge_zone: tuple[float, float, float, float] | None = None
     power_entity: str | None = None
+    spool_scale_entity: str | None = None
     maintenance: dict[str, Interval] = field(default_factory=dict)
 
     @property
@@ -107,9 +109,19 @@ class Energy:
 
 
 @dataclass(frozen=True)
+class DryBox:
+    name: str
+    entity: str
+    max_pct: float = 20.0
+
+
+@dataclass(frozen=True)
 class Upkeep:
     reorder_below_g: float = 200.0
     dry_after_days: dict[str, float] = field(default_factory=dict)
+    weigh_every_days: float | None = None
+    todo_entity: str | None = None
+    dry_boxes: tuple[DryBox, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +169,7 @@ class Config:
     upkeep: Upkeep = Upkeep()
     cheap_power: CheapPower | None = None
     energy: Energy = Energy()
+    presence: Presence | None = None
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -213,6 +226,19 @@ def _purge_zone(name: str, raw: Any) -> tuple[float, float, float, float] | None
     return x0, y0, x1, y1
 
 
+def _presence(raw: dict[str, Any] | None) -> Presence | None:
+    if not raw or not raw.get("entity"):
+        return None
+    cap = raw.get("away_offer_max_hours")
+    return Presence(
+        entity=str(raw["entity"]),
+        home_states=tuple(str(s) for s in raw.get("home_states") or ("home",)),
+        auto_start_when_away=bool(raw.get("auto_start_when_away", False)),
+        away_offer_max_hours=float(cap) if cap is not None else None,
+        poll_s=float(raw.get("poll_s", 60)),
+    )
+
+
 def _slicer(raw: dict[str, Any]) -> SlicerConfig:
     raw = dict(raw)
     if "blocking_warnings" in raw:
@@ -250,6 +276,7 @@ def load(path: str | Path) -> Config:
             finish_window=p.get("finish_window") or None,
             purge_zone=_purge_zone(name, p.get("purge_zone")),
             power_entity=p.get("power_entity") or None,
+            spool_scale_entity=p.get("spool_scale_entity") or None,
             maintenance=parse_maintenance(p.get("maintenance")),
         )
     ha = None
@@ -310,6 +337,7 @@ def load(path: str | Path) -> Config:
         )
         if (cp := pol.get("cheap_power"))
         else None,
+        presence=_presence(raw.get("presence")),
         energy=Energy(
             price_per_kwh=float(en["price_per_kwh"])
             if (en := raw.get("energy") or {}).get("price_per_kwh") is not None
@@ -327,5 +355,13 @@ def load(path: str | Path) -> Config:
                     (raw.get("upkeep") or {}).get("dry_after_days") or {}
                 ).items()
             },
+            weigh_every_days=float(wd)
+            if (wd := (raw.get("upkeep") or {}).get("weigh_every_days"))
+            else None,
+            todo_entity=(raw.get("upkeep") or {}).get("todo_entity") or None,
+            dry_boxes=tuple(
+                DryBox(str(b["name"]), str(b["entity"]), float(b.get("max_pct", 20)))
+                for b in (raw.get("upkeep") or {}).get("dry_boxes") or []
+            ),
         ),
     )

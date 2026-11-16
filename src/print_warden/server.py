@@ -36,6 +36,7 @@ from . import (
     checks,
     config,
     energy,
+    failures,
     footprint,
     ha_entities,
     intake,
@@ -44,16 +45,20 @@ from . import (
     outcome,
     park,
     policy,
+    presence,
     retention,
     rules,
     schedule,
     slicer,
+    spoolpage,
+    spools,
     stage,
     stats,
     status,
     threemf,
     upkeep,
 )
+from . import health as phealth
 from .bedcheck import BedStore
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
@@ -300,6 +305,14 @@ async def _auto_gate(
     bc = w.p.bed_check
     if not w.p.auto_start:
         return False, [f"auto_start is off for {w.p.name}"], None
+    pr = CFG.presence
+    if pr and not pr.auto_start_when_away and presence.STATE["home"] is not True:
+        why = "nobody is home" if presence.away() else "presence is unknown"
+        return (
+            False,
+            [f"{why}: no unattended start (presence.auto_start_when_away)"],
+            None,
+        )
     if not bc:
         return False, [f"{w.p.name} has no bed_check configured"], None
     check = await w.check_bed()
@@ -594,7 +607,9 @@ async def _submit_job(
         calibration=calibration,
     )
     history = _history(model_hash)
-    before = _failed_before(model_hash, mat, q, overrides or {})
+    before = _failed_before(model_hash, mat, q, overrides or {}) + _repeat_causes(
+        printer
+    )
     job = JOBS.create(
         printer=printer,
         name=stem,
@@ -1127,6 +1142,16 @@ async def advance_queue(printer: str) -> dict[str, Any]:
     if not head:
         why = "queue empty" if not queue else "every queued job has slice blockers"
         return {"action": "none", "why": why}
+    pr = CFG.presence
+    if pr and pr.away_offer_max_hours is not None and presence.away():
+        est_h = _corrected_est(head) / 3600
+        if est_h > pr.away_offer_max_hours:
+            return {
+                "action": "none",
+                "why": f"nobody is home: {head['name']} runs {est_h:.1f} h, over presence.away_offer_max_hours "
+                f"({pr.away_offer_max_hours:g})",
+                "job_id": head["id"],
+            }
     if CFG.cheap_power and HA:
         cp = CFG.cheap_power
         est = _corrected_est(head)
@@ -1271,6 +1296,23 @@ async def _spool_temps(
     )
 
 
+REPEAT_DAYS = 14
+
+
+def _repeat_causes(printer: str, days: float = REPEAT_DAYS) -> list[str]:
+    """A Klipper error cause seen twice or more on this printer lately, with what to check."""
+    counts: dict[str, int] = {}
+    for j in JOBS.since(time.time() - days * 86400, printer):
+        cause = j.get("failure_cause")
+        if cause and cause != "unknown":
+            counts[cause] = counts.get(cause, 0) + 1
+    return [
+        f"{printer} stopped with '{failures.label(c)}' {n} times in {days:g} days: {failures.HINTS.get(c, '')}"
+        for c, n in sorted(counts.items())
+        if n >= 2
+    ]
+
+
 def _failed_before(
     model_hash: str, material: str, quality: str, overrides: dict[str, Any]
 ) -> list[str]:
@@ -1386,6 +1428,8 @@ def print_history(
         "outcome",
         "outcome_reason",
         "outcome_hint",
+        "failure_cause",
+        "failure_detail",
         "started_at",
         "finished_at",
         "source_url",
@@ -1411,6 +1455,7 @@ def printer_stats(days: int = 90) -> dict[str, Any]:
         "by_printer": stats.outcomes(rows, "printer"),
         "by_material": stats.outcomes(rows, "material"),
         "by_quality": stats.outcomes(rows, "quality"),
+        "klipper_errors": stats.failure_causes(rows),
         "monthly": stats.monthly(rows),
         "energy": stats.energy(rows),
     }
@@ -1612,6 +1657,24 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             JOBS.note(job_id, "first layers look good (phone tap)")
         elif verb == "OUTCOME":
             await _on_outcome_tap(job_id)
+        elif verb == "WEIGH":
+            gross = float(
+                str(data.get("reply_text") or "").strip().lower().removesuffix("g")
+            )
+            res = await weigh_spool(job_id, gross, "phone reply")
+            if HA:
+                await HA.clear_notification(_upkeep_tag(f"weigh:{job_id}"))
+                await HA.alert(
+                    res.get("printer") or "warden",
+                    "warning" if res["flag"] else "info",
+                    f"{res['code']} weighed",
+                    f"{res['remaining_g']:.0f} g left (counted {res['counted_g']:.0f} g)."
+                    + (f" {res['flag']}" if res["flag"] else ""),
+                )
+        elif verb == "REPRINT":
+            await reprint(job_id, "phone tap")
+            if HA:
+                await HA.clear_notification(outcome.tag(job_id))
         elif verb == "CALIB":
             await _on_calibration_tap(job_id)
         elif verb == "MAINT":
@@ -1654,7 +1717,14 @@ async def _on_outcome_tap(payload: str) -> None:
         None if choice in ("good", "failed") else choice,
         "phone tap",
     )
-    if choice != "failed" and HA:
+    if choice in outcome.REASONS and HA:
+        await HA.notify_actionable(
+            f"Reprint {job['name']}?",
+            f"Labelled {choice.replace('_', ' ')}. Reprint queues the same gcode; it starts on its own tap.",
+            [outcome.reprint(job_id)],
+            tag=outcome.tag(job_id),
+        )
+    elif choice != "failed" and HA:
         await HA.clear_notification(outcome.tag(job_id))
 
 
@@ -1760,6 +1830,267 @@ async def calibrate(
         ]
     res["sections"] = [calibration.label(kind, v) for v in vals]
     return res
+
+
+def _spoolman() -> Spoolman:
+    if not SPOOLMAN:
+        raise ValueError("Spoolman is not configured")
+    return SPOOLMAN
+
+
+def _weighed_at(ids: list[int]) -> dict[int, float]:
+    out = {}
+    for sid in ids:
+        if raw := JOBS.kv_get(f"weighed:{sid}"):
+            out[sid] = float(json.loads(raw)["t"])
+    return out
+
+
+def _opened_at(spool: dict[str, Any]) -> float | None:
+    """When a spool was opened, or last dried: what drying and weigh-in reminders count from."""
+    dried = JOBS.kv_get(f"dried:{spool['id']}")
+    return max(
+        filter(
+            None, (upkeep._ts(spool.get("first_used")), float(dried) if dried else None)
+        ),
+        default=None,
+    )
+
+
+def _printer_of(spool_id: int) -> str | None:
+    return next(
+        (n for n in WATCHERS if JOBS.kv_get(f"active_spool:{n}") == str(spool_id)), None
+    )
+
+
+@mcp.tool()
+async def register_spool(
+    vendor: str,
+    material: str,
+    color: str,
+    registered_by: str,
+    net_weight_g: float = 1000,
+    spool_weight_g: float | None = None,
+    price: float | None = None,
+    location: str | None = None,
+    name: str | None = None,
+    diameter_mm: float = 1.75,
+    density: float | None = None,
+) -> dict[str, Any]:
+    """Register a new spool from the box in Spoolman: vendor and filament matched (case-insensitive, by material and
+    colour) or created, then the spool. `color` is #RRGGBB or a common name; `spool_weight_g` is the empty spool
+    (weigh one, or the vendor's figure) and is what weigh-ins subtract. Returns the spool and its label code (S<id>)."""
+    sm = _spoolman()
+    mat = material.upper()
+    hex_, cname = spools.color(color)
+    vid = await sm.vendor_id(vendor.strip())
+    fields = {
+        "name": name or f"{mat} {cname}",
+        "material": mat,
+        "color_hex": hex_,
+        "density": density or spools.DENSITY.get(mat, 1.24),
+        "diameter": diameter_mm,
+        "weight": net_weight_g,
+        "spool_weight": spool_weight_g,
+    }
+    fid, created = await sm.filament_id(
+        vid, {k: v for k, v in fields.items() if v is not None}
+    )
+    spool = await sm.create_spool(
+        {
+            k: v
+            for k, v in {
+                "filament_id": fid,
+                "initial_weight": net_weight_g,
+                "spool_weight": spool_weight_g,
+                "price": price,
+                "location": location,
+                "comment": f"registered by {registered_by} via print-warden",
+            }.items()
+            if v is not None
+        }
+    )
+    return {
+        "spool": spool,
+        "code": spools.code(spool["id"]),
+        "filament_created": created,
+    }
+
+
+@mcp.tool()
+async def weigh_spool(
+    spool: str, gross_g: float, weighed_by: str, empty_g: float | None = None
+) -> dict[str, Any]:
+    """Record a scale reading for a spool (code S12 or id): remaining = gross − the empty spool's weight, written to
+    Spoolman. Also compares what the warden counted as used since the last weigh-in with what the scale says, and
+    flags a drift over 5 % (wrong density or diameter, or loads and purges done by hand). `empty_g` sets the empty
+    spool's weight when Spoolman has none."""
+    sm = _spoolman()
+    sid = spools.parse_code(spool)
+    raw = await sm.raw_spool(sid)
+    empty = empty_g or spools.empty_weight(raw)
+    if not empty:
+        raise ValueError(
+            f"Spoolman has no empty-spool weight for {spools.code(sid)}: weigh an empty spool of this kind and pass empty_g"
+        )
+    measured = max(0.0, float(gross_g) - empty)
+    counted = float(raw.get("remaining_weight") or 0)
+    last = JOBS.kv_get(f"weighed:{sid}")
+    reference = (
+        float(json.loads(last)["g"])
+        if last
+        else float(
+            raw.get("initial_weight")
+            or (raw.get("filament") or {}).get("weight")
+            or counted
+        )
+    )
+    d = spools.drift(reference, counted, measured)
+    fields: dict[str, Any] = {"remaining_weight": measured}
+    if empty_g:
+        fields["spool_weight"] = empty_g
+    summary = await sm.update_spool(sid, fields)
+    JOBS.kv_set(
+        f"weighed:{sid}",
+        json.dumps({"t": time.time(), "g": measured, "by": weighed_by}),
+    )
+    JOBS.kv_set(f"upkeep_alerted:weigh:{sid}", "0")
+    STORE.add(
+        Event(
+            _printer_of(sid) or "warden",
+            "spool_weighed",
+            "warning" if d["flag"] else "info",
+            f"{spools.code(sid)} weighed {measured:.0f} g left (counted {counted:.0f} g; {weighed_by})"
+            + (f": {d['flag']}" if d["flag"] else ""),
+            {"spool_id": sid, **d},
+            alert=False,
+        )
+    )
+    return {
+        "code": spools.code(sid),
+        "printer": _printer_of(sid),
+        "remaining_g": measured,
+        "counted_g": counted,
+        **d,
+        "spool": summary,
+    }
+
+
+@mcp.tool()
+async def swap_spool(
+    printer: str, spool: str, swapped_by: str, outgoing_gross_g: float | None = None
+) -> dict[str, Any]:
+    """Put a spool (code S12 or id) on a printer: the outgoing spool is weighed first when `outgoing_gross_g` is
+    given, the new one becomes active, and the result says whether it suits the printer's queue (material, grams)
+    and whether it is due for drying. The queue is then offered again."""
+    sm = _spoolman()
+    w = _w(printer)
+    sid = spools.parse_code(spool)
+    out: dict[str, Any] = {"printer": w.p.name}
+    old = JOBS.kv_get(f"active_spool:{printer}")
+    if old and outgoing_gross_g is not None:
+        out["outgoing"] = await weigh_spool(old, outgoing_gross_g, swapped_by)
+    new = (await set_active_spool(printer, sid))["active_spool"]
+    opened = _opened_at(new)
+    out["active_spool"] = new
+    out["warnings"] = spools.swap_checks(
+        new,
+        JOBS.queue(printer),
+        (time.time() - opened) / 86400 if opened else None,
+        CFG.upkeep.dry_after_days.get(new["material"]),
+    )
+    JOBS.kv_set(
+        f"swapped:{printer}",
+        json.dumps({"t": time.time(), "from": old, "to": sid, "by": swapped_by}),
+    )
+    STORE.add(
+        Event(
+            printer,
+            "spool_swapped",
+            "info",
+            f"{spools.code(sid)} loaded ({new['name'] or new['material']}; {swapped_by})",
+            {"spool_id": sid, "previous": old},
+            alert=False,
+        )
+    )
+    await sm.update_spool(sid, {"location": printer})
+    out["queue"] = await advance_queue(printer)
+    return out
+
+
+@mcp.tool()
+async def retire_spool(spool: str, retired_by: str) -> dict[str, Any]:
+    """Archive an empty spool in Spoolman (it leaves stock and reorder counts) and unload it from any printer."""
+    sm = _spoolman()
+    sid = spools.parse_code(spool)
+    summary = await sm.update_spool(sid, {"archived": True})
+    if printer := _printer_of(sid):
+        JOBS.kv_delete(f"active_spool:{printer}")
+    STORE.add(
+        Event(
+            printer or "warden",
+            "spool_retired",
+            "info",
+            f"{spools.code(sid)} retired ({retired_by})",
+            alert=False,
+        )
+    )
+    return {"code": spools.code(sid), "unloaded_from": printer, "spool": summary}
+
+
+REPRINT_FIELDS = (
+    "printer", "name", "material", "quality", "stl", "gcode", "preview", "est_seconds", "filament_g",
+    "filament_m", "layers", "max_z", "warnings", "slice_blockers", "copies", "model_hash", "overrides",
+    "orient", "calibration", "source_url", "source_title", "author", "license",
+)  # fmt: skip
+
+
+@mcp.tool()
+async def reprint(job_id: str, requested_by: str, offer: bool = True) -> dict[str, Any]:
+    """Queue a finished or failed job again on the same printer: its own sliced gcode, uploaded afresh, with the same
+    settings. Nothing starts: it is offered like any job (phone tap or auto_start) and the start checks apply,
+    loaded material included. `requested_by` names who asked. Returns the new job and what the queue did."""
+    old = JOBS.get(job_id)
+    if old["state"] not in ("done", "failed"):
+        raise ValueError(
+            f"job {old['name']} is {old['state']}; only a finished job can be reprinted"
+        )
+    gcode = Path(old["gcode"] or "")
+    if not gcode.is_file():
+        raise ValueError(
+            f"the sliced gcode of {old['name']} is gone; submit the model again"
+        )
+    w = _w(old["printer"])
+    job = JOBS.create(
+        **{k: old.get(k) for k in REPRINT_FIELDS}, offer=offer, reprint_of=job_id
+    )
+    JOBS.note(job["id"], f"reprint of {job_id} ({requested_by})")
+    remote = f"warden/{job['id']}_{old['name']}_{old['material']}.gcode"
+    try:
+        await moonraker.upload_gcode(w.p.moonraker, gcode, remote)
+    except httpx.HTTPError as e:
+        JOBS.transition(job["id"], "failed", f"upload failed: {e}", error=str(e))
+        raise
+    job = JOBS.transition(
+        job["id"],
+        "staged",
+        f"uploaded to {old['printer']} as {remote}",
+        remote_name=remote,
+    )
+    STORE.add(
+        Event(
+            old["printer"],
+            "job_staged",
+            "info",
+            f"Reprint of {old['name']} staged ({requested_by})",
+            {"job_id": job["id"], "reprint_of": job_id},
+            alert=False,
+        )
+    )
+    result = {**_job_public(job)}
+    if offer:
+        result["queue"] = await advance_queue(old["printer"])
+    return result
 
 
 def label_job(job_id: str, result: str, reason: str | None, who: str) -> dict[str, Any]:
@@ -1966,8 +2297,8 @@ def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
 def health_report() -> dict[str, Any]:
     """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
     within an api version; no file names, job names or URLs. Added after 0.3.0: `last_shutdown` (classified cause of
-    a shutdown Klipper has not recovered from; `expected` when it happened with mains off), `outcomes_7d` and
-    `maintenance_due`."""
+    a shutdown Klipper has not recovered from; `expected` when it happened with mains off), `outcomes_7d`,
+    `maintenance_due` and `health` (the kinds of printer-health finding from the last hourly check)."""
     now = time.time()
     printers = {}
     for n, w in WATCHERS.items():
@@ -1987,6 +2318,12 @@ def health_report() -> dict[str, Any]:
             "last_shutdown": _last_shutdown(n, now),
             "outcomes_7d": _outcomes_7d(n, now),
             "maintenance_due": [m["item"] for m in _maintenance(n, now) if m["due"]],
+            "health": sorted(
+                {
+                    f["kind"]
+                    for f in json.loads(JOBS.kv_get(f"health_findings:{n}") or "[]")
+                }
+            ),
         }
     return {
         "ok": all(p["connected"] for p in printers.values()),
@@ -2026,7 +2363,9 @@ async def status_data() -> dict[str, Any]:
         p["snapshot"] = _latest_snapshot(n)
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
+    report["forecast"] = up.get("forecast") or []
     report["batches"] = _open_batches()
+    report["away"] = presence.away()
     return report
 
 
@@ -2075,6 +2414,92 @@ async def _stage_form(request: Request) -> tuple[Any, str | None]:
     ):
         return form, "this form expired or came from another page; reload and try again"
     return form, None
+
+
+async def _spools_data() -> dict[str, Any]:
+    stock = await _spoolman().spools()
+    weighed = _weighed_at([sp["id"] for sp in stock])
+    now = time.time()
+    for sp in stock:
+        sp["weighed_days"] = (
+            (now - weighed[sp["id"]]) / 86400 if sp["id"] in weighed else None
+        )
+    by_id = {sp["id"]: sp for sp in stock}
+    loaded = {
+        n: by_id.get(int(sid)) if (sid := JOBS.kv_get(f"active_spool:{n}")) else None
+        for n in WATCHERS
+    }
+    on = {sp["id"] for sp in loaded.values() if sp}
+    return {
+        "loaded": loaded,
+        "stock": [sp for sp in stock if sp["id"] not in on and not sp.get("archived")],
+        "materials": sorted(
+            {
+                *checks.MATERIAL_TEMPS,
+                *(m for w in WATCHERS.values() for m in w.p.filaments),
+            }
+        ),
+        "printers": list(WATCHERS),
+    }
+
+
+async def spools_page(request: Request) -> HTMLResponse:
+    token = request.query_params.get("token")
+    csrf = stage.csrf_token(CFG.api_token)
+    message = error = None
+    status = 200
+    if request.method == "POST":
+        form, refused = await _stage_form(request)
+        f = {k: str(v).strip() for k, v in form.items() if str(v).strip()}
+        action = request.path_params["action"]
+        who = "the /spools page"
+        try:
+            if refused:
+                raise PermissionError(refused)
+            if action == "register":
+                r = await register_spool(
+                    f["vendor"], f["material"], f["color"], who,
+                    net_weight_g=float(f.get("net_weight_g", 1000)),
+                    spool_weight_g=float(f["spool_weight_g"]) if "spool_weight_g" in f else None,
+                    price=float(f["price"]) if "price" in f else None,
+                    location=f.get("location"),
+                )  # fmt: skip
+                message = f"Registered {r['code']}: {r['spool']['name']}. Write {r['code']} on the spool."
+            elif action == "weigh":
+                r = await weigh_spool(
+                    f["spool"],
+                    float(f["gross_g"]),
+                    who,
+                    float(f["empty_g"]) if "empty_g" in f else None,
+                )
+                message = (
+                    f"{r['code']}: {r['remaining_g']:.0f} g left (counted {r['counted_g']:.0f} g)."
+                    + (f" {r['flag']}" if r["flag"] else "")
+                )
+            elif action == "swap":
+                r = await swap_spool(
+                    f["printer"], f["spool"], who,
+                    float(f["outgoing_gross_g"]) if "outgoing_gross_g" in f else None,
+                )  # fmt: skip
+                message = f"{r['active_spool']['code']} is on {r['printer']}." + (
+                    " " + "; ".join(r["warnings"]) + "." if r["warnings"] else ""
+                )
+            elif action == "retire":
+                r = await retire_spool(f["spool"], who)
+                message = f"{r['code']} retired."
+            else:
+                raise ValueError(f"unknown action {action!r}")
+        except PermissionError as e:
+            error, status = str(e), 403
+        except (KeyError, ValueError, httpx.HTTPError) as e:
+            error, status = f"{action}: {e or type(e).__name__}", 400
+    try:
+        data = await _spools_data()
+    except (ValueError, httpx.HTTPError) as e:
+        return HTMLResponse(stage.done(f"Spoolman: {e}", token), status_code=503)
+    return HTMLResponse(
+        spoolpage.render(data, csrf, token, message, error), status_code=status
+    )
 
 
 async def stage_page(request: Request) -> HTMLResponse:
@@ -2261,6 +2686,9 @@ def record_dried(spool_id: int, done_by: str) -> dict[str, Any]:
     return {"spool_id": spool_id, "dried_by": done_by}
 
 
+FORECAST_DAYS = 30
+
+
 async def upkeep_report(now: float | None = None) -> dict[str, Any]:
     """Reorder, drying and maintenance findings; Spoolman's part is skipped (with the reason) when it cannot be read."""
     now = now or time.time()
@@ -2268,13 +2696,34 @@ async def upkeep_report(now: float | None = None) -> dict[str, Any]:
         "reorder": [],
         "drying": [],
         "maintenance": [m for n in WATCHERS for m in _maintenance(n, now)],
+        "weigh": [],
+        "forecast": [],
+        "dry_boxes": [],
     }
+    if HA and CFG.upkeep.dry_boxes:
+        readings = []
+        for b in CFG.upkeep.dry_boxes:
+            try:
+                rh: float | None = float(await HA.state(b.entity) or "")
+            except ValueError:
+                rh = None
+            readings.append((b.name, b.max_pct, rh))
+        out["dry_boxes"] = upkeep.dry_boxes(readings)
     if SPOOLMAN:
         try:
-            spools = await SPOOLMAN.spools()
+            stock = await SPOOLMAN.spools()
             queued = JOBS.list(None, 500, upkeep.QUEUED)
-            out["reorder"] = upkeep.reorder(spools, queued, CFG.upkeep.reorder_below_g)
-            by_id = {s["id"]: s for s in spools}
+            out["reorder"] = upkeep.reorder(stock, queued, CFG.upkeep.reorder_below_g)
+            have: dict[str, float] = {}
+            for sp in stock:
+                if not sp.get("archived") and sp.get("material"):
+                    have[sp["material"]] = have.get(sp["material"], 0.0) + float(
+                        sp.get("remaining_g") or 0
+                    )
+            out["forecast"] = upkeep.forecast(
+                JOBS.since(now - FORECAST_DAYS * 86400), have, FORECAST_DAYS
+            )
+            by_id = {s["id"]: s for s in stock}
             loaded = {
                 n: by_id[int(sid)]
                 for n in WATCHERS
@@ -2286,6 +2735,14 @@ async def upkeep_report(now: float | None = None) -> dict[str, Any]:
                 if (v := JOBS.kv_get(f"dried:{s['id']}"))
             }
             out["drying"] = upkeep.drying(loaded, dried, CFG.upkeep.dry_after_days, now)
+            if CFG.upkeep.weigh_every_days:
+                out["weigh"] = spools.weigh_due(
+                    loaded,
+                    _weighed_at([s["id"] for s in loaded.values()]),
+                    {s["id"]: t for s in loaded.values() if (t := _opened_at(s))},
+                    CFG.upkeep.weigh_every_days,
+                    now,
+                )
         except httpx.HTTPError as e:
             out["spoolman_error"] = str(e) or type(e).__name__
     return out
@@ -2301,7 +2758,28 @@ async def upkeep_alerts(now: float | None = None) -> int:
     if not HA or (WATCHERS and await next(iter(WATCHERS.values())).quiet()):
         return 0
     report = await upkeep_report(now)
-    items: list[tuple[str, str, str, list[tuple[str, str]]]] = []
+    items: list[tuple[str, str, str, list[tuple[str, ...]]]] = []
+    for b in report.get("dry_boxes") or []:
+        items.append(
+            (
+                f"drybox:{b['box']}",
+                f"Dry box {b['box']}: {b['humidity'] if b['humidity'] is not None else '?'} %RH",
+                f"Limit {b['max_pct']:g} %: {b['why']}.",
+                [],
+            )
+        )
+    for g in report.get("weigh") or []:
+        items.append(
+            (
+                f"weigh:{g['spool_id']}",
+                f"Weigh {g['code']} on {g['printer']}",
+                (
+                    f"{g['name']}: {'last weighed' if g['weighed'] else 'opened'} {g['days']:g} days ago. "
+                    "Reply with what the scale reads, spool included (grams)."
+                ),
+                [(f"PRINT_WARDEN_WEIGH_{g['spool_id']}", "Enter grams", "textInput")],
+            )
+        )
     for r in report["reorder"]:
         items.append(
             (
@@ -2347,6 +2825,167 @@ async def upkeep_alerts(now: float | None = None) -> int:
     return sent
 
 
+async def _health(printer: str, accept: bool = False) -> dict[str, Any]:
+    w = _w(printer)
+    inputs = await moonraker.health_inputs(w.p.moonraker)
+    raw = JOBS.kv_get(f"health_snapshot:{printer}")
+    taken = None
+    if accept or raw is None:
+        snap = phealth.snapshot(inputs["settings"], inputs["bed_mesh"])
+        JOBS.kv_set(f"health_snapshot:{printer}", json.dumps(snap))
+        taken = (
+            "snapshot taken: later changes are compared with the printer as it is now"
+        )
+        raw = json.dumps(snap)
+    found = phealth.findings(
+        json.loads(raw),
+        inputs["settings"],
+        inputs["bed_mesh"],
+        inputs["save_pending"],
+        inputs["host"],
+        inputs["mcus"],
+        inputs["updates"],
+    )
+    JOBS.kv_set(f"health_findings:{printer}", json.dumps(found))
+    return {
+        "printer": printer,
+        "findings": found,
+        "note": taken,
+        "klipper": inputs["host"],
+        "mcus": inputs["mcus"],
+    }
+
+
+@mcp.tool()
+async def printer_health(printer: str, accept: bool = False) -> dict[str, Any]:
+    """Read-only health of one printer through Moonraker: Klipper settings changed since the known-good snapshot
+    (every include resolved), a SAVE_CONFIG still pending, MCU firmware from a different Klipper release than the
+    host, updates waiting, and saved bed meshes whose range grew. The first call takes the snapshot; `accept=True`
+    takes a new one after a change you meant. Nothing on the printer is changed."""
+    return await _health(printer, accept)
+
+
+async def todo_sync() -> list[str]:
+    """Reorder findings as items on `upkeep.todo_entity` (a Home Assistant to-do list): added once, removed when
+    the stock recovers. Returns the items on the list."""
+    todo = CFG.upkeep.todo_entity
+    if not (todo and HA and SPOOLMAN):
+        return []
+    want = {f"{r['material']} filament" for r in (await upkeep_report())["reorder"]}
+    have = {k.split(":", 1)[1] for k in JOBS.kv_prefix("todo_added:")}
+    for item in sorted(want - have):
+        if await HA.call_service("todo", "add_item", {"entity_id": todo, "item": item}):
+            JOBS.kv_set(f"todo_added:{item}", str(time.time()))
+    for item in sorted(have - want):
+        await HA.call_service("todo", "remove_item", {"entity_id": todo, "item": item})
+        JOBS.kv_delete(f"todo_added:{item}")
+    return sorted(want)
+
+
+SCALE_STEP_G = 2.0
+
+
+async def scale_tick() -> list[str]:
+    """Each idle printer with a `spool_scale_entity` and an active spool: a scale reading that moved is a weigh-in.
+    Not while printing: the printer shakes the scale. Returns the spools weighed."""
+    if not (HA and SPOOLMAN):
+        return []
+    done = []
+    for n, w in WATCHERS.items():
+        sid = JOBS.kv_get(f"active_spool:{n}")
+        if not (w.p.spool_scale_entity and sid) or w.status().get("state") in (
+            "printing",
+            "paused",
+        ):
+            continue
+        try:
+            gross = float(await HA.state(w.p.spool_scale_entity) or "")
+        except ValueError:
+            continue
+        last = JOBS.kv_get(f"scale_last:{n}")
+        if last is not None and abs(gross - float(last)) < SCALE_STEP_G:
+            continue
+        try:
+            await weigh_spool(sid, gross, f"{n} spool scale")
+        except (ValueError, httpx.HTTPError) as e:
+            log.warning("scale %s: %s", n, e)
+            continue
+        JOBS.kv_set(f"scale_last:{n}", str(gross))
+        done.append(spools.code(int(sid)))
+    return done
+
+
+async def health_alerts() -> None:
+    """Hourly: each connected printer's health; an alert once per new set of findings."""
+    for n, w in WATCHERS.items():
+        if not w.mr.connected:
+            continue
+        try:
+            found = (await _health(n))["findings"]
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            log.warning("health %s: %s", n, e)
+            continue
+        key = (
+            hashlib.sha256(json.dumps(found, sort_keys=True).encode()).hexdigest()[:16]
+            if found
+            else ""
+        )
+        if key == (JOBS.kv_get(f"health_alerted:{n}") or ""):
+            continue
+        JOBS.kv_set(f"health_alerted:{n}", key)
+        if found and HA:
+            more = (
+                f" (+{len(found) - 3} more: printer_health)" if len(found) > 3 else ""
+            )
+            await HA.alert(
+                n,
+                "warning",
+                "printer health",
+                "; ".join(f["detail"] for f in found[:3]) + more,
+            )
+
+
+async def presence_tick(now: float | None = None) -> str | None:
+    """Read the presence entity once; on coming home, send the summary and offer what waited. Returns the change."""
+    pr = CFG.presence
+    if not (pr and HA):
+        return None
+    now = now or time.time()
+    since = presence.STATE["away_since"]
+    change = presence.update(
+        presence.is_home(await HA.state(pr.entity), pr.home_states), now
+    )
+    if change == "back" and since:
+        printers = {
+            n: {
+                "bed": BED.state(n)["state"],
+                "queued": len(JOBS.queue(n)),
+                "awaiting": bool(JOBS.list(n, 1, ("awaiting_approval",))),
+            }
+            for n in WATCHERS
+        }
+        msg = presence.summary(JOBS.since(since), printers, (now - since) / 3600)
+        STORE.add(Event("warden", "welcome_home", "info", msg, alert=False))
+        await HA.alert("warden", "info", "while you were out", msg)
+        presence.STATE["away_since"] = None
+        for n in WATCHERS:
+            try:
+                await advance_queue(n)
+            except Exception:
+                log.exception("welcome-home offer %s", n)
+    return change
+
+
+async def presence_loop() -> None:
+    assert CFG.presence
+    while True:
+        try:
+            await presence_tick()
+        except Exception:
+            log.exception("presence")
+        await asyncio.sleep(CFG.presence.poll_s)
+
+
 async def upkeep_loop(interval_s: float = 3600) -> None:
     """Hourly: upkeep alerts, and a fresh look at queues held for cheaper power (prices move by the hour)."""
     while True:
@@ -2354,6 +2993,15 @@ async def upkeep_loop(interval_s: float = 3600) -> None:
             await upkeep_alerts()
         except Exception:
             log.exception("upkeep")
+        try:
+            await health_alerts()
+        except Exception:
+            log.exception("health")
+        for task in (todo_sync, scale_tick):
+            try:
+                await task()
+            except Exception:
+                log.exception(task.__name__)
         for n in WATCHERS:
             if JOBS.kv_get(f"power_hold:{n}") == "1":
                 try:
@@ -2493,6 +3141,8 @@ async def lifespan(app: Starlette):
     tasks.append(asyncio.create_task(housekeeping(), name="housekeeping"))
     tasks.append(asyncio.create_task(entity_loop(), name="ha-entities"))
     tasks.append(asyncio.create_task(upkeep_loop(), name="upkeep"))
+    if CFG.presence and HA:
+        tasks.append(asyncio.create_task(presence_loop(), name="presence"))
     if CFG.ha and CFG.ha.token:
         tasks.append(
             asyncio.create_task(
@@ -2516,6 +3166,8 @@ app = Starlette(
         Route("/healthz", health),
         Route("/status", status_page),
         Route("/stage", stage_page, methods=["GET", "POST"]),
+        Route("/spools", spools_page),
+        Route("/spools/{action}", spools_page, methods=["POST"]),
         Route("/stage/queue", stage_queue, methods=["POST"]),
         Route("/stage/discard", stage_discard, methods=["POST"]),
         Route("/obico/webhook", obico_webhook, methods=["POST"]),

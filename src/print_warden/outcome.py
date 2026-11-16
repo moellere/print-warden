@@ -7,6 +7,10 @@ After every print the phone gets the end photo with **Good** / **Failed**; Faile
 
 Action ids are `PRINT_WARDEN_OUTCOME_<job id>:<choice>`. A label is a record, not an action: nothing on the printer
 changes, so the chat tool `label_print` may set one too.
+
+A print that stopped with a Klipper error already says why (`failures`): its prompt leads with the cause and offers
+**Reprint** (`PRINT_WARDEN_REPRINT_<job id>`: the same gcode queued again, started by tap like any job) and the
+reasons. A failure labelled by hand is followed by the Reprint offer.
 """
 
 from __future__ import annotations
@@ -26,10 +30,17 @@ def tag(job_id: str) -> str:
     return f"print_warden_outcome_{job_id}"
 
 
-def first(job_id: str, completed: bool) -> list[Action]:
-    """Good / Failed after a completed print; straight to the reasons when it was cancelled or errored."""
+def reprint(job_id: str) -> Action:
+    return (f"PRINT_WARDEN_REPRINT_{job_id}", "Reprint")
+
+
+def first(job_id: str, completed: bool, known_error: bool = False) -> list[Action]:
+    """Good / Failed after a completed print; Reprint and the reasons after a Klipper error whose cause is known;
+    straight to the reasons when it was cancelled or the error is unknown."""
     if completed:
         return [_action(job_id, "good", "Good"), _action(job_id, "failed", "Failed")]
+    if known_error:
+        return [reprint(job_id), _action(job_id, "failed", "Another cause…")]
     return reasons(job_id, 1)
 
 
@@ -74,6 +85,10 @@ def failed(job: dict[str, Any]) -> bool:
 
 
 def reason(job: dict[str, Any]) -> str:
+    if job.get("outcome") == "failed" and job.get("outcome_reason"):
+        return str(job["outcome_reason"])
+    if job.get("failure_cause"):
+        return str(job["failure_cause"])
     if job.get("outcome") == "failed":
-        return str(job.get("outcome_reason") or "unlabelled")
+        return "unlabelled"
     return (job.get("error") or "unknown").split(":")[0][:60]

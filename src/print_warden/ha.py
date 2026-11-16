@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 import httpx
@@ -48,7 +49,7 @@ class HAClient:
         self,
         title: str,
         message: str,
-        actions: list[tuple[str, str]],
+        actions: Sequence[tuple[str, ...]],
         image: str | None = None,
         tag: str | None = None,
         sticky: bool = True,
@@ -63,7 +64,15 @@ class HAClient:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)
         data: dict[str, Any] = {
-            "actions": [{"action": a, "title": t} for a, t in actions],
+            # (action, title) or (action, title, behavior): "textInput" asks for a typed reply (reply_text)
+            "actions": [
+                {
+                    "action": a[0],
+                    "title": a[1],
+                    **({"behavior": a[2]} if len(a) > 2 else {}),
+                }
+                for a in actions
+            ],
             "tag": tag or "print_warden_job",
             "channel": "Print warden",
             "importance": "high",
@@ -129,6 +138,16 @@ class HAClient:
             return cast("dict[str, Any]", r.json()) if r.status_code == 200 else None
         except (httpx.HTTPError, ValueError):
             return None
+
+    async def call_service(
+        self, domain: str, service: str, data: dict[str, Any]
+    ) -> bool:
+        try:
+            r = await self._c.post(f"/api/services/{domain}/{service}", json=data)
+            return r.status_code < 300
+        except httpx.HTTPError as e:
+            log.warning("%s.%s failed: %s", domain, service, e)
+            return False
 
     async def light(self, entity_id: str, on: bool) -> None:
         domain = entity_id.split(".")[0]

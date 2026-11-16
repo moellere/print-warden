@@ -13,7 +13,7 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Slice, stage gcode, snapshots, alerts, work light | the warden, automatically |
 | Mark the bed clear | the operator: the "Bed cleared" phone button, or quoted chat permission (`mark_bed_clear`) |
 | Start a print | the operator: a phone tap (`request_start`) or quoted chat permission (`start_print`), and `policy.can_start` must pass |
-| Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours` |
+| Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours`, and (with `presence`) while someone is home |
 | Pause on detected failure | Obico |
 | Cancel or resume a running print | a human: at the printer, or the Cancel / Resume button on a warden notification for that job (no MCP tool can) |
 | Cancel a print left paused | the warden, once it has been paused `policy.paused_cancel_minutes` (default 30; `0` never) with no Resume |
@@ -60,7 +60,57 @@ cancel macro switches them off, and a print that stops with an error leaves them
   prompt say when. The pause start is kept across a warden restart;
 - 2 minutes after a print is cancelled or errors, a printer that is idle with Klipper ready but still has a heater
   target gets `TURN_OFF_HEATERS` and a warning alert. A preheat started by hand inside those 2 minutes is switched off
-  once, too. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
+  once, too.
+
+A print that stops with a Klipper error says why. The warden reads `print_stats.message`, the shutdown message and
+the `!! ` errors and last command in Moonraker's gcode store, and classifies them: not homed, move out of range, cold
+extrusion, extrude-only move too long, extrusion too wide or fast, unknown command (a macro missing from
+`printer.cfg`), probe fault, file error, and every shutdown cause. The cause and what Klipper said land on the job
+(`failure_cause`, `failure_detail`, in `print_history`), and the phone prompt leads with them: **Reprint** or
+**Another cause…**. A failure labelled by hand is followed by the same Reprint offer. Reprint (`reprint(job_id,
+requested_by)` from chat) uploads the job's own gcode again as a new job and queues it; it starts on its own tap like
+any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
+printer (`klipper_errors`).
+
+**Spool inventory.** Spoolman stays the system of record; the warden runs the physical side, from chat or the
+`/spools` page (same token as `/status`):
+- `register_spool(vendor, material, color, registered_by, net_weight_g=1000, spool_weight_g, price, location)`: the
+  vendor and filament are matched (case-insensitive, by material and colour) or created, with the material's usual
+  density and 1.75 mm; the spool's code (`S12`) goes on a label. `color` is `#RRGGBB` or a common name.
+- `weigh_spool(spool, gross_g, weighed_by)`: remaining = the scale reading − the empty spool's weight (the spool's,
+  else the filament's, else the vendor's; `empty_g` sets it), written to Spoolman. The warden's counted use since the
+  last weigh-in (or the full spool) is compared with the scale's; over 5 % apart, with at least 50 g used, it flags a
+  wrong density or diameter, or loads and purges done by hand.
+- `swap_spool(printer, spool, swapped_by, outgoing_gross_g)`: weighs the outgoing spool when given, makes the new one
+  active (and its Spoolman location the printer), says whether it suits the queue (material, grams) and whether it
+  is due for drying, and offers the queue again.
+- `retire_spool(spool, retired_by)`: archives an empty spool and unloads it.
+- `upkeep.weigh_every_days`: a loaded spool not weighed (or opened) that long gets a phone prompt; type the scale
+  reading into its reply.
+- A printer's `spool_scale_entity` (a load cell under the spool holder, e.g. HX711 + ESPHome, reading grams with the
+  spool on it): hourly, while the printer is idle, a reading that moved by 2 g or more is a weigh-in.
+
+Filament logistics, hourly with upkeep: with `upkeep.todo_entity` (a Home Assistant to-do list) each material that
+needs reordering is added once as "PLA filament" and removed when the stock recovers. `upkeep.dry_boxes` (name,
+humidity `entity`, `max_pct`, default 20) alerts once a day for a box over its limit or a sensor that cannot be read.
+`upkeep_status` and the `/status` page carry a run-out forecast per material: grams a day over the last 30 days and
+the days the stock lasts at that rate.
+
+**Printer health.** Hourly, and on demand with `printer_health(printer)`, the warden reads each printer through
+Moonraker and compares it with a known-good snapshot (taken on the first check; `accept=True` takes a new one after
+a change you meant): Klipper settings that changed, with every include resolved; a `SAVE_CONFIG` still pending; MCU
+firmware from a different Klipper release than the host (rebuild and flash); Klipper or Moonraker updates waiting;
+saved bed meshes whose range grew by more than 0.1 mm. A new set of findings is one warning alert; `/healthz` carries
+their kinds for homelab-helper. Nothing on the printer is changed.
+
+**Away mode.** With `presence.entity` (a `person.*`, a group, or `zone.home`, whose state is a head count), the
+warden reads Home Assistant every `presence.poll_s` (60) and keeps only the current answer and when the house emptied,
+in memory; presence is never written to disk. While nobody is home: no unattended start (unless
+`presence.auto_start_when_away`; an unreadable entity also blocks auto-start), quiet hours stop muting alerts, and with
+`presence.away_offer_max_hours` a longer job is not offered. Coming home sends one "while you were out" alert (what
+finished or failed, each printer's bed and queue) and offers whatever waited.
+
+`alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
 that Home Assistant entity is in `alerts.quiet_states` (default `["on"]`; an unreadable entity never mutes); critical alerts and
 Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
@@ -163,6 +213,7 @@ request_start(job_id)       # phone notification with Start / Skip buttons (the 
 waive_blockers(job_id, authorized_by="the operator said: print it anyway")
 start_print(job_id, authorized_by="the operator said: go ahead and print it")   # chat path
 list_spools() / set_active_spool("garagex4", 2)   # Spoolman owns spools; the warden records which one is loaded
+register_spool / weigh_spool / swap_spool / retire_spool   # the spool inventory, also on /spools
 ```
 
 When a print ends the warden deducts the filament Klipper reports from the job's spool in Spoolman (set
@@ -284,7 +335,7 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload`, `/status`, `/stage` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status`, `/stage`, `/spools` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
@@ -318,6 +369,11 @@ src/print_warden/
   jobs.py       job ledger (SQLite): transition table, transition log
   policy.py     can_start(), approval_expired()
   reconcile.py  settle jobs from Moonraker history after a restart or outage
+  failures.py   why a print stopped with a Klipper error, and what to check
+  presence.py   away mode: what changes while nobody is home
+  health.py     printer health: config drift, firmware and update versions, mesh drift
+  spools.py     spool inventory rules: codes, colours, empty weights, weigh-in drift, swap checks
+  spoolpage.py  the /spools page
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)

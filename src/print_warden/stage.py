@@ -27,6 +27,7 @@ form{display:grid;gap:10px}label{display:grid;gap:4px;font-size:14px}
 input,select,button{font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
 button{cursor:pointer;background:var(--ok);color:#fff;border:0}button.alt{background:var(--line);color:var(--ink)}
 .row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1 1 140px}
+main>section.card{margin-bottom:16px}
 """
 
 
