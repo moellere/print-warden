@@ -148,3 +148,54 @@ def maintenance(
             }
         )
     return out
+
+
+def forecast(
+    jobs: list[dict[str, Any]],
+    stock_g: dict[str, float],
+    window_days: float,
+) -> list[dict[str, Any]]:
+    """Per material in stock or used: grams a day over the window (from what finished jobs used) and the days the
+    stock lasts at that rate; None when nothing was used."""
+    used: dict[str, float] = defaultdict(float)
+    for j in jobs:
+        if j.get("state") in ("done", "failed") and j.get("material"):
+            used[j["material"]] += float(j.get("grams_used") or 0)
+    out = []
+    for m in sorted(set(stock_g) | set(used)):
+        per_day = used[m] / window_days if window_days else 0.0
+        have = stock_g.get(m, 0.0)
+        out.append(
+            {
+                "material": m,
+                "stock_g": round(have),
+                "per_day_g": round(per_day, 1),
+                "days_left": round(have / per_day, 1) if per_day > 0 else None,
+            }
+        )
+    return out
+
+
+def dry_boxes(readings: list[tuple[str, float, float | None]]) -> list[dict[str, Any]]:
+    """(name, max %RH, reading) per dry box -> the boxes over their limit; an unreadable sensor is reported too."""
+    out = []
+    for name, limit, rh in readings:
+        if rh is None:
+            out.append(
+                {
+                    "box": name,
+                    "humidity": None,
+                    "max_pct": limit,
+                    "why": "sensor unreadable",
+                }
+            )
+        elif rh > limit:
+            out.append(
+                {
+                    "box": name,
+                    "humidity": rh,
+                    "max_pct": limit,
+                    "why": "renew the desiccant or re-dry what is in it",
+                }
+            )
+    return out

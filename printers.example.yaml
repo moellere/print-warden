@@ -56,6 +56,7 @@ printers:
     moonraker: http://x1.local:7125
     track_spool_usage: true   # false if this Moonraker's own [spoolman] component already reports usage
     power_device: printer     # Moonraker [power printer] (Sonoff); off between prints, MCU stays on USB power.
+    # spool_scale_entity: sensor.x4_spool_scale   # grams, spool included: a weigh-in whenever it moves while idle
     # power_entity: sensor.x4_plug_energy   # HA kWh counter or W sensor on the plug: kWh and energy cost per print
                               # Start = power on, FIRMWARE_RESTART until Klipper is ready (two after MCU comm loss), then print.
     cameras:
@@ -110,6 +111,9 @@ upkeep:
     TPU: 7
     PETG: 30
   # weigh_every_days: 14        # a loaded spool not weighed this long gets a phone prompt (reply with the grams)
+  # todo_entity: todo.shopping_list   # materials to reorder land on this Home Assistant to-do list
+  # dry_boxes:
+  #   - {name: shelf, entity: sensor.drybox_humidity, max_pct: 20}
 
 # presence:                        # away mode (Home Assistant): no auto-start, no quiet hours, a summary on return
 #   entity: person.enoch             # or a group, or zone.home (a head count)

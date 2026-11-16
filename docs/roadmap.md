@@ -329,7 +329,7 @@ Built without the NFC sticker: the spool code on a label does the same job with 
 tag scan can follow when the codes prove too slow. The Spoolman writes (vendor, filament, spool, PATCH) are tested
 against a mocked Spoolman; row 42 is the first real one.
 
-## Phase 28 — Filament logistics
+## Phase 28 — Filament logistics ✅ (build)
 
 - Reorder findings land on a Home Assistant to-do list. Optional humidity sensor per dry box replaces the days-open
   drying guess. Run-out forecast per material from recent use.

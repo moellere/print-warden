@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Filament logistics: `upkeep.todo_entity` puts each material to reorder on a Home Assistant to-do list and takes it
+  off when stock recovers; `upkeep.dry_boxes` alerts on humidity over a box's limit; a run-out forecast per material
+  (30 days of use) in `upkeep_status` and on `/status`; a printer's `spool_scale_entity` weighs its spool while idle.
 - Spool inventory, with Spoolman as the record: `register_spool` (vendor and filament matched or created; the spool's
   code `S<id>` for a label), `weigh_spool` (remaining from a scale reading and the empty-spool weight; counted against
   weighed use, with a flag over 5 % drift), `swap_spool` (outgoing weighed, new one active, checked against the queue

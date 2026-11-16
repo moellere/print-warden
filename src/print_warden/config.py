@@ -81,6 +81,7 @@ class Printer:
     finish_window: str | None = None
     purge_zone: tuple[float, float, float, float] | None = None
     power_entity: str | None = None
+    spool_scale_entity: str | None = None
     maintenance: dict[str, Interval] = field(default_factory=dict)
 
     @property
@@ -108,10 +109,19 @@ class Energy:
 
 
 @dataclass(frozen=True)
+class DryBox:
+    name: str
+    entity: str
+    max_pct: float = 20.0
+
+
+@dataclass(frozen=True)
 class Upkeep:
     reorder_below_g: float = 200.0
     dry_after_days: dict[str, float] = field(default_factory=dict)
     weigh_every_days: float | None = None
+    todo_entity: str | None = None
+    dry_boxes: tuple[DryBox, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -266,6 +276,7 @@ def load(path: str | Path) -> Config:
             finish_window=p.get("finish_window") or None,
             purge_zone=_purge_zone(name, p.get("purge_zone")),
             power_entity=p.get("power_entity") or None,
+            spool_scale_entity=p.get("spool_scale_entity") or None,
             maintenance=parse_maintenance(p.get("maintenance")),
         )
     ha = None
@@ -347,5 +358,10 @@ def load(path: str | Path) -> Config:
             weigh_every_days=float(wd)
             if (wd := (raw.get("upkeep") or {}).get("weigh_every_days"))
             else None,
+            todo_entity=(raw.get("upkeep") or {}).get("todo_entity") or None,
+            dry_boxes=tuple(
+                DryBox(str(b["name"]), str(b["entity"]), float(b.get("max_pct", 20)))
+                for b in (raw.get("upkeep") or {}).get("dry_boxes") or []
+            ),
         ),
     )

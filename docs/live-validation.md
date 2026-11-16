@@ -154,6 +154,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     Spoolman's remaining weight follows the scale; a filament with a deliberately wrong density in Spoolman shows a
     drift over 5 % after ~100 g of printing.
 
+44. With `upkeep.todo_entity` set and a material under `reorder_below_g`: within the hour "PLA filament" is on the
+    HA list once; register a new spool and it comes off. With a `spool_scale_entity`: lift the spool off and back
+    while the printer is idle; the next hourly pass records a weigh-in.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -202,3 +206,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 41 | Printer health: a printer.cfg change is a finding until accepted | | |
 | 42 | Spool registered, labelled, swapped on with the old one weighed | | |
 | 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
+| 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |

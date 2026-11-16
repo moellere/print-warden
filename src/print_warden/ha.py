@@ -139,6 +139,16 @@ class HAClient:
         except (httpx.HTTPError, ValueError):
             return None
 
+    async def call_service(
+        self, domain: str, service: str, data: dict[str, Any]
+    ) -> bool:
+        try:
+            r = await self._c.post(f"/api/services/{domain}/{service}", json=data)
+            return r.status_code < 300
+        except httpx.HTTPError as e:
+            log.warning("%s.%s failed: %s", domain, service, e)
+            return False
+
     async def light(self, entity_id: str, on: bool) -> None:
         domain = entity_id.split(".")[0]
         try:

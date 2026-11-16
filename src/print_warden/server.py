@@ -2363,6 +2363,7 @@ async def status_data() -> dict[str, Any]:
         p["snapshot"] = _latest_snapshot(n)
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
+    report["forecast"] = up.get("forecast") or []
     report["batches"] = _open_batches()
     report["away"] = presence.away()
     return report
@@ -2685,6 +2686,9 @@ def record_dried(spool_id: int, done_by: str) -> dict[str, Any]:
     return {"spool_id": spool_id, "dried_by": done_by}
 
 
+FORECAST_DAYS = 30
+
+
 async def upkeep_report(now: float | None = None) -> dict[str, Any]:
     """Reorder, drying and maintenance findings; Spoolman's part is skipped (with the reason) when it cannot be read."""
     now = now or time.time()
@@ -2693,12 +2697,32 @@ async def upkeep_report(now: float | None = None) -> dict[str, Any]:
         "drying": [],
         "maintenance": [m for n in WATCHERS for m in _maintenance(n, now)],
         "weigh": [],
+        "forecast": [],
+        "dry_boxes": [],
     }
+    if HA and CFG.upkeep.dry_boxes:
+        readings = []
+        for b in CFG.upkeep.dry_boxes:
+            try:
+                rh: float | None = float(await HA.state(b.entity) or "")
+            except ValueError:
+                rh = None
+            readings.append((b.name, b.max_pct, rh))
+        out["dry_boxes"] = upkeep.dry_boxes(readings)
     if SPOOLMAN:
         try:
             stock = await SPOOLMAN.spools()
             queued = JOBS.list(None, 500, upkeep.QUEUED)
             out["reorder"] = upkeep.reorder(stock, queued, CFG.upkeep.reorder_below_g)
+            have: dict[str, float] = {}
+            for sp in stock:
+                if not sp.get("archived") and sp.get("material"):
+                    have[sp["material"]] = have.get(sp["material"], 0.0) + float(
+                        sp.get("remaining_g") or 0
+                    )
+            out["forecast"] = upkeep.forecast(
+                JOBS.since(now - FORECAST_DAYS * 86400), have, FORECAST_DAYS
+            )
             by_id = {s["id"]: s for s in stock}
             loaded = {
                 n: by_id[int(sid)]
@@ -2735,6 +2759,15 @@ async def upkeep_alerts(now: float | None = None) -> int:
         return 0
     report = await upkeep_report(now)
     items: list[tuple[str, str, str, list[tuple[str, ...]]]] = []
+    for b in report.get("dry_boxes") or []:
+        items.append(
+            (
+                f"drybox:{b['box']}",
+                f"Dry box {b['box']}: {b['humidity'] if b['humidity'] is not None else '?'} %RH",
+                f"Limit {b['max_pct']:g} %: {b['why']}.",
+                [],
+            )
+        )
     for g in report.get("weigh") or []:
         items.append(
             (
@@ -2832,6 +2865,56 @@ async def printer_health(printer: str, accept: bool = False) -> dict[str, Any]:
     return await _health(printer, accept)
 
 
+async def todo_sync() -> list[str]:
+    """Reorder findings as items on `upkeep.todo_entity` (a Home Assistant to-do list): added once, removed when
+    the stock recovers. Returns the items on the list."""
+    todo = CFG.upkeep.todo_entity
+    if not (todo and HA and SPOOLMAN):
+        return []
+    want = {f"{r['material']} filament" for r in (await upkeep_report())["reorder"]}
+    have = {k.split(":", 1)[1] for k in JOBS.kv_prefix("todo_added:")}
+    for item in sorted(want - have):
+        if await HA.call_service("todo", "add_item", {"entity_id": todo, "item": item}):
+            JOBS.kv_set(f"todo_added:{item}", str(time.time()))
+    for item in sorted(have - want):
+        await HA.call_service("todo", "remove_item", {"entity_id": todo, "item": item})
+        JOBS.kv_delete(f"todo_added:{item}")
+    return sorted(want)
+
+
+SCALE_STEP_G = 2.0
+
+
+async def scale_tick() -> list[str]:
+    """Each idle printer with a `spool_scale_entity` and an active spool: a scale reading that moved is a weigh-in.
+    Not while printing: the printer shakes the scale. Returns the spools weighed."""
+    if not (HA and SPOOLMAN):
+        return []
+    done = []
+    for n, w in WATCHERS.items():
+        sid = JOBS.kv_get(f"active_spool:{n}")
+        if not (w.p.spool_scale_entity and sid) or w.status().get("state") in (
+            "printing",
+            "paused",
+        ):
+            continue
+        try:
+            gross = float(await HA.state(w.p.spool_scale_entity) or "")
+        except ValueError:
+            continue
+        last = JOBS.kv_get(f"scale_last:{n}")
+        if last is not None and abs(gross - float(last)) < SCALE_STEP_G:
+            continue
+        try:
+            await weigh_spool(sid, gross, f"{n} spool scale")
+        except (ValueError, httpx.HTTPError) as e:
+            log.warning("scale %s: %s", n, e)
+            continue
+        JOBS.kv_set(f"scale_last:{n}", str(gross))
+        done.append(spools.code(int(sid)))
+    return done
+
+
 async def health_alerts() -> None:
     """Hourly: each connected printer's health; an alert once per new set of findings."""
     for n, w in WATCHERS.items():
@@ -2914,6 +2997,11 @@ async def upkeep_loop(interval_s: float = 3600) -> None:
             await health_alerts()
         except Exception:
             log.exception("health")
+        for task in (todo_sync, scale_tick):
+            try:
+                await task()
+            except Exception:
+                log.exception(task.__name__)
         for n in WATCHERS:
             if JOBS.kv_get(f"power_hold:{n}") == "1":
                 try:

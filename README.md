@@ -87,6 +87,14 @@ printer (`klipper_errors`).
 - `retire_spool(spool, retired_by)`: archives an empty spool and unloads it.
 - `upkeep.weigh_every_days`: a loaded spool not weighed (or opened) that long gets a phone prompt; type the scale
   reading into its reply.
+- A printer's `spool_scale_entity` (a load cell under the spool holder, e.g. HX711 + ESPHome, reading grams with the
+  spool on it): hourly, while the printer is idle, a reading that moved by 2 g or more is a weigh-in.
+
+Filament logistics, hourly with upkeep: with `upkeep.todo_entity` (a Home Assistant to-do list) each material that
+needs reordering is added once as "PLA filament" and removed when the stock recovers. `upkeep.dry_boxes` (name,
+humidity `entity`, `max_pct`, default 20) alerts once a day for a box over its limit or a sensor that cannot be read.
+`upkeep_status` and the `/status` page carry a run-out forecast per material: grams a day over the last 30 days and
+the days the stock lasts at that rate.
 
 **Printer health.** Hourly, and on demand with `printer_health(printer)`, the warden reads each printer through
 Moonraker and compares it with a known-good snapshot (taken on the first check; `accept=True` takes a new one after

@@ -131,6 +131,12 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         upkeep.append(
             f'<p class="warn">Dry the {_e(d["material"])} on {_e(d["printer"])} ({_e(d["days_open"])} days open)</p>'
         )
+    for f in data.get("forecast") or []:
+        if f.get("days_left") is not None:
+            upkeep.append(
+                f'<p class="mute">{_e(f["material"])}: about {_e(round(f["days_left"]))} days left at recent use '
+                f"({_e(f['per_day_g'])} g a day)</p>"
+            )
     if upkeep:
         cards.append(
             '<section class="card"><h2>Filament</h2>' + "".join(upkeep) + "</section>"
