@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A failed print no longer leaves the printer hot.** Every cancel the warden sends is followed by
+  `TURN_OFF_HEATERS` (Klipper's own `CANCEL_PRINT` keeps them on unless the printer's macro switches them off). A print
+  paused for `policy.paused_cancel_minutes` (default 30; `0` turns it off) with no Resume is cancelled, heaters off;
+  the pause alert and the Obico prompt say when. Two minutes after a print is cancelled or stops with an error, an idle
+  printer still heating gets `TURN_OFF_HEATERS`. Each comes with a warning alert. **Upgrade note:** paused prints now
+  cancel themselves after 30 minutes unless the config sets `policy.paused_cancel_minutes: 0`.
+
 - A Klipper shutdown while the printer's `power_device` reads off is no longer a critical alert: the X1's board
   runs on USB backfeed with mains off and its link stalls hours later, which the start path already recovers
   (power on, FIRMWARE_RESTART). The event is logged at info, `/healthz` marks that `last_shutdown` `expected`,

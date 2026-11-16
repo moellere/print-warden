@@ -37,6 +37,8 @@ from .spoolman import Spoolman
 
 log = logging.getLogger(__name__)
 FINAL_KINDS = ("print_complete", "print_cancelled", "print_error")
+PAUSE_POLL_S = 30.0
+COOL_GRACE_S = 120.0
 BED_SETTLE_S = 30
 
 
@@ -100,6 +102,7 @@ class PrinterWatcher:
             else None
         )
         self._metering: str | None = None
+        self._pause_watch: str | None = None
 
     async def run(self) -> None:
         await self.mr.run()
@@ -116,6 +119,7 @@ class PrinterWatcher:
             await self.handle(ev)
         if signal == "snapshot":
             await self.reconcile_jobs()
+        self._watch_pause()
 
     async def _mains_off(self) -> bool:
         """The power device reads off. A failed read counts as on, so a real fault still alerts."""
@@ -153,6 +157,8 @@ class PrinterWatcher:
             and cam
         ):
             await self._snap(cam, self.job_dir, f"L{ev.data.get('layer', 0):05d}")
+        if ev.kind == "print_paused" and (at := self._cancel_at()):
+            ev.message += f"; cancels itself at {at} unless resumed"
         if ev.alert and cam:
             path = await self._snap(cam, None, None)
             if path:
@@ -172,6 +178,8 @@ class PrinterWatcher:
             if self.bed:
                 self.bed.set_state(self.p.name, "occupied", ev.kind)
                 self._spawn(self._after_print(job, ev.kind))
+            if ev.kind != "print_complete":
+                self._spawn(self._cool_after_failure(ev.kind))
             used = ev.data.get("filament_used_mm")
             if job and self.ha:
                 self._spawn(self._outcome_prompt(job, ev, cam))
@@ -195,6 +203,121 @@ class PrinterWatcher:
             (ev.data.get("obico") or {}).get("event") or {}
         ).get("print_paused"):
             self._spawn(self._pause_prompt(ev))
+
+    def _cancel_at(self, since: float | None = None) -> str | None:
+        """When a print paused at `since` (default now) cancels itself, as a local 12-hour time, or None when off."""
+        mins = self.cfg.paused_cancel_minutes
+        if mins <= 0:
+            return None
+        at = datetime.fromtimestamp((since or time.time()) + mins * 60).astimezone()
+        return at.strftime("%I:%M %p").lstrip("0")
+
+    def _watch_pause(self) -> None:
+        """A paused print gets a deadline; started from telemetry, so it also resumes after a warden restart."""
+        if not self.jobs or self.cfg.paused_cancel_minutes <= 0:
+            return
+        if self.mr.state.get("print_stats", {}).get("state") != "paused":
+            return
+        job = self.jobs.find_active(self.p.name)
+        if job and self._pause_watch != job["id"]:
+            self._pause_watch = job["id"]
+            self._spawn(self._pause_deadline(job["id"]))
+
+    async def _pause_deadline(self, job_id: str) -> None:
+        """Cancel the print, heaters off, once it has been paused `paused_cancel_minutes` with nobody answering. A
+        resume, a cancel or another file on the printer ends the watch; the pause start survives a restart."""
+        assert self.jobs
+        key = f"paused_since:{job_id}"
+        since = float(self.jobs.kv_get(key) or 0) or time.time()
+        self.jobs.kv_set(key, str(since))
+        deadline = since + self.cfg.paused_cancel_minutes * 60
+        try:
+            while True:
+                job = self.jobs.get(job_id)
+                st = self.status()
+                if (
+                    job["state"] != "printing"
+                    or st.get("state") != "paused"
+                    or st.get("filename") != job["remote_name"]
+                ):
+                    self.jobs.kv_delete(key)
+                    return
+                left = deadline - time.time()
+                if left <= 0:
+                    break
+                await asyncio.sleep(min(PAUSE_POLL_S, left))
+            await self._auto_cancel(job)
+            self.jobs.kv_delete(key)
+        finally:
+            if self._pause_watch == job_id:
+                self._pause_watch = None
+
+    async def _auto_cancel(self, job: dict[str, Any]) -> None:
+        assert self.jobs
+        mins = self.cfg.paused_cancel_minutes
+        try:
+            await moonraker.cancel_print(self.p.moonraker)
+        except httpx.HTTPError as e:
+            self.jobs.note(job["id"], f"cancel after {mins:g} min paused failed: {e}")
+            ev = Event(
+                self.p.name,
+                "print_auto_cancel_failed",
+                "critical",
+                f"{job['name']} has been paused {mins:g} min; cancelling it or switching the heaters off failed ({e})",
+                {"job_id": job["id"]},
+                alert=True,
+            )
+        else:
+            self.jobs.note(
+                job["id"],
+                f"cancelled after {mins:g} min paused with no answer; heaters off",
+            )
+            ev = Event(
+                self.p.name,
+                "print_auto_cancelled",
+                "warning",
+                f"Cancelled {job['name']}: paused {mins:g} min with no answer. Heaters off.",
+                {"job_id": job["id"]},
+                alert=True,
+            )
+            if self.ha:
+                await self.ha.clear_notification(f"print_warden_pause_{job['id']}")
+        self.store.add(ev)
+        await self._alert(ev)
+
+    async def _cool_after_failure(self, kind: str) -> None:
+        """A cancelled or failed print leaves the heaters on unless the printer's own macro switched them off; after
+        a short grace, an idle printer still heating gets TURN_OFF_HEATERS."""
+        await asyncio.sleep(COOL_GRACE_S)
+        st = self.status()
+        if not self.mr.connected or st.get("klippy") != "ready":
+            return
+        if st.get("state") in ("printing", "paused"):
+            return
+        hot = [n for n in ("extruder", "bed") if float(st[n].get("target") or 0) > 0]
+        if not hot:
+            return
+        why = "was cancelled" if kind == "print_cancelled" else "stopped with an error"
+        try:
+            await moonraker.heaters_off(self.p.moonraker)
+        except httpx.HTTPError as e:
+            ev = Event(
+                self.p.name,
+                "heaters_left_on",
+                "critical",
+                f"The {' and '.join(hot)} still heat {COOL_GRACE_S / 60:g} min after the print {why}; switching them off failed ({e})",
+                alert=True,
+            )
+        else:
+            ev = Event(
+                self.p.name,
+                "heaters_off_after_failure",
+                "warning",
+                f"Heaters off: the {' and '.join(hot)} still heated {COOL_GRACE_S / 60:g} min after the print {why}.",
+                alert=True,
+            )
+        self.store.add(ev)
+        await self._alert(ev)
 
     async def _read_power(self) -> dict[str, Any] | None:
         assert self.ha and self.p.power_entity
@@ -694,7 +817,12 @@ class PrinterWatcher:
         )
         await self.ha.notify_actionable(
             f"Obico paused {self.p.name}",
-            f"{job['name']}: {ev.message}. Resume only if the print is fine.",
+            f"{job['name']}: {ev.message}. Resume only if the print is fine."
+            + (
+                f" It cancels itself at {at}, heaters off."
+                if (at := self._cancel_at())
+                else ""
+            ),
             [
                 (f"PRINT_WARDEN_RESUME_{job['id']}", "Resume"),
                 (f"PRINT_WARDEN_CANCEL_{job['id']}", "Cancel print"),

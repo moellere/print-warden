@@ -16,6 +16,8 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours` |
 | Pause on detected failure | Obico |
 | Cancel or resume a running print | a human: at the printer, or the Cancel / Resume button on a warden notification for that job (no MCP tool can) |
+| Cancel a print left paused | the warden, once it has been paused `policy.paused_cancel_minutes` (default 30; `0` never) with no Resume |
+| Heaters off after a failed print | the warden: with every cancel it sends, and when a cancelled or errored print still heats an idle printer 2 minutes later |
 | Power off | a human |
 
 Printers with a `power_device` (the X1's Sonoff) are powered on at start and Klipper is coaxed to ready with
@@ -48,7 +50,17 @@ discovered from Moonraker's object list on each (re)subscribe:
 At layer `first_layer_check` (default 2; 0 disables) the phone gets the nozzle camera frame with **Looks good** /
 **Cancel print**. When Obico pauses a print the phone gets **Resume** / **Cancel print**. Both are bound to the job:
 the tap only acts if that job is still the one printing (same file on the printer), so a stale button cannot touch a
-later print. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
+later print.
+
+A failed print must not leave the printer hot. Klipper's own `CANCEL_PRINT` keeps the heaters on unless the printer's
+cancel macro switches them off, and a print that stops with an error leaves them as they were. So:
+- every cancel the warden sends is followed by `TURN_OFF_HEATERS`;
+- a print paused (Obico, a runout sensor, `PAUSE`) for `policy.paused_cancel_minutes` (default 30; `0` turns it
+  off) with nobody tapping Resume is cancelled, heaters off, with a warning alert. The pause alert and the Obico
+  prompt say when. The pause start is kept across a warden restart;
+- 2 minutes after a print is cancelled or errors, a printer that is idle with Klipper ready but still has a heater
+  target gets `TURN_OFF_HEATERS` and a warning alert. A preheat started by hand inside those 2 minutes is switched off
+  once, too. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
 that Home Assistant entity is in `alerts.quiet_states` (default `["on"]`; an unreadable entity never mutes); critical alerts and
 Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
