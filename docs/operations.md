@@ -75,6 +75,9 @@ added to existing databases). Read `CHANGELOG.md` first: some releases change de
   board losing its link is normal then); monitors should not treat that one as a fault.
 - `outcomes_7d`: `{prints, failed}`, with labels winning over how the job ended.
 - `maintenance_due`: the names of the printer's maintenance items that are due.
+- `health`: the kinds of printer-health finding from the last hourly check (`config_changed`,
+  `save_config_pending`, `firmware_mismatch`, `update_available`, `mesh_drift`); never the details, which can name
+  files. `printer_health` over MCP has them.
 
 `ok` is true when every printer is connected. Fields are only added within an api version; it never carries file
 names, job names or URLs. homelab-helper's `printwarden` source turns these into findings.

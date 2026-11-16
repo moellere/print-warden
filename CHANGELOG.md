@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Printer health, read-only: `printer_health(printer, accept)` and an hourly check compare each printer with a
+  known-good snapshot: changed Klipper settings (includes resolved), a pending `SAVE_CONFIG`, MCU firmware from a
+  different Klipper release, waiting updates, and saved meshes whose range grew. One warning alert per new set of
+  findings; `/healthz` adds `health` (the finding kinds).
 - Away mode (`presence.entity`, optional): while nobody is home, no unattended start (also while presence is
   unknown), quiet hours stop muting alerts, and `away_offer_max_hours` holds longer jobs. Coming home sends a "while
   you were out" summary and offers what waited. Presence is kept in memory only. `/status` shows "away".

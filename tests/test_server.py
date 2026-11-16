@@ -553,6 +553,7 @@ def test_healthz_contract(client):
         "last_shutdown",
         "outcomes_7d",
         "maintenance_due",
+        "health",
     }
     assert "filename" not in str(body)
 

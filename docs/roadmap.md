@@ -294,13 +294,17 @@ Done when: away, a queued job is neither offered nor auto-started, and coming ho
 Offers are not held while away by default: a tap can come from anywhere, so only `away_offer_max_hours` holds them.
 Unattended starts are, and an unreadable presence entity counts as away for them (the safe side) but not for alerts.
 
-## Phase 26 — Printer health and config drift
+## Phase 26 — Printer health and config drift ✅ (build)
 
 - Read-only through Moonraker: `printer.cfg` (and includes) diffed against a snapshot, Klipper / Moonraker / MCU
   firmware versions and mismatches, probe and mesh drift from the saved `bed_mesh` profiles. Findings feed
   homelab-helper's printwarden source.
 
 Done when: a changed `printer.cfg` or a version mismatch shows as a finding before the next print.
+
+The diff is of Klipper's parsed settings rather than the files, so includes need no fetching and comments or
+reordering are not changes. `/healthz` carries only the finding kinds (details can name files); homelab-helper's
+printwarden source still needs to turn them into findings.
 
 ## Phase 27 — Spool inventory
 

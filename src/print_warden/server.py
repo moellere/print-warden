@@ -56,6 +56,7 @@ from . import (
     threemf,
     upkeep,
 )
+from . import health as phealth
 from .bedcheck import BedStore
 from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
@@ -2074,8 +2075,8 @@ def _outcomes_7d(printer: str, now: float) -> dict[str, int]:
 def health_report() -> dict[str, Any]:
     """The unauthenticated status contract (api 1) read by monitors such as homelab-helper. Fields are only added
     within an api version; no file names, job names or URLs. Added after 0.3.0: `last_shutdown` (classified cause of
-    a shutdown Klipper has not recovered from; `expected` when it happened with mains off), `outcomes_7d` and
-    `maintenance_due`."""
+    a shutdown Klipper has not recovered from; `expected` when it happened with mains off), `outcomes_7d`,
+    `maintenance_due` and `health` (the kinds of printer-health finding from the last hourly check)."""
     now = time.time()
     printers = {}
     for n, w in WATCHERS.items():
@@ -2095,6 +2096,12 @@ def health_report() -> dict[str, Any]:
             "last_shutdown": _last_shutdown(n, now),
             "outcomes_7d": _outcomes_7d(n, now),
             "maintenance_due": [m["item"] for m in _maintenance(n, now) if m["due"]],
+            "health": sorted(
+                {
+                    f["kind"]
+                    for f in json.loads(JOBS.kv_get(f"health_findings:{n}") or "[]")
+                }
+            ),
         }
     return {
         "ok": all(p["connected"] for p in printers.values()),
@@ -2456,6 +2463,76 @@ async def upkeep_alerts(now: float | None = None) -> int:
     return sent
 
 
+async def _health(printer: str, accept: bool = False) -> dict[str, Any]:
+    w = _w(printer)
+    inputs = await moonraker.health_inputs(w.p.moonraker)
+    raw = JOBS.kv_get(f"health_snapshot:{printer}")
+    taken = None
+    if accept or raw is None:
+        snap = phealth.snapshot(inputs["settings"], inputs["bed_mesh"])
+        JOBS.kv_set(f"health_snapshot:{printer}", json.dumps(snap))
+        taken = (
+            "snapshot taken: later changes are compared with the printer as it is now"
+        )
+        raw = json.dumps(snap)
+    found = phealth.findings(
+        json.loads(raw),
+        inputs["settings"],
+        inputs["bed_mesh"],
+        inputs["save_pending"],
+        inputs["host"],
+        inputs["mcus"],
+        inputs["updates"],
+    )
+    JOBS.kv_set(f"health_findings:{printer}", json.dumps(found))
+    return {
+        "printer": printer,
+        "findings": found,
+        "note": taken,
+        "klipper": inputs["host"],
+        "mcus": inputs["mcus"],
+    }
+
+
+@mcp.tool()
+async def printer_health(printer: str, accept: bool = False) -> dict[str, Any]:
+    """Read-only health of one printer through Moonraker: Klipper settings changed since the known-good snapshot
+    (every include resolved), a SAVE_CONFIG still pending, MCU firmware from a different Klipper release than the
+    host, updates waiting, and saved bed meshes whose range grew. The first call takes the snapshot; `accept=True`
+    takes a new one after a change you meant. Nothing on the printer is changed."""
+    return await _health(printer, accept)
+
+
+async def health_alerts() -> None:
+    """Hourly: each connected printer's health; an alert once per new set of findings."""
+    for n, w in WATCHERS.items():
+        if not w.mr.connected:
+            continue
+        try:
+            found = (await _health(n))["findings"]
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            log.warning("health %s: %s", n, e)
+            continue
+        key = (
+            hashlib.sha256(json.dumps(found, sort_keys=True).encode()).hexdigest()[:16]
+            if found
+            else ""
+        )
+        if key == (JOBS.kv_get(f"health_alerted:{n}") or ""):
+            continue
+        JOBS.kv_set(f"health_alerted:{n}", key)
+        if found and HA:
+            more = (
+                f" (+{len(found) - 3} more: printer_health)" if len(found) > 3 else ""
+            )
+            await HA.alert(
+                n,
+                "warning",
+                "printer health",
+                "; ".join(f["detail"] for f in found[:3]) + more,
+            )
+
+
 async def presence_tick(now: float | None = None) -> str | None:
     """Read the presence entity once; on coming home, send the summary and offer what waited. Returns the change."""
     pr = CFG.presence
@@ -2504,6 +2581,10 @@ async def upkeep_loop(interval_s: float = 3600) -> None:
             await upkeep_alerts()
         except Exception:
             log.exception("upkeep")
+        try:
+            await health_alerts()
+        except Exception:
+            log.exception("health")
         for n in WATCHERS:
             if JOBS.kv_get(f"power_hold:{n}") == "1":
                 try:

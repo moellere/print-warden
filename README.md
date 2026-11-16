@@ -72,6 +72,13 @@ requested_by)` from chat) uploads the job's own gcode again as a new job and que
 any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
 printer (`klipper_errors`).
 
+**Printer health.** Hourly, and on demand with `printer_health(printer)`, the warden reads each printer through
+Moonraker and compares it with a known-good snapshot (taken on the first check; `accept=True` takes a new one after
+a change you meant): Klipper settings that changed, with every include resolved; a `SAVE_CONFIG` still pending; MCU
+firmware from a different Klipper release than the host (rebuild and flash); Klipper or Moonraker updates waiting;
+saved bed meshes whose range grew by more than 0.1 mm. A new set of findings is one warning alert; `/healthz` carries
+their kinds for homelab-helper. Nothing on the printer is changed.
+
 **Away mode.** With `presence.entity` (a `person.*`, a group, or `zone.home`, whose state is a head count), the
 warden reads Home Assistant every `presence.poll_s` (60) and keeps only the current answer and when the house emptied,
 in memory; presence is never written to disk. While nobody is home: no unattended start (unless
@@ -339,6 +346,7 @@ src/print_warden/
   reconcile.py  settle jobs from Moonraker history after a restart or outage
   failures.py   why a print stopped with a Klipper error, and what to check
   presence.py   away mode: what changes while nobody is home
+  health.py     printer health: config drift, firmware and update versions, mesh drift
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)

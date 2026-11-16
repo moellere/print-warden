@@ -197,6 +197,45 @@ async def gcode_store(base_url: str, count: int = 40) -> list[dict[str, Any]]:
         return list(r.json().get("result", {}).get("gcode_store") or [])
 
 
+async def health_inputs(base_url: str) -> dict[str, Any]:
+    """What printer health compares (read-only): parsed settings, pending SAVE_CONFIG, saved meshes, the host and MCU
+    firmware versions, and the update manager's view (empty when it is not enabled)."""
+    async with httpx.AsyncClient(timeout=15) as c:
+        objs = (await c.get(f"{base_url}/printer/objects/list")).json()["result"][
+            "objects"
+        ]
+        mcus = [o for o in objs if o == "mcu" or o.startswith("mcu ")]
+        query = "&".join(
+            ["configfile=settings,save_config_pending", "bed_mesh=profiles", *mcus]
+        )
+        st = (await c.get(f"{base_url}/printer/objects/query?{query}")).json()[
+            "result"
+        ]["status"]
+        info = (await c.get(f"{base_url}/printer/info")).json()["result"]
+        r = await c.get(
+            f"{base_url}/machine/update/status", params={"refresh": "false"}
+        )
+        updates = (
+            r.json().get("result", {}).get("version_info", {})
+            if r.status_code == 200
+            else {}
+        )
+    cfg = st.get("configfile") or {}
+    return {
+        "settings": cfg.get("settings") or {},
+        "save_pending": bool(cfg.get("save_config_pending")),
+        "bed_mesh": st.get("bed_mesh") or {},
+        "host": info.get("software_version"),
+        "mcus": {
+            ("mcu" if m == "mcu" else m[4:]): str(
+                (st.get(m) or {}).get("mcu_version") or ""
+            )
+            for m in mcus
+        },
+        "updates": updates,
+    }
+
+
 async def history(base_url: str, limit: int = 50) -> list[dict[str, Any]]:
     """Recent print history, newest first (Moonraker [history] component)."""
     async with httpx.AsyncClient(timeout=15) as c:
