@@ -111,6 +111,7 @@ class Energy:
 class Upkeep:
     reorder_below_g: float = 200.0
     dry_after_days: dict[str, float] = field(default_factory=dict)
+    weigh_every_days: float | None = None
 
 
 @dataclass(frozen=True)
@@ -343,5 +344,8 @@ def load(path: str | Path) -> Config:
                     (raw.get("upkeep") or {}).get("dry_after_days") or {}
                 ).items()
             },
+            weigh_every_days=float(wd)
+            if (wd := (raw.get("upkeep") or {}).get("weigh_every_days"))
+            else None,
         ),
     )

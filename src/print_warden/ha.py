@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 import httpx
@@ -48,7 +49,7 @@ class HAClient:
         self,
         title: str,
         message: str,
-        actions: list[tuple[str, str]],
+        actions: Sequence[tuple[str, ...]],
         image: str | None = None,
         tag: str | None = None,
         sticky: bool = True,
@@ -63,7 +64,15 @@ class HAClient:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)
         data: dict[str, Any] = {
-            "actions": [{"action": a, "title": t} for a, t in actions],
+            # (action, title) or (action, title, behavior): "textInput" asks for a typed reply (reply_text)
+            "actions": [
+                {
+                    "action": a[0],
+                    "title": a[1],
+                    **({"behavior": a[2]} if len(a) > 2 else {}),
+                }
+                for a in actions
+            ],
             "tag": tag or "print_warden_job",
             "channel": "Print warden",
             "importance": "high",

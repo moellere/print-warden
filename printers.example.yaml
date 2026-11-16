@@ -109,6 +109,7 @@ upkeep:
   dry_after_days:               # loaded spools of these materials, open (or last dried) longer than this
     TPU: 7
     PETG: 30
+  # weigh_every_days: 14        # a loaded spool not weighed this long gets a phone prompt (reply with the grams)
 
 # presence:                        # away mode (Home Assistant): no auto-start, no quiet hours, a summary on return
 #   entity: person.enoch             # or a group, or zone.home (a head count)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Spool inventory, with Spoolman as the record: `register_spool` (vendor and filament matched or created; the spool's
+  code `S<id>` for a label), `weigh_spool` (remaining from a scale reading and the empty-spool weight; counted against
+  weighed use, with a flag over 5 % drift), `swap_spool` (outgoing weighed, new one active, checked against the queue
+  and drying), `retire_spool`. The `/spools` page does all four. `upkeep.weigh_every_days` sends a weigh-in prompt
+  that takes the grams as a typed reply.
 - Printer health, read-only: `printer_health(printer, accept)` and an hourly check compare each printer with a
   known-good snapshot: changed Klipper settings (includes resolved), a pending `SAVE_CONFIG`, MCU firmware from a
   different Klipper release, waiting updates, and saved meshes whose range grew. One warning alert per new set of

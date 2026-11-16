@@ -306,7 +306,7 @@ The diff is of Klipper's parsed settings rather than the files, so includes need
 reordering are not changes. `/healthz` carries only the finding kinds (details can name files); homelab-helper's
 printwarden source still needs to turn them into findings.
 
-## Phase 27 — Spool inventory
+## Phase 27 — Spool inventory ✅ (build)
 
 Spoolman stays the system of record; the warden runs the physical workflows around it, from chat, the phone and a
 `/spools` page (same token as `/status`, forms like `/stage`).
@@ -324,6 +324,10 @@ Spoolman stays the system of record; the warden runs the physical workflows arou
 
 Done when: a new spool goes from the box to registered, loaded and weighed again with no Spoolman UI, and a
 mis-set density shows as drift.
+
+Built without the NFC sticker: the spool code on a label does the same job with no tag setup, and a Home Assistant
+tag scan can follow when the codes prove too slow. The Spoolman writes (vendor, filament, spool, PATCH) are tested
+against a mocked Spoolman; row 42 is the first real one.
 
 ## Phase 28 — Filament logistics
 

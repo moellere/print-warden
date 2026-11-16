@@ -1,7 +1,8 @@
-"""Spoolman client. Spoolman owns spools and materials; the warden only records which spool is on which printer
-(the X4's Moonraker predates the spoolman component, so Moonraker cannot hold the active spool for us), and the
-values its calibration towers found, in spool extra fields (`pw_nozzle_temp`, `pw_flow_ratio`,
-`pw_pressure_advance`) it creates on first use."""
+"""Spoolman client. Spoolman owns spools and materials; the warden records which spool is on which printer (the
+X4's Moonraker predates the spoolman component, so Moonraker cannot hold the active spool for us), the values its
+calibration towers found, in spool extra fields (`pw_nozzle_temp`, `pw_flow_ratio`, `pw_pressure_advance`) it
+creates on first use, and the spool inventory's writes (`spools`): new vendors, filaments and spools, weighed
+remaining weights, archiving."""
 
 from __future__ import annotations
 
@@ -79,6 +80,8 @@ class Spoolman:
             "archived": s.get("archived", False),
             "tuning": _tuning(s.get("extra")),
             "first_used": s.get("first_used"),
+            "code": f"S{s['id']}",
+            "initial_g": s.get("initial_weight"),
         }
 
     async def set_tuning(
@@ -96,6 +99,53 @@ class Spoolman:
         r = await self._c.patch(
             f"/spool/{spool_id}", json={"extra": {field: json.dumps(value)}}
         )
+        r.raise_for_status()
+        return self._summary(r.json())
+
+    async def raw_spool(self, spool_id: int) -> dict[str, Any]:
+        """The spool as Spoolman stores it (weights, filament and vendor included)."""
+        r = await self._c.get(f"/spool/{spool_id}")
+        r.raise_for_status()
+        return dict(r.json())
+
+    async def vendor_id(self, name: str) -> int:
+        """The vendor's id, created when Spoolman has none by that name (case-insensitive)."""
+        r = await self._c.get("/vendor")
+        r.raise_for_status()
+        for v in r.json():
+            if str(v.get("name", "")).lower() == name.lower():
+                return int(v["id"])
+        r = await self._c.post("/vendor", json={"name": name})
+        r.raise_for_status()
+        return int(r.json()["id"])
+
+    async def filament_id(
+        self, vendor_id: int, fields: dict[str, Any]
+    ) -> tuple[int, bool]:
+        """(id, created): the vendor's filament of this material and colour, created from `fields` when missing."""
+        r = await self._c.get("/filament", params={"vendor.id": vendor_id})
+        r.raise_for_status()
+        for f in r.json():
+            if (
+                (f.get("vendor") or {}).get("id") == vendor_id
+                and str(f.get("material", "")).upper() == fields["material"]
+                and str(f.get("color_hex") or "").upper() == fields["color_hex"]
+            ):
+                return int(f["id"]), False
+        r = await self._c.post("/filament", json={**fields, "vendor_id": vendor_id})
+        r.raise_for_status()
+        return int(r.json()["id"]), True
+
+    async def create_spool(self, fields: dict[str, Any]) -> dict[str, Any]:
+        r = await self._c.post("/spool", json=fields)
+        r.raise_for_status()
+        return self._summary(r.json())
+
+    async def update_spool(
+        self, spool_id: int, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """PATCH the spool (remaining_weight, spool_weight, location, archived, ...)."""
+        r = await self._c.patch(f"/spool/{spool_id}", json=fields)
         r.raise_for_status()
         return self._summary(r.json())
 

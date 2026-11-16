@@ -72,6 +72,22 @@ requested_by)` from chat) uploads the job's own gcode again as a new job and que
 any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
 printer (`klipper_errors`).
 
+**Spool inventory.** Spoolman stays the system of record; the warden runs the physical side, from chat or the
+`/spools` page (same token as `/status`):
+- `register_spool(vendor, material, color, registered_by, net_weight_g=1000, spool_weight_g, price, location)`: the
+  vendor and filament are matched (case-insensitive, by material and colour) or created, with the material's usual
+  density and 1.75 mm; the spool's code (`S12`) goes on a label. `color` is `#RRGGBB` or a common name.
+- `weigh_spool(spool, gross_g, weighed_by)`: remaining = the scale reading − the empty spool's weight (the spool's,
+  else the filament's, else the vendor's; `empty_g` sets it), written to Spoolman. The warden's counted use since the
+  last weigh-in (or the full spool) is compared with the scale's; over 5 % apart, with at least 50 g used, it flags a
+  wrong density or diameter, or loads and purges done by hand.
+- `swap_spool(printer, spool, swapped_by, outgoing_gross_g)`: weighs the outgoing spool when given, makes the new one
+  active (and its Spoolman location the printer), says whether it suits the queue (material, grams) and whether it
+  is due for drying, and offers the queue again.
+- `retire_spool(spool, retired_by)`: archives an empty spool and unloads it.
+- `upkeep.weigh_every_days`: a loaded spool not weighed (or opened) that long gets a phone prompt; type the scale
+  reading into its reply.
+
 **Printer health.** Hourly, and on demand with `printer_health(printer)`, the warden reads each printer through
 Moonraker and compares it with a known-good snapshot (taken on the first check; `accept=True` takes a new one after
 a change you meant): Klipper settings that changed, with every include resolved; a `SAVE_CONFIG` still pending; MCU
@@ -189,6 +205,7 @@ request_start(job_id)       # phone notification with Start / Skip buttons (the 
 waive_blockers(job_id, authorized_by="the operator said: print it anyway")
 start_print(job_id, authorized_by="the operator said: go ahead and print it")   # chat path
 list_spools() / set_active_spool("garagex4", 2)   # Spoolman owns spools; the warden records which one is loaded
+register_spool / weigh_spool / swap_spool / retire_spool   # the spool inventory, also on /spools
 ```
 
 When a print ends the warden deducts the filament Klipper reports from the job's spool in Spoolman (set
@@ -310,7 +327,7 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload`, `/status`, `/stage` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload`, `/status`, `/stage`, `/spools` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
@@ -347,6 +364,8 @@ src/print_warden/
   failures.py   why a print stopped with a Klipper error, and what to check
   presence.py   away mode: what changes while nobody is home
   health.py     printer health: config drift, firmware and update versions, mesh drift
+  spools.py     spool inventory rules: codes, colours, empty weights, weigh-in drift, swap checks
+  spoolpage.py  the /spools page
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)
