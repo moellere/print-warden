@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
+
+Failure diagnosis, away mode, printer health, spool inventory and filament logistics since 0.7.0. **Upgrade notes:**
+no config changes are required; the new job columns are added on start-up and every new setting is optional
+(`presence`, `upkeep.weigh_every_days`, `upkeep.todo_entity`, `upkeep.dry_boxes`, a printer's `spool_scale_entity`).
+`/healthz` gains a `health` field, and printer health takes its known-good snapshot at the first hourly check. The
+prompt after a print stops with a known error now offers **Reprint**.
 
 - Filament logistics: `upkeep.todo_entity` puts each material to reorder on a Home Assistant to-do list and takes it
   off when stock recovers; `upkeep.dry_boxes` alerts on humidity over a box's limit; a run-out forecast per material
