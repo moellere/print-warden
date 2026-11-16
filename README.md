@@ -60,7 +60,19 @@ cancel macro switches them off, and a print that stops with an error leaves them
   prompt say when. The pause start is kept across a warden restart;
 - 2 minutes after a print is cancelled or errors, a printer that is idle with Klipper ready but still has a heater
   target gets `TURN_OFF_HEATERS` and a warning alert. A preheat started by hand inside those 2 minutes is switched off
-  once, too. `alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
+  once, too.
+
+A print that stops with a Klipper error says why. The warden reads `print_stats.message`, the shutdown message and
+the `!! ` errors and last command in Moonraker's gcode store, and classifies them: not homed, move out of range, cold
+extrusion, extrude-only move too long, extrusion too wide or fast, unknown command (a macro missing from
+`printer.cfg`), probe fault, file error, and every shutdown cause. The cause and what Klipper said land on the job
+(`failure_cause`, `failure_detail`, in `print_history`), and the phone prompt leads with them: **Reprint** or
+**Another cause…**. A failure labelled by hand is followed by the same Reprint offer. Reprint (`reprint(job_id,
+requested_by)` from chat) uploads the job's own gcode again as a new job and queues it; it starts on its own tap like
+any other. A cause seen twice on one printer in 14 days warns on `submit_job`, and `printer_stats` counts them per
+printer (`klipper_errors`).
+
+`alerts.quiet_hours` mutes info and warning alerts and the first-layer prompt, as does `alerts.quiet_entity` while
 that Home Assistant entity is in `alerts.quiet_states` (default `["on"]`; an unreadable entity never mutes); critical alerts and
 Obico pauses always go out. `alerts.cooldown_s` (default 300) spaces repeats of the same alert.
 
@@ -318,6 +330,7 @@ src/print_warden/
   jobs.py       job ledger (SQLite): transition table, transition log
   policy.py     can_start(), approval_expired()
   reconcile.py  settle jobs from Moonraker history after a restart or outage
+  failures.py   why a print stopped with a Klipper error, and what to check
   retention.py  snapshot / frame pruning
   timelapse.py  frames -> mp4 (ffmpeg)
   bedcheck.py   empty-bed comparison + bed ledger (state, labelled checks)

@@ -53,6 +53,10 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
     print, send a gcode that errors mid-print (or cancel it from Fluidd on a printer whose `CANCEL_PRINT` keeps the
     heaters on): within two minutes the targets read 0 and an alert says the warden switched them off.
 
+39. Start a print whose gcode errors early (e.g. `G1 X9999` sent from the console mid-print, or a file calling an
+    undefined macro). Expect: the phone prompt names the cause ("move out of range", "unknown command") with what
+    Klipper said and the last command; **Reprint** stages the same gcode as a new job and offers it for a tap.
+
 ## 5. Alerts
 
 16. Inside `quiet_hours`, or with `quiet_entity` in a quiet state: a warning (unplug a fan's tach or set a low
@@ -176,3 +180,4 @@ Use a small, fast model (a 20 mm calibration cube in PLA at `draft`) unless a ro
 | 36 | `/stage`: upload, slice, queue, offer on the phone | | |
 | 37 | kWh per print within a few percent of the plug's counter | | |
 | 38 | A paused print cancels itself, heaters off; a failed print is cooled | | |
+| 39 | An errored print names its cause; Reprint queues it | | |

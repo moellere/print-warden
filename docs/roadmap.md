@@ -273,7 +273,7 @@ integral: close enough for a price that changes hourly and a print of a few hour
 
 Done when: a two-colour print is sliced, checked, started by tap and deducts both spools.
 
-## Phase 24 — Why a print failed, and Reprint
+## Phase 24 — Why a print failed, and Reprint ✅ (build)
 
 - A print that stops with a Klipper error records why: `print_stats.message`, the shutdown message, and the `!! `
   errors and last command from Moonraker's gcode store, classified (not homed, move out of range, cold extrusion,

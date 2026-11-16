@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- A print that stops with a Klipper error is diagnosed: the cause (not homed, move out of range, cold extrusion,
+  extrusion limits, unknown command, probe, file, or a shutdown cause) and what Klipper said, with the last command,
+  are kept on the job (`failure_cause`, `failure_detail`). The phone prompt leads with them and offers **Reprint**;
+  a failure labelled by hand is followed by the same offer. `reprint(job_id, requested_by)` queues the job's own gcode
+  again (starts on its own tap). A cause seen twice on one printer in 14 days warns on `submit_job`;
+  `printer_stats` reports `klipper_errors` per printer. New job columns are added on start-up.
+
 ## 0.7.0
 
 Safety and notification fixes since 0.6.0. **Upgrade notes:** a print left paused 30 minutes with no Resume is now

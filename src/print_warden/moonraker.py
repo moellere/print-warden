@@ -189,6 +189,14 @@ async def gcode_script(base_url: str, script: str, timeout: float = 120) -> None
         r.raise_for_status()
 
 
+async def gcode_store(base_url: str, count: int = 40) -> list[dict[str, Any]]:
+    """The last `count` gcode commands and responses Moonraker kept (oldest first): where Klipper's `!! ` errors are."""
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(f"{base_url}/server/gcode_store", params={"count": count})
+        r.raise_for_status()
+        return list(r.json().get("result", {}).get("gcode_store") or [])
+
+
 async def history(base_url: str, limit: int = 50) -> list[dict[str, Any]]:
     """Recent print history, newest first (Moonraker [history] component)."""
     async with httpx.AsyncClient(timeout=15) as c:

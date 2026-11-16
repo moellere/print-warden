@@ -18,6 +18,7 @@ from . import (
     calibration,
     cameras,
     energy,
+    failures,
     footprint,
     moonraker,
     outcome,
@@ -181,7 +182,7 @@ class PrinterWatcher:
             if ev.kind != "print_complete":
                 self._spawn(self._cool_after_failure(ev.kind))
             used = ev.data.get("filament_used_mm")
-            if job and self.ha:
+            if job:
                 self._spawn(self._outcome_prompt(job, ev, cam))
             if job:
                 await self.settle_spool(job, used, ev.data.get("print_duration"))
@@ -747,7 +748,10 @@ class PrinterWatcher:
         self, job: dict[str, Any], ev: Event, cam: str | None
     ) -> None:
         """The end photo with Good / Failed (or the failure reasons, for a cancelled or errored print). Sent whatever
-        the quiet hours: it waits on the phone until someone looks, like the bed-clear prompt."""
+        the quiet hours: it waits on the phone until someone looks, like the bed-clear prompt. A print that stopped with
+        a Klipper error is diagnosed first, and its prompt leads with the cause."""
+        if ev.kind == "print_error":
+            job = await self._diagnose(job)
         if not self.ha:
             return
         snap = (
@@ -771,6 +775,16 @@ class PrinterWatcher:
                 tag=outcome.tag(job["id"]),
             )
             return
+        cause = job.get("failure_cause")
+        if cause and cause != "unknown":
+            await self.ha.notify_actionable(
+                f"{job['name']} stopped: {failures.label(cause)}",
+                f"{self.p.name}: {failures.HINTS.get(cause, '')}. Klipper said: {job.get('failure_detail') or ''}",
+                outcome.first(job["id"], False, known_error=True),
+                image=image,
+                tag=outcome.tag(job["id"]),
+            )
+            return
         await self.ha.notify_actionable(
             f"How did {job['name']} turn out?"
             if completed
@@ -779,6 +793,27 @@ class PrinterWatcher:
             outcome.first(job["id"], completed),
             image=image,
             tag=outcome.tag(job["id"]),
+        )
+
+    async def _diagnose(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Record why a print stopped with an error: Klipper's messages and Moonraker's gcode store (best effort)."""
+        if not self.jobs:
+            return job
+        st = self.mr.state
+        messages = [
+            str(st.get("print_stats", {}).get("message") or ""),
+            str(st.get("webhooks", {}).get("state_message") or "")
+            if st.get("webhooks", {}).get("state") == "shutdown"
+            else "",
+        ]
+        try:
+            store = await moonraker.gcode_store(self.p.moonraker)
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("%s gcode store: %s", self.p.name, e)
+            store = []
+        fields = failures.diagnose(messages, store)
+        return self.jobs.note(
+            job["id"], f"stopped: {failures.label(fields['failure_cause'])}", **fields
         )
 
     async def _first_layer_prompt(self, ev: Event) -> None:

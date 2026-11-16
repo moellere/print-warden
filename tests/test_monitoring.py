@@ -390,3 +390,51 @@ async def test_cancel_print_switches_the_heaters_off(monkeypatch):
         ("/printer/print/cancel", None),
         ("/printer/gcode/script", "TURN_OFF_HEATERS"),
     ]
+
+
+async def test_an_errored_print_is_diagnosed_and_offers_reprint(w, monkeypatch):
+    async def store(base, count=40):
+        return [
+            {"message": "G1 X10 Y10", "type": "command"},
+            {
+                "message": "!! Must home axis first: 10.000 10.000 0.300 [0.000]",
+                "type": "response",
+            },
+        ]
+
+    monkeypatch.setattr(watcher_mod.moonraker, "gcode_store", store)
+    job = _printing_job(w.jobs)
+    w.mr.state = {
+        "print_stats": {"state": "error", "message": ""},
+        "webhooks": {"state": "ready"},
+    }
+    ev = Event(
+        "p", "print_error", "critical", "Error a.gcode", {"filename": "warden/a.gcode"}
+    )
+    await w._outcome_prompt(w.jobs.get(job["id"]), ev, None)
+    got = w.jobs.get(job["id"])
+    assert got["failure_cause"] == "not_homed"
+    assert "last command: G1 X10 Y10" in got["failure_detail"]
+    title, actions, _, _tag = w.ha.prompts[-1]
+    assert title == "part stopped: not homed"
+    assert actions == [
+        f"PRINT_WARDEN_REPRINT_{job['id']}",
+        f"PRINT_WARDEN_OUTCOME_{job['id']}:failed",
+    ]
+
+
+async def test_an_unreadable_gcode_store_still_records_what_klipper_said(
+    w, monkeypatch
+):
+    async def store(base, count=40):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(watcher_mod.moonraker, "gcode_store", store)
+    job = _printing_job(w.jobs)
+    w.mr.state = {"print_stats": {"state": "error", "message": "Lost communication with MCU 'mcu'"},
+                  "webhooks": {"state": "shutdown", "state_message": "Lost communication with MCU 'mcu'"}}  # fmt: skip
+    ev = Event(
+        "p", "print_error", "critical", "Error a.gcode", {"filename": "warden/a.gcode"}
+    )
+    await w._outcome_prompt(w.jobs.get(job["id"]), ev, None)
+    assert w.jobs.get(job["id"])["failure_cause"] == "mcu_comm_lost"

@@ -621,6 +621,10 @@ async def test_outcome_taps_label_the_job(monkeypatch):
         "layer_shift",
         "phone tap",
     )
+    # the reasons prompt gives way to the Reprint offer under the same tag
+    assert prompts[-1] == [f"PRINT_WARDEN_REPRINT_{j['id']}"]
+    assert cleared == []
+    await server._on_ha_action(f"PRINT_WARDEN_OUTCOME_{j['id']}:good", {})
     assert cleared == [f"print_warden_outcome_{j['id']}"]
 
 
@@ -1216,3 +1220,56 @@ def test_healthz_marks_a_mains_off_shutdown_expected():
         Event("testq", "klippy_ready", "info", "Klipper ready", alert=False)
     )
     assert server.health_report()["printers"]["testq"]["last_shutdown"] is None
+
+
+async def test_reprint_queues_the_same_gcode_and_starts_nothing(
+    clean_queues, monkeypatch, tmp_path
+):
+    gcode = server.JOBDIR / "testp" / "reprint" / "part.gcode"
+    gcode.parent.mkdir(parents=True, exist_ok=True)
+    gcode.write_text(";gcode\n")
+    uploads, queued = [], []
+
+    async def upload(base, path, remote):
+        uploads.append((path, remote))
+
+    async def advance(printer):
+        queued.append(printer)
+        return {"action": "offered"}
+
+    monkeypatch.setattr(server.moonraker, "upload_gcode", upload)
+    monkeypatch.setattr(server, "advance_queue", advance)
+    old = server.JOBS.create(printer="testp", name="part", material="PLA", quality="standard",
+                             gcode=str(gcode), est_seconds=600, offer=True, remote_name="warden/x.gcode")  # fmt: skip
+    for s in ("staged", "printing", "failed"):
+        server.JOBS.transition(old["id"], s, "test")
+    server.JOBS.note(old["id"], "x", failure_cause="not_homed")
+    out = await server.reprint(old["id"], "Enoch in chat")
+    new = server.JOBS.get(out["id"])
+    assert new["state"] == "staged" and new["reprint_of"] == old["id"]
+    assert (new["gcode"], new["material"], new["printer"]) == (
+        str(gcode),
+        "PLA",
+        "testp",
+    )
+    assert uploads == [(gcode, new["remote_name"])] and new["remote_name"].startswith(
+        f"warden/{new['id']}_part"
+    )
+    assert queued == ["testp"] and out["queue"] == {"action": "offered"}
+    with pytest.raises(ValueError, match="only a finished job"):
+        await server.reprint(new["id"], "x")
+    gcode.unlink()
+    with pytest.raises(ValueError, match="gcode of part is gone"):
+        await server.reprint(old["id"], "x")
+
+
+def test_a_repeated_klipper_error_warns_on_submit():
+    for _ in range(2):
+        j = server.JOBS.create(printer="testq", name="p", material="PLA")
+        server.JOBS.note(j["id"], "x", failure_cause="move_out_of_range")
+    one = server.JOBS.create(printer="testq", name="p", material="PLA")
+    server.JOBS.note(one["id"], "x", failure_cause="cold_extrusion")
+    warn = server._repeat_causes("testq")
+    assert len(warn) == 1 and warn[0].startswith(
+        "testq stopped with 'move out of range' 2 times in 14 days"
+    )

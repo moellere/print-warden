@@ -84,6 +84,9 @@ FIELDS = (
     "energy_kwh",
     "heatup_kwh",
     "energy_cost",
+    "failure_cause",
+    "failure_detail",
+    "reprint_of",
 )
 JSON_FIELDS = ("warnings", "slice_blockers", "overrides", "calibration")
 JSON_DEFAULTS = {"overrides": "{}", "calibration": "null"}
@@ -117,6 +120,9 @@ ADDED_COLUMNS = {
     "energy_kwh": "real",
     "heatup_kwh": "real",
     "energy_cost": "real",
+    "failure_cause": "text",
+    "failure_detail": "text",
+    "reprint_of": "text",
 }
 
 

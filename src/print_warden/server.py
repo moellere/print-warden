@@ -36,6 +36,7 @@ from . import (
     checks,
     config,
     energy,
+    failures,
     footprint,
     ha_entities,
     intake,
@@ -594,7 +595,9 @@ async def _submit_job(
         calibration=calibration,
     )
     history = _history(model_hash)
-    before = _failed_before(model_hash, mat, q, overrides or {})
+    before = _failed_before(model_hash, mat, q, overrides or {}) + _repeat_causes(
+        printer
+    )
     job = JOBS.create(
         printer=printer,
         name=stem,
@@ -1271,6 +1274,23 @@ async def _spool_temps(
     )
 
 
+REPEAT_DAYS = 14
+
+
+def _repeat_causes(printer: str, days: float = REPEAT_DAYS) -> list[str]:
+    """A Klipper error cause seen twice or more on this printer lately, with what to check."""
+    counts: dict[str, int] = {}
+    for j in JOBS.since(time.time() - days * 86400, printer):
+        cause = j.get("failure_cause")
+        if cause and cause != "unknown":
+            counts[cause] = counts.get(cause, 0) + 1
+    return [
+        f"{printer} stopped with '{failures.label(c)}' {n} times in {days:g} days: {failures.HINTS.get(c, '')}"
+        for c, n in sorted(counts.items())
+        if n >= 2
+    ]
+
+
 def _failed_before(
     model_hash: str, material: str, quality: str, overrides: dict[str, Any]
 ) -> list[str]:
@@ -1386,6 +1406,8 @@ def print_history(
         "outcome",
         "outcome_reason",
         "outcome_hint",
+        "failure_cause",
+        "failure_detail",
         "started_at",
         "finished_at",
         "source_url",
@@ -1411,6 +1433,7 @@ def printer_stats(days: int = 90) -> dict[str, Any]:
         "by_printer": stats.outcomes(rows, "printer"),
         "by_material": stats.outcomes(rows, "material"),
         "by_quality": stats.outcomes(rows, "quality"),
+        "klipper_errors": stats.failure_causes(rows),
         "monthly": stats.monthly(rows),
         "energy": stats.energy(rows),
     }
@@ -1612,6 +1635,10 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             JOBS.note(job_id, "first layers look good (phone tap)")
         elif verb == "OUTCOME":
             await _on_outcome_tap(job_id)
+        elif verb == "REPRINT":
+            await reprint(job_id, "phone tap")
+            if HA:
+                await HA.clear_notification(outcome.tag(job_id))
         elif verb == "CALIB":
             await _on_calibration_tap(job_id)
         elif verb == "MAINT":
@@ -1654,7 +1681,14 @@ async def _on_outcome_tap(payload: str) -> None:
         None if choice in ("good", "failed") else choice,
         "phone tap",
     )
-    if choice != "failed" and HA:
+    if choice in outcome.REASONS and HA:
+        await HA.notify_actionable(
+            f"Reprint {job['name']}?",
+            f"Labelled {choice.replace('_', ' ')}. Reprint queues the same gcode; it starts on its own tap.",
+            [outcome.reprint(job_id)],
+            tag=outcome.tag(job_id),
+        )
+    elif choice != "failed" and HA:
         await HA.clear_notification(outcome.tag(job_id))
 
 
@@ -1760,6 +1794,61 @@ async def calibrate(
         ]
     res["sections"] = [calibration.label(kind, v) for v in vals]
     return res
+
+
+REPRINT_FIELDS = (
+    "printer", "name", "material", "quality", "stl", "gcode", "preview", "est_seconds", "filament_g",
+    "filament_m", "layers", "max_z", "warnings", "slice_blockers", "copies", "model_hash", "overrides",
+    "orient", "calibration", "source_url", "source_title", "author", "license",
+)  # fmt: skip
+
+
+@mcp.tool()
+async def reprint(job_id: str, requested_by: str, offer: bool = True) -> dict[str, Any]:
+    """Queue a finished or failed job again on the same printer: its own sliced gcode, uploaded afresh, with the same
+    settings. Nothing starts: it is offered like any job (phone tap or auto_start) and the start checks apply,
+    loaded material included. `requested_by` names who asked. Returns the new job and what the queue did."""
+    old = JOBS.get(job_id)
+    if old["state"] not in ("done", "failed"):
+        raise ValueError(
+            f"job {old['name']} is {old['state']}; only a finished job can be reprinted"
+        )
+    gcode = Path(old["gcode"] or "")
+    if not gcode.is_file():
+        raise ValueError(
+            f"the sliced gcode of {old['name']} is gone; submit the model again"
+        )
+    w = _w(old["printer"])
+    job = JOBS.create(
+        **{k: old.get(k) for k in REPRINT_FIELDS}, offer=offer, reprint_of=job_id
+    )
+    JOBS.note(job["id"], f"reprint of {job_id} ({requested_by})")
+    remote = f"warden/{job['id']}_{old['name']}_{old['material']}.gcode"
+    try:
+        await moonraker.upload_gcode(w.p.moonraker, gcode, remote)
+    except httpx.HTTPError as e:
+        JOBS.transition(job["id"], "failed", f"upload failed: {e}", error=str(e))
+        raise
+    job = JOBS.transition(
+        job["id"],
+        "staged",
+        f"uploaded to {old['printer']} as {remote}",
+        remote_name=remote,
+    )
+    STORE.add(
+        Event(
+            old["printer"],
+            "job_staged",
+            "info",
+            f"Reprint of {old['name']} staged ({requested_by})",
+            {"job_id": job["id"], "reprint_of": job_id},
+            alert=False,
+        )
+    )
+    result = {**_job_public(job)}
+    if offer:
+        result["queue"] = await advance_queue(old["printer"])
+    return result
 
 
 def label_job(job_id: str, result: str, reason: str | None, who: str) -> dict[str, Any]:
