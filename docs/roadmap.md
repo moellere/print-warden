@@ -299,17 +299,36 @@ Done when: away, a queued job is neither offered nor auto-started, and coming ho
 
 Done when: a changed `printer.cfg` or a version mismatch shows as a finding before the next print.
 
-## Phase 27 — Filament logistics
+## Phase 27 — Spool inventory
+
+Spoolman stays the system of record; the warden runs the physical workflows around it, from chat, the phone and a
+`/spools` page (same token as `/status`, forms like `/stage`).
+
+- **Register:** a new spool in one step (vendor, material, colour, net weight, empty-spool weight, price, where it is
+  stored). The filament is matched or created in Spoolman, and a short spool code is shown for a label. Optional:
+  an NFC sticker on the spool, bound with one Home Assistant tag scan.
+- **Weigh-ins:** record a gross weight (scale reading); remaining = gross − empty-spool weight, written to Spoolman.
+  The difference from the warden's counted use is kept per spool; a drift over ~5 % flags a wrong density or diameter.
+  Periodic validation: a spool not weighed for `upkeep.weigh_every_days`, or after a set amount used, gets a phone
+  prompt that takes the number as a reply.
+- **Swap:** a guided switch-out per printer: weigh the outgoing spool (optional), pick or scan the incoming one, and
+  the warden sets it active, checks it against the printer's queue (material, enough grams), and says if it is due
+  for drying. A spool can be retired (empty) or moved to storage.
+
+Done when: a new spool goes from the box to registered, loaded and weighed again with no Spoolman UI, and a
+mis-set density shows as drift.
+
+## Phase 28 — Filament logistics
 
 - Reorder findings land on a Home Assistant to-do list. Optional humidity sensor per dry box replaces the days-open
   drying guess. Run-out forecast per material from recent use.
 - Optional `spool_scale_entity` per printer (a load cell under the spool holder, e.g. HX711 + ESPHome): read while
-  the printer is idle, less the spool's empty weight from Spoolman, it corrects the spool's remaining weight; a
-  disagreement over ~5 % with the counted use flags a wrong density or diameter.
+  the printer is idle, less the spool's empty weight from Spoolman, it corrects the spool's remaining weight through
+  the same weigh-in path as Phase 27.
 
 Done when: a low material appears on the HA list by itself, and a scale reading corrects Spoolman.
 
-## Phase 28 — Live sign-off sprint
+## Phase 29 — Live sign-off sprint
 
 - `print-warden validate <row>` sets up what a live-validation row needs where it can (a pause left alone, an error
   gcode, a test batch), checks the result against the warden's own state, and records it.
