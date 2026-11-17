@@ -9,6 +9,12 @@
 - Fix: after a print stops with a Klipper error, the printer is idle again once Klipper is ready. Before, nothing
   was offered or started on it until another print had run there; this included the Reprint offer.
 - A Klipper shutdown from `M112` is classified as `emergency_stop`.
+- `docs/stability.md` names every public surface, what is promised about each, and the deprecation policy that
+  holds from 1.0. A test keeps its tables in step with the code.
+- `print-warden check` warns on config keys the warden does not read ("did you mean …"); the server logs them at
+  start.
+- `print-warden backup` / `print-warden restore` keep the warden's state in one archive: the databases, profiles,
+  bed references and validation sign-offs.
 
 ## 0.9.0
 

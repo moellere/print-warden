@@ -44,7 +44,12 @@ Everything lives under `storage.dir` (`./data` in compose):
 | `profiles/` | imported and generated printer presets (`print-warden profiles`) | yes |
 | `slice-cache/`, `snapshots/`, `timelapse/` | regenerable or pruned | no |
 
-Stop the container (or copy with `sqlite3 jobs.db ".backup ..."`) before copying the databases.
+`print-warden backup` (in the container: `docker compose exec print-warden print-warden backup --out
+/data/backup.tar.gz`) writes every "yes" row above, plus `events.db` and `validation.json`, to one archive. It takes
+consistent copies of the databases, so the warden may keep running. `print-warden restore <archive>` puts them back
+once the warden is stopped: `docker compose run --rm print-warden print-warden restore /data/backup.tar.gz`. It keeps
+each file it replaces as `<name>.before-restore-<time>`. A newer warden reads an older backup; its databases are
+upgraded in place on start.
 
 ## Upgrade
 

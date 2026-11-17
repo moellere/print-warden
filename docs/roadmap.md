@@ -364,3 +364,17 @@ Done when: the checkable rows pass in CI against the simulator.
 It found one bug on its first run: after a print stops with an error, Klipper leaves `print_stats` at `error` until
 the next print, and the warden did not count that as idle, so nothing more was offered or started there (Reprint
 included). `error` with Klipper ready is idle now.
+
+## Phase 31 — The 1.0 contract ✅ (build)
+
+- ✅ `docs/stability.md`: every public surface (CLI verbs, MCP tools and their arguments, HTTP routes, `/healthz`
+  api 1, config sections, HA entities and MQTT topics, notification actions, the backup format) with what is
+  promised about it, the safety invariants, and a deprecation policy. `tests/test_stability_doc.py` holds its
+  tables to the code.
+- ✅ `config.SCHEMA` lists every key the warden reads; `print-warden check` and the server's start-up warn on any
+  other, with the closest known key.
+- ✅ `print-warden backup` / `restore`: consistent database copies, profiles, bed references and sign-offs in one
+  archive; restore refuses while a warden answers and keeps what it replaces. A database from the first release
+  is upgraded in place (tested).
+
+Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-off is complete.

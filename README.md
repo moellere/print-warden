@@ -355,6 +355,11 @@ After a deploy that changes behaviour, run the live-validation runbook (`docs/li
   that failed;
 - `validate report` prints the sign-off table.
 
+`print-warden backup` / `restore` keep the warden's state in one archive (`docs/operations.md`). What is
+promised about each public surface (MCP tools, CLI verbs, config keys, `/healthz`, HA entities, notification
+actions), and the deprecation policy, is in `docs/stability.md`. `print-warden check` warns on config keys it does
+not know.
+
 Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
 `docs/operations.md`; releases: `docs/releasing.md`; changes: `CHANGELOG.md`.
 
@@ -422,6 +427,7 @@ src/print_warden/
   validate.py   the live-validation runbook against the running warden (an MCP client), with sign-offs
   sim.py        simulated Moonraker, Home Assistant, cameras and slicer for the demo and the end-to-end test
   demo.py       `print-warden demo`: the warden against two simulated printers
+  backup.py     `print-warden backup` / `restore`
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

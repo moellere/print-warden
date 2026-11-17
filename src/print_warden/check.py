@@ -394,7 +394,11 @@ def main(argv: list[str]) -> int:
         print(f"fail  config        {path}: {_why(e)}")
         return 1
     print(f"ok    config        {path}: {len(cfg.printers)} printer(s)")
-    results = asyncio.run(run(cfg, sites=sites))
+    unknown = [
+        Result(WARN, "config", f"unknown key {k}: the warden ignores it")
+        for k in config.unknown_in(path)
+    ]
+    results = unknown + asyncio.run(run(cfg, sites=sites))
     for r in results:
         print(f"{r.status:<5} {r.area:<13} {r.detail}")
     fails = sum(r.status == FAIL for r in results)

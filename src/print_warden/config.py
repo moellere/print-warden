@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -244,6 +245,78 @@ def _slicer(raw: dict[str, Any]) -> SlicerConfig:
     if "blocking_warnings" in raw:
         raw["blocking_warnings"] = tuple(str(w) for w in raw["blocking_warnings"] or ())
     return SlicerConfig(**raw)
+
+
+ANY = "*"
+"""In SCHEMA: a map whose keys are the operator's own (printer names, cameras, materials); its values are unchecked."""
+_POSE = {"x": None, "y": None, "z": None}
+_PRINTER = {
+    "location": None, "moonraker": None, "cameras": ANY, "rotate": ANY, "flip_v": ANY, "light": None,
+    "rules": {**{f.name: None for f in fields(Rules)}, "temp_limits": ANY},
+    "slicer": {"machine": None, "processes": ANY, "filaments": ANY},
+    "auto_start": None, "auto_start_hours": None, "finish_window": None, "power_device": None,
+    "track_spool_usage": None, "purge_zone": None, "power_entity": None, "spool_scale_entity": None,
+    "bed_check": {"camera": None, "region": None, "threshold": None, "min_agreements": None, "pose": _POSE,
+                  "rehome_y": None},
+    "maintenance": {ANY: {"every_hours": None, "every_days": None}},
+}  # fmt: skip
+SCHEMA: dict[str, Any] = {
+    "printers": {ANY: _PRINTER},
+    "home_assistant": {
+        "url": None, "webhook_id": None, "token_env": None, "verify_tls": None, "notify_service": None,
+        "action_secret_env": None, "publish_entities": None,
+        "mqtt": {"host": None, "port": None, "username": None, "password_env": None, "discovery_prefix": None},
+    },
+    "obico": {"url": None, "webhook_secret_env": None},
+    "storage": {"dir": None, "keep_days": None},
+    "server": {"host": None, "port": None, "public_url": None, "token_env": None},
+    "slicer": {f.name: None for f in fields(SlicerConfig)},
+    "spoolman": {"url": None},
+    "intake": {"thingiverse_token_env": None},
+    "policy": {
+        "approval_ttl_minutes": None, "paused_cancel_minutes": None,
+        "cheap_power": {"entity": None, "max_price": None, "min_hours": None, "min_kwh": None},
+    },
+    "alerts": {"quiet_hours": None, "cooldown_s": None, "quiet_entity": None, "quiet_states": None},
+    "presence": {f.name: None for f in fields(Presence)},
+    "energy": {"price_per_kwh": None, "price_entity": None},
+    "upkeep": {
+        "reorder_below_g": None, "dry_after_days": ANY, "weigh_every_days": None, "todo_entity": None,
+        "dry_boxes": [{"name": None, "entity": None, "max_pct": None}],
+    },
+}  # fmt: skip
+"""Every key `load` reads: the public config surface (docs/stability.md). `check` warns on any other."""
+
+
+def unknown_keys(raw: Any, schema: Any = None, at: str = "") -> list[str]:
+    """Keys in a parsed config that the warden does not read, each with a close known key when there is one."""
+    schema = SCHEMA if schema is None else schema
+    if schema is None or schema == ANY:
+        return []
+    if isinstance(schema, list):
+        out = []
+        for i, item in enumerate(raw if isinstance(raw, list) else []):
+            out += unknown_keys(item, schema[0], f"{at}[{i}]")
+        return out
+    if not isinstance(raw, dict):
+        return []
+    out = []
+    for key, value in raw.items():
+        where = f"{at}.{key}" if at else str(key)
+        if ANY in schema:
+            out += unknown_keys(value, schema[ANY], where)
+        elif key in schema:
+            out += unknown_keys(value, schema[key], where)
+        else:
+            close = difflib.get_close_matches(
+                str(key), [k for k in schema if k != ANY], n=1
+            )
+            out.append(f"{where}" + (f" (did you mean {close[0]}?)" if close else ""))
+    return out
+
+
+def unknown_in(path: str | Path) -> list[str]:
+    return unknown_keys(yaml.safe_load(Path(path).read_text()) or {})
 
 
 def load(path: str | Path) -> Config:

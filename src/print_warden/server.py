@@ -3167,6 +3167,11 @@ async def lifespan(app: Starlette):
     ):
         if not ok:
             log.warning(what)
+    with contextlib.suppress(OSError, ValueError):
+        for key in config.unknown_in(
+            os.environ.get("PRINT_WARDEN_CONFIG", "printers.yaml")
+        ):
+            log.warning("config: unknown key %s is ignored", key)
     tasks = [
         asyncio.create_task(w.run(), name=f"watch:{n}") for n, w in WATCHERS.items()
     ]
