@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
+
+Rehearsal mode, the 1.0 contract and a weekly digest since 0.9.0. **Upgrade notes:** no config changes are needed.
+- `print-warden check` and the start-up log now name config keys the warden ignores. A typo that silently did
+  nothing before now shows up as a warning.
+- A printer whose last print stopped with a Klipper error is idle again once Klipper is ready, so queued jobs are
+  offered there as they would be after any other print.
+- `digest:` is optional; without it, no weekly digest is sent.
+- `docs/stability.md` says what is promised from 1.0.
 
 - `print-warden demo` runs the warden against two simulated printers, a simulated Home Assistant with a phone page
   (`/sim/phone` on `--sim-port`), simulated cameras and a simulated slicer (`slicer.orca: sim`, no OrcaSlicer
