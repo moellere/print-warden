@@ -12,6 +12,10 @@ from print_warden import record, sim
 RECORDINGS = sorted((Path(__file__).parent / "data" / "recordings").glob("*.jsonl"))
 
 
+def test_the_recordings_are_there():
+    assert {p.name for p in RECORDINGS} >= {"sim-fault.jsonl", "sim-shutdown.jsonl"}
+
+
 async def _stream(messages):
     for m in messages:
         yield m
