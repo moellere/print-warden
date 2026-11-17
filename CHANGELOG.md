@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+The live sign-off sprint's tooling since 0.8.0. **Upgrade notes:** no config changes are needed. `print-warden validate`
+needs the warden running and reaches it on this config's port with `PRINT_WARDEN_TOKEN`; it keeps its results in
+`<storage>/validation.json`. The new `fault_test` MCP tool stages a deliberately failing print, but only queues it:
+a tap still starts it.
 
 - `print-warden validate` runs the live-validation runbook against the running warden, over `/mcp` as any client
   does, so it starts nothing.
