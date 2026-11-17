@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 FINAL_KINDS = ("print_complete", "print_cancelled", "print_error")
 PAUSE_POLL_S = 30.0
 COOL_GRACE_S = 120.0
-BED_SETTLE_S = 30
+BED_SETTLE_S = 30.0
 
 
 def _hm(seconds: float) -> str:

@@ -52,6 +52,11 @@ SHUTDOWN_CAUSES: tuple[tuple[str, str, str], ...] = (
         "move_out_of_range",
         "a move went past an axis limit: check the gcode or homing",
     ),
+    (
+        "m112",
+        "emergency_stop",
+        "an emergency stop (M112 or a stop button): FIRMWARE_RESTART once the printer is safe",
+    ),
 )
 
 

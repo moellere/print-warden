@@ -349,3 +349,42 @@ Done when: a low material appears on the HA list by itself, and a scale reading 
   the failure stats.
 
 Done when: every row of `docs/live-validation.md` is signed or has an issue.
+
+## Phase 30 — Rehearsal mode ✅ (build)
+
+- ✅ `print-warden demo`: the warden, unchanged, against two simulated printers (Moonraker's HTTP routes and
+  websocket, a print played layer by layer, pause/cancel/error/shutdown as on Klipper, history, a gcode store,
+  printer.cfg settings and meshes), a simulated Home Assistant (alerts, notifications with buttons, entity states, the
+  tap websocket) with a phone page, simulated cameras (the part on the bed until it is taken off) and a simulated
+  slicer (`orca: sim`). Grace periods and the paused-print deadline run at the demo's speed.
+- ✅ `tests/test_demo_e2e.py`: 15 rows of the runbook through `validate` against the demo on every CI run.
+
+Done when: the checkable rows pass in CI against the simulator.
+
+It found one bug on its first run: after a print stops with an error, Klipper leaves `print_stats` at `error` until
+the next print, and the warden did not count that as idle, so nothing more was offered or started there (Reprint
+included). `error` with Klipper ready is idle now.
+
+## Phase 31 — The 1.0 contract ✅ (build)
+
+- ✅ `docs/stability.md`: every public surface (CLI verbs, MCP tools and their arguments, HTTP routes, `/healthz`
+  api 1, config sections, HA entities and MQTT topics, notification actions, the backup format) with what is
+  promised about it, the safety invariants, and a deprecation policy. `tests/test_stability_doc.py` holds its
+  tables to the code.
+- ✅ `config.SCHEMA` lists every key the warden reads; `print-warden check` and the server's start-up warn on any
+  other, with the closest known key.
+- ✅ `print-warden backup` / `restore`: consistent database copies, profiles, bed references and sign-offs in one
+  archive; restore refuses while a warden answers and keeps what it replaces. A database from the first release
+  is upgraded in place (tested).
+
+Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-off is complete.
+
+## Phase 32 — Weekly digest ✅ (build)
+
+- ✅ `digest: {day, at}`: one phone summary a week. It covers prints done and failed (with the commonest reasons),
+  hours, grams, kWh and cost, per printer and in all, then what is due: maintenance, drying, weigh-ins, reorders and
+  materials running out within three weeks.
+- ✅ It is computed from the rows the warden keeps, with no model, and fault tests are excluded. It is held while
+  away and sent on return. The same numbers appear on `/status` ("This week") and from the `weekly_digest` tool.
+
+Done when: a configured digest arrives once a week with the week's numbers, and waits while nobody is home.

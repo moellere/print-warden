@@ -245,7 +245,7 @@ def test_sign_listing_and_report(cfg, capsys):
     capsys.readouterr()
     assert validate.main([]) == 0
     listing = capsys.readouterr().out
-    assert "2 of 90 signed or with an issue" in listing
+    assert "2 of 92 signed or with an issue" in listing
     assert validate.main(["report"]) == 0
     rep = capsys.readouterr().out
     day = time.strftime("%Y-%m-%d")

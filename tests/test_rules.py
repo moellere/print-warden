@@ -225,3 +225,9 @@ def test_with_mains_off_downgrades_a_shutdown_without_losing_its_cause():
     assert ev.severity == "info" and ev.alert is False
     assert ev.data["cause"] == "mcu_comm_lost" and ev.data["mains"] == "off"
     assert MAINS_OFF_HINT in ev.message
+
+
+def test_m112_is_an_emergency_stop():
+    from print_warden.rules import classify_shutdown
+
+    assert classify_shutdown("Shutdown due to M112 command")[0] == "emergency_stop"

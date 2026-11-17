@@ -120,6 +120,10 @@ upkeep:
 #   away_offer_max_hours: 3          # while away, do not offer longer jobs (default: no limit)
 #   auto_start_when_away: false
 
+# digest:                          # a weekly summary on the phone: prints, failures, hours, grams, kWh, what is due
+#   day: sunday
+#   at: "18:00"                      # local time; sent at the first hourly pass after it (held while away)
+
 alerts:
   quiet_hours: "23:00-07:00"   # info/warning alerts and the first-layer prompt are held; critical always goes out
   # quiet_entity: input_boolean.sleeping   # also quiet while this Home Assistant entity is in quiet_states

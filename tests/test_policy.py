@@ -24,6 +24,15 @@ def test_busy_printer_blocks():
     assert not ok and reasons == ["printer is printing"]
 
 
+def test_a_print_that_errored_leaves_the_printer_idle():
+    # Klipper keeps print_stats at "error" until the next print; with Klipper ready that printer can start one
+    assert policy.can_start(_job(), {**READY, "state": "error"}, "PLA") == (True, [])
+    ok, reasons = policy.can_start(
+        _job(), {**READY, "klippy": "shutdown", "state": "error"}, "PLA"
+    )
+    assert not ok and reasons == ["Klipper is 'shutdown', not ready"]
+
+
 def test_power_device_tolerates_klippy_down():
     st = {"moonraker_connected": True, "klippy": "shutdown", "state": "error"}
     assert policy.can_start(_job(), st, "PLA", has_power_device=True)[0]

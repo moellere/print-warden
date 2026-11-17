@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- `print-warden demo` runs the warden against two simulated printers, a simulated Home Assistant with a phone page
+  (`/sim/phone` on `--sim-port`), simulated cameras and a simulated slicer (`slicer.orca: sim`, no OrcaSlicer
+  needed). Prints run `--speed` times faster than real time. `validate` works against it unchanged, and CI runs 15
+  runbook rows end to end against it.
+- Fix: after a print stops with a Klipper error, the printer is idle again once Klipper is ready. Before, nothing
+  was offered or started on it until another print had run there; this included the Reprint offer.
+- A Klipper shutdown from `M112` is classified as `emergency_stop`.
+- `docs/stability.md` names every public surface, what is promised about each, and the deprecation policy that
+  holds from 1.0. A test keeps its tables in step with the code.
+- `print-warden check` warns on config keys the warden does not read ("did you mean …"); the server logs them at
+  start.
+- Weekly digest (`digest: {day, at}`): one phone summary a week. It covers prints done and failed with the
+  commonest reasons, hours, grams, kWh and cost, plus what is due (maintenance, drying, weigh-ins, reorders,
+  materials running out). It is held while away. The same numbers appear on `/status` and from the new
+  `weekly_digest` tool.
+- `print-warden backup` / `print-warden restore` keep the warden's state in one archive: the databases, profiles,
+  bed references and validation sign-offs.
+
 ## 0.9.0
 
 The live sign-off sprint's tooling since 0.8.0. **Upgrade notes:** no config changes are needed. `print-warden validate`

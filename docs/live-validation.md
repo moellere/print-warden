@@ -31,6 +31,15 @@ nothing: a setup that offers a job still waits for the tap.
 - `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
 - `validate report` prints the table below, filled in, for pasting here.
 
+Rehearse first with `print-warden demo`, which runs the warden against simulated printers:
+1. Run it with `PRINT_WARDEN_TOKEN=demo print-warden validate --config print-warden-demo/printers.yaml <row>
+   --printer demo-a --setup`.
+2. Tap on the simulated phone at `http://127.0.0.1:8711/sim/phone`.
+3. Use each printer's console there for `PAUSE`, `M112` and `FIRMWARE_RESTART`.
+
+The rows CI already runs against the demo are 0, 1, 3, 4, 10–13, 23, 25, 28, 35, 38, 39 and 41. They prove the
+warden's side of each row, so on the printers only the hardware's side is left.
+
 ## 1. Slice and stage
 
 1. `submit_job(printer, model="cube.stl", material="PLA", quality="draft", offer=False)`.
@@ -181,6 +190,12 @@ nothing: a setup that offers a job still waits for the tap.
     HA list once; register a new spool and it comes off. With a `spool_scale_entity`: lift the spool off and back
     while the printer is idle; the next hourly pass records a weigh-in.
 
+## 16. Weekly digest
+
+45. Set `digest:` to today and a time an hour or two ahead, restart, and wait past it. Expect: one "Week in prints"
+    on the phone with the week's prints, failures and what is due (the same as `weekly_digest`), and no second one
+    an hour later. With away mode, set the person away before the time: nothing arrives until you are back.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -230,3 +245,4 @@ nothing: a setup that offers a job still waits for the tap.
 | 42 | Spool registered, labelled, swapped on with the old one weighed | | |
 | 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
 | 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
+| 45 | Weekly digest arrives once; held while away | | |

@@ -79,3 +79,30 @@ def test_queue_order_and_json_fields(store):
     )
     store.note(a["id"], "waive", slice_blockers=[])
     assert store.get(a["id"])["slice_blockers"] == []
+
+
+def test_a_database_from_the_first_release_is_upgraded_in_place(tmp_path):
+    import sqlite3
+
+    from print_warden.jobs import FIELDS
+
+    db = sqlite3.connect(tmp_path / "jobs.db")
+    db.execute(
+        "create table jobs (id text primary key, created real, updated real, printer text, name text,"
+        " material text, quality text, state text, stl text, gcode text, preview text, remote_name text,"
+        " est_seconds integer, filament_g real, layers integer, max_z real, warnings text, authorized_by text,"
+        " started_at real, finished_at real, error text, log text)"
+    )
+    db.execute(
+        "insert into jobs (id, created, updated, printer, name, material, state, warnings, log)"
+        " values ('old1', 1, 1, 'p', 'cube', 'PLA', 'done', '[]', '[]')"
+    )
+    db.commit()
+    db.close()
+    store = JobStore(tmp_path / "jobs.db")
+    cols = {r[1] for r in store._db.execute("pragma table_info(jobs)")}
+    assert set(FIELDS) <= cols
+    job = store.get("old1")
+    assert (
+        job["name"] == "cube" and job["overrides"] == {} and job["calibration"] is None
+    )

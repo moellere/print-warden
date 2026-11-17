@@ -1316,3 +1316,53 @@ async def test_fault_test_is_staged_and_kept_out_of_the_stats(
     assert server._repeat_causes("testp") == repeats
     assert server.printer_stats()["klipper_errors"] == errors
     assert server._outcomes_7d("testp", time.time()) == before
+
+
+async def test_weekly_digest_is_sent_once_a_week_and_held_while_away(monkeypatch):
+    import dataclasses
+    from datetime import datetime
+
+    from print_warden import config, digest, presence
+
+    sent = []
+
+    async def alert(printer, severity, title, message, snapshot_url=None):
+        sent.append((title, message))
+        return True
+
+    async def report(now=None):
+        return {
+            "maintenance": [],
+            "drying": [],
+            "weigh": [],
+            "reorder": [],
+            "forecast": [],
+        }
+
+    monkeypatch.setattr(server.HA, "alert", alert)
+    monkeypatch.setattr(server, "upkeep_report", report)
+    monkeypatch.setattr(
+        server, "CFG", dataclasses.replace(server.CFG, digest=config.Digest(6, "18:00"))
+    )
+    server.JOBS.kv_delete("digest_sent")
+    server.JOBS.kv_delete("digest_pending")
+    sunday = datetime(2026, 11, 15, 19, 0).astimezone().timestamp()
+    assert (
+        await server.digest_tick(sunday) is None
+    )  # the first pass only starts the clock
+    assert await server.digest_tick(sunday + 3600) is None
+    next_sunday = sunday + 7 * 86400
+    assert await server.digest_tick(next_sunday) == "sent"
+    assert sent[-1][0] == "Week in prints"
+    assert await server.digest_tick(next_sunday + 3600) is None
+    presence.STATE.update(home=False, away_since=next_sunday)
+    try:
+        assert await server.digest_tick(next_sunday + 7 * 86400) == "held"
+        assert server.JOBS.kv_get("digest_pending") == "1"
+    finally:
+        presence.reset()
+    assert await server.digest_tick(next_sunday + 7 * 86400, force=True) == "sent"
+    assert server.JOBS.kv_get("digest_pending") is None
+    assert len(sent) == 2
+    d = await server.weekly_digest()
+    assert d["message"] == digest.message(d)[1]

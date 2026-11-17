@@ -78,6 +78,12 @@ print with an error. It is queued and offered like any job, so it starts only on
 slice checks, which would otherwise block it. The job is kept out of failure stats, "failed before", repeat-cause
 warnings and `/healthz`'s `outcomes_7d`.
 
+**Weekly digest.** With `digest: {day: sunday, at: "18:00"}`, the phone gets one summary a week. It counts
+prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per printer and in all. It also
+lists what is due: maintenance, drying, weigh-ins, reorders, and materials the run-out forecast gives under three
+weeks. While nobody is home it waits and arrives on return. `/status` shows the same week, and `weekly_digest`
+answers in chat. Every number comes from rows the warden already keeps; fault tests are left out.
+
 **Spool inventory.** Spoolman stays the system of record; the warden runs the physical side, from chat or the
 `/spools` page (same token as `/status`):
 - `register_spool(vendor, material, color, registered_by, net_weight_g=1000, spool_weight_g, price, location)`: the
@@ -334,6 +340,18 @@ docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppIm
 curl localhost:8710/healthz
 ```
 
+**Try it without a printer:** `print-warden demo` runs the whole warden against two simulated printers, a
+simulated Home Assistant and a simulated slicer (no OrcaSlicer needed). The simulated printers come with cameras,
+history and a console.
+- The phone is `http://127.0.0.1:8711/sim/phone`. It shows the warden's notifications with their buttons, the
+  alerts, each printer's camera, a console (`PAUSE`, `M112`, `FIRMWARE_RESTART` …) and a button that takes the part
+  off the bed.
+- The warden is on its usual port, with token `demo`.
+- Prints run 12 times faster than real time (`--speed`).
+
+`print-warden validate --config print-warden-demo/printers.yaml …` rehearses the runbook against it. CI runs
+15 rows of the runbook end to end against the demo on every change (`tests/test_demo_e2e.py`).
+
 After a deploy that changes behaviour, run the live-validation runbook (`docs/live-validation.md`) with
 `print-warden validate` in the container:
 - `validate` lists the rows and their sign-off per printer;
@@ -342,6 +360,11 @@ After a deploy that changes behaviour, run the live-validation runbook (`docs/li
 - `--by <initials>` signs a passing run; `validate sign` records a row judged by eye, or `--issue <url>` for one
   that failed;
 - `validate report` prints the sign-off table.
+
+`print-warden backup` / `restore` keep the warden's state in one archive (`docs/operations.md`). What is
+promised about each public surface (MCP tools, CLI verbs, config keys, `/healthz`, HA entities, notification
+actions), and the deprecation policy, is in `docs/stability.md`. `print-warden check` warns on config keys it does
+not know.
 
 Released images: `ghcr.io/moellere/print-warden:<version>`. Operating, backups and troubleshooting:
 `docs/operations.md`; releases: `docs/releasing.md`; changes: `CHANGELOG.md`.
@@ -408,6 +431,10 @@ src/print_warden/
   stage.py      the /stage page: slice and queue from a browser, never start
   profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
   validate.py   the live-validation runbook against the running warden (an MCP client), with sign-offs
+  sim.py        simulated Moonraker, Home Assistant, cameras and slicer for the demo and the end-to-end test
+  demo.py       `print-warden demo`: the warden against two simulated printers
+  backup.py     `print-warden backup` / `restore`
+  digest.py     the weekly digest: the week's prints and what is due
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 
