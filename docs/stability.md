@@ -45,6 +45,7 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 
 | Tool | Arguments |
 |---|---|
+| `ask_operator` | `title`, `message`, `choices`, `note_choice?` |
 | `batch_status` | `batch_id` |
 | `bed_status` | `printer` |
 | `calibrate` | `printer`, `kind`, `quality?`, `bowden?` |
@@ -68,6 +69,7 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `model_page` | `url` |
 | `move_job` | `job_id`, `position` |
 | `offer_next` | `printer` |
+| `operator_answer` | `prompt_id` |
 | `print_history` | `printer?`, `days?`, `state?` |
 | `print_status` | `printer?` |
 | `printer_health` | `printer`, `accept?` |
@@ -199,6 +201,7 @@ The `action` of every button the warden sends is `PRINT_WARDEN_<VERB>_<argument>
 | `CALIB` |
 | `MAINT` |
 | `DRIED` |
+| `VALIDATE` |
 | `CANCEL` |
 | `RESUME` |
 

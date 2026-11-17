@@ -278,3 +278,108 @@ async def test_mcp_warden_against_the_real_server():
         with pytest.raises(BaseException):  # noqa: B017 - the MCP client wraps the 401 in an exception group
             async with validate.McpWarden("http://warden", "wrong", transport):
                 pass
+
+
+class FakeOperator:
+    """Answers each question from a script: (expected title prefix, choice, note)."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.asked = []
+        self.told = []
+
+    async def ask(self, title, message, choices, note_choice=None):
+        self.asked.append((title, message, choices))
+        return str(len(self.asked) - 1)
+
+    async def answer(self, handle):
+        title, _, choices = self.asked[int(handle)]
+        if choices == ["Skip"]:
+            return None  # an instruction prompt: nobody skips it
+        want, choice, note = self.script.pop(0)
+        assert title.startswith(want), (title, want)
+        assert choice in choices
+        return choice, note
+
+    async def tell(self, title, message):
+        self.told.append(title)
+
+
+async def _no_sleep(s):
+    return None
+
+
+async def test_session_walks_the_rows_and_resumes(cfg, results):
+    job = {
+        "id": "j1", "name": "validate_cube", "material": "PLA", "quality": "draft", "state": "staged",
+        "est_seconds": 60, "slice_blockers": [], "preview_url": None, "log": [],
+    }  # fmt: skip
+    w = FakeWarden(loaded_material={"material": "PLA"}, submit_job=job, job_status=job)
+
+    def make(n):
+        return _ctx(cfg, results, w, n, by="EM")
+
+    op = FakeOperator(
+        [
+            ("Row 1", "Go", None),  # set up the cube
+            ("Row 1", "Retry", None),  # no preview: failing; retry
+            ("Row 1", "Fail", "preview missing in the demo"),
+            ("Row 9", "Pass", None),
+            ("Row 16", "Fail", "warning went through at night"),
+            ("Row 17", "Skip", None),
+        ]
+    )
+    done = await validate.session(
+        [1, 9, 16, 17], make, op, "EM", out=lambda _: None, sleep=_no_sleep
+    )
+    assert done == {"signed": [9], "failed": [1, 16], "skipped": [17], "already": []}
+    assert results.get(9, "testp")["result"] == "signed"
+    assert validate.cell(results.get(16, "testp")).endswith(
+        ": warning went through at night"
+    )
+    assert not op.script
+
+    op2 = FakeOperator([("Row 16", "Pass", None), ("Row 17", "Pass", None)])
+    done = await validate.session(
+        [9, 16, 17], make, op2, "EM", out=lambda _: None, sleep=_no_sleep
+    )
+    assert done["already"] == [9] and done["signed"] == [16, 17]
+
+    path = validate.signoff_file(
+        cfg,
+        results,
+        "testp",
+        {"signed": [], "failed": [1], "skipped": [], "already": []},
+    )
+    text = path.read_text()
+    assert "Row 1 (Slice and stage an STL): preview missing in the demo" in text
+    assert "| 9 | HA entities follow the print |" in text
+
+
+async def test_an_assisted_row_passes_when_its_check_does(cfg, results):
+    job = {"id": "s1", "state": "staged", "log": [{"note": "phone tap"}]}
+
+    def start(job_id):
+        job["state"] = "printing"
+        return {"notification_sent": True}
+
+    w = FakeWarden(job_status=lambda job_id: job, request_start=start)
+    results.scratch(1, "testp")["job_id"] = "s1"
+    op = FakeOperator([("Row 4", "Go", None)])
+    done = await validate.session(
+        [4],
+        lambda n: _ctx(cfg, results, w, n),
+        op,
+        "EM",
+        out=lambda _: None,
+        sleep=_no_sleep,
+    )
+    assert done["signed"] == [4]
+    assert op.told == ["Row 4: Start by tap"]
+    assert op.asked[1][2] == ["Skip"]
+
+
+def test_rows_spec():
+    assert validate._rows("1-3,12") == [1, 2, 3, 12]
+    assert validate._rows(None) == list(validate.TITLES)
+    assert validate._rows("44-99") == [44, 45]

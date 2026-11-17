@@ -31,6 +31,17 @@ nothing: a setup that offers a job still waits for the tap.
 - `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
 - `validate report` prints the table below, filled in, for pasting here.
 
+**A whole printer in one go:** `print-warden validate session --printer garagex4 --by EM` walks every row in
+order and asks each step on the phone.
+- A setup runs only after you tap Go.
+- A checkable row is checked until it passes, with Skip on the phone meanwhile. If it doesn't pass, you get Retry,
+  Fail (with a typed note) or Skip.
+- A row judged by eye is a Pass / Fail / Skip tap.
+- Signed rows and rows with an issue are passed over, so stopping and starting the session again resumes it.
+- `--rows 1-13,39` limits it, and `--terminal` asks at the terminal instead of on the phone.
+- At the end it writes `<storage>/signoff-<printer>-<date>.md`: the filled-in table and each failure with its note
+  and failing checks, ready to paste here or file as issues.
+
 Rehearse first with `print-warden demo`, which runs the warden against simulated printers:
 1. Run it with `PRINT_WARDEN_TOKEN=demo print-warden validate --config print-warden-demo/printers.yaml <row>
    --printer demo-a --setup`.

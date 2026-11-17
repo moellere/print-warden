@@ -187,7 +187,7 @@ def cell(entry: dict[str, Any] | None) -> str:
         return f"{day} {entry['by']}"
     if entry["result"] == "pass":
         return f"checks passed {day}"
-    return f"failed {day}"
+    return f"failed {day}" + (f": {entry['note']}" if entry.get("note") else "")
 
 
 def _ok(label: str, cond: Any, detail: str = "") -> Check:
@@ -1074,12 +1074,283 @@ def _yes(prompt: str) -> bool:
     return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
 
 
+class Operator(Protocol):
+    """Where a session's questions go and its answers come from: the phone, or the terminal."""
+
+    async def ask(
+        self,
+        title: str,
+        message: str,
+        choices: list[str],
+        note_choice: str | None = None,
+    ) -> str: ...
+
+    async def answer(self, handle: str) -> tuple[str, str | None] | None: ...
+
+    async def tell(self, title: str, message: str) -> None: ...
+
+
+class PhoneOperator:
+    """Questions as phone notifications with buttons (`ask_operator`); answers read back with `operator_answer`."""
+
+    def __init__(self, w: Warden, printer: str) -> None:
+        self.w = w
+        self.printer = printer
+
+    async def ask(
+        self,
+        title: str,
+        message: str,
+        choices: list[str],
+        note_choice: str | None = None,
+    ) -> str:
+        res = await self.w.call(
+            "ask_operator",
+            title=title,
+            message=message,
+            choices=choices,
+            note_choice=note_choice,
+        )
+        if not res.get("sent"):
+            raise WardenError(
+                "the phone prompt was not sent: is Home Assistant's notify_service set?"
+            )
+        return str(res["prompt_id"])
+
+    async def answer(self, handle: str) -> tuple[str, str | None] | None:
+        res = await self.w.call("operator_answer", prompt_id=handle)
+        return (res["choice"], res.get("note")) if res.get("answered") else None
+
+    async def tell(self, title: str, message: str) -> None:
+        await self.w.call(
+            "send_alert",
+            printer=self.printer,
+            message=f"{title}: {message}",
+            severity="info",
+        )
+
+
+class TerminalOperator:
+    """The same questions at the terminal, for a session run without the phone (`--terminal`)."""
+
+    def __init__(
+        self, out: Callable[[str], None] = print, read: Callable[[str], str] = input
+    ) -> None:
+        self.out = out
+        self.read = read
+        self.pending: dict[str, asyncio.Task[tuple[str, str | None]]] = {}
+
+    async def ask(
+        self,
+        title: str,
+        message: str,
+        choices: list[str],
+        note_choice: str | None = None,
+    ) -> str:
+        self.out(f"{title}\n  {message}")
+
+        def blocking() -> tuple[str, str | None]:
+            while True:
+                got = self.read(f"  [{' / '.join(choices)}] ").strip().lower()
+                pick = next(
+                    (c for c in choices if c.lower().startswith(got) and got), None
+                )
+                if pick:
+                    note = (
+                        self.read("  note: ").strip() or None
+                        if pick == note_choice
+                        else None
+                    )
+                    return pick, note
+
+        handle = f"t{len(self.pending)}"
+        self.pending[handle] = asyncio.create_task(asyncio.to_thread(blocking))
+        return handle
+
+    async def answer(self, handle: str) -> tuple[str, str | None] | None:
+        task = self.pending[handle]
+        return task.result() if task.done() else None
+
+    async def tell(self, title: str, message: str) -> None:
+        self.out(f"{title}: {message}")
+
+
+async def _wait(
+    op: Operator, handle: str, sleep: Callable[[float], Awaitable[None]]
+) -> tuple[str, str | None]:
+    while (got := await op.answer(handle)) is None:
+        await sleep(POLL_S)
+    return got
+
+
+def _rows(spec: str | None) -> list[int]:
+    """`1-10,12` -> [1..10, 12]; none -> every row."""
+    if not spec:
+        return list(TITLES)
+    out: list[int] = []
+    for part in spec.split(","):
+        a, _, b = part.strip().partition("-")
+        out += range(int(a), int(b or a) + 1)
+    return [n for n in out if n in TITLES]
+
+
+def _settled(results: Results, n: int, printer: str) -> bool:
+    e = results.get(n, printer)
+    return bool(e and (e["result"] == "signed" or e.get("issue")))
+
+
+async def session(
+    rows: list[int],
+    make_ctx: Callable[[int], Ctx],
+    op: Operator,
+    by: str,
+    out: Callable[[str], None] = print,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> dict[str, list[int]]:
+    """Every row in order, each through the operator: a setup only on Go, a checkable row polled until it passes
+    (with Skip on the phone meanwhile), a failing one offered Retry / Fail (with a note) / Skip, and a row judged by
+    eye asked Pass / Fail / Skip. Signed rows and rows with an issue are passed over, so a session resumes."""
+    done: dict[str, list[int]] = {
+        "signed": [],
+        "failed": [],
+        "skipped": [],
+        "already": [],
+    }
+    for n in rows:
+        ctx = make_ctx(n)
+        if _settled(ctx.results, n, ctx.printer):
+            done["already"].append(n)
+            continue
+        row = ROWS[n]
+        head = f"Row {n}: {TITLES[n]}"
+        out(head)
+        if row.setup:
+            choice, _ = await _wait(
+                op,
+                await op.ask(head, f"Set up: {row.setup_does}?", ["Go", "Skip"]),
+                sleep,
+            )
+            if choice == "Skip":
+                done["skipped"].append(n)
+                continue
+            try:
+                out("  setup: " + await row.setup(ctx))
+                ctx.results.save()
+            except (WardenError, httpx.HTTPError, ValueError) as e:
+                out(f"  setup failed: {e}")
+        result, note, checks = await _judge(n, row, ctx, op, head, out, sleep)
+        if result == "skipped":
+            done["skipped"].append(n)
+            continue
+        entry: dict[str, Any] = {
+            "result": "signed" if result == "pass" else "fail",
+            "checks": [vars(c) for c in checks],
+        }
+        if result == "pass":
+            entry["by"] = by
+        if note:
+            entry["note"] = note
+        for p in ctx.cfg.printers if row.every_printer else [ctx.printer]:
+            ctx.results.record(n, p, entry)
+        ctx.results.save()
+        done["signed" if result == "pass" else "failed"].append(n)
+        out(
+            f"  {'signed ' + by if result == 'pass' else 'failed' + (': ' + note if note else '')}"
+        )
+    return done
+
+
+async def _judge(
+    n: int,
+    row: Row,
+    ctx: Ctx,
+    op: Operator,
+    head: str,
+    out: Callable[[str], None],
+    sleep: Callable[[float], Awaitable[None]],
+) -> tuple[str, str | None, list[Check]]:
+    """("pass" | "fail" | "skipped", note, checks) for one row."""
+    if not row.check:
+        choice, note = await _wait(
+            op,
+            await op.ask(
+                head, row.ask or "Does it hold?", ["Pass", "Fail", "Skip"], "Fail"
+            ),
+            sleep,
+        )
+        return {"Pass": "pass", "Fail": "fail"}.get(choice, "skipped"), note, []
+    while True:
+        handle = (
+            await op.ask(head, row.ask or "Checking…", ["Skip"]) if row.ask else None
+        )
+        deadline = time.monotonic() + row.wait_min * 60
+        while True:
+            try:
+                checks = await row.check(ctx)
+            except (WardenError, httpx.HTTPError) as e:
+                checks = [Check("the warden answered", False, str(e))]
+            if all(c.ok for c in checks):
+                await op.tell(head, "passed")
+                return "pass", None, checks
+            if handle and await op.answer(handle):
+                return "skipped", None, checks
+            if time.monotonic() >= deadline:
+                break
+            await sleep(POLL_S)
+        failing = "; ".join(
+            f"{c.label}" + (f" ({c.detail})" if c.detail else "")
+            for c in checks
+            if not c.ok
+        )
+        out(f"  checks failing: {failing}")
+        choice, note = await _wait(
+            op,
+            await op.ask(
+                head, f"Not passing: {failing[:300]}", ["Retry", "Fail", "Skip"], "Fail"
+            ),
+            sleep,
+        )
+        if choice == "Fail":
+            return "fail", note, checks
+        if choice == "Skip":
+            return "skipped", None, checks
+
+
+def signoff_file(
+    cfg: config.Config, results: Results, printer: str, done: dict[str, list[int]]
+) -> Path:
+    """`<storage>/signoff-<printer>-<date>.md`: the sign-off table and what failed, ready to paste or file."""
+    path = cfg.storage_dir / f"signoff-{printer}-{time.strftime('%Y%m%d')}.md"
+    failed = [
+        f"- Row {n} ({TITLES[n]}): {e.get('note') or 'checks failed'}"
+        + "".join(
+            f"\n  - {c['label']}: {c['detail']}"
+            for c in e.get("checks") or []
+            if not c["ok"]
+        )
+        for n in done["failed"]
+        if (e := results.get(n, printer))
+    ]
+    path.write_text(
+        f"# Live validation: {printer}, {time.strftime('%Y-%m-%d')}\n\n"
+        f"Signed {len(done['signed'])}, failed {len(done['failed'])}, skipped {len(done['skipped'])}, "
+        f"already settled {len(done['already'])}.\n\n"
+        + ("## Failed\n\n" + "\n".join(failed) + "\n\n" if failed else "")
+        + "## Sign-off\n\n"
+        + report(cfg, results)
+        + "\n"
+    )
+    return path
+
+
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="print-warden validate", description=__doc__.split("\n\n")[0]
     )
     ap.add_argument(
-        "what", nargs="?", help="a row number, `sign` or `report` (none: list the rows)"
+        "what",
+        nargs="?",
+        help="a row number, `session`, `sign` or `report` (none: list the rows)",
     )
     ap.add_argument("row", nargs="?", type=int, help="with `sign`: the row")
     ap.add_argument(
@@ -1104,6 +1375,14 @@ def _parser() -> argparse.ArgumentParser:
         help="row 35: a multi-plate 3MF already uploaded, instead of four cubes",
     )
     ap.add_argument("--url", help="the warden (default http://127.0.0.1:<port>)")
+    ap.add_argument(
+        "--rows", help="with `session`: which rows, e.g. 1-13,39 (default: all)"
+    )
+    ap.add_argument(
+        "--terminal",
+        action="store_true",
+        help="with `session`: ask here instead of on the phone",
+    )
     return ap
 
 
@@ -1135,6 +1414,13 @@ def main(argv: list[str]) -> int:
         results.save()
         print(f"Row {args.row} on {printer}: {cell(results.get(args.row, printer))}")
         return 0
+    if args.what == "session":
+        if not printer or not args.by:
+            print(
+                "usage: print-warden validate session --printer P --by <initials> [--rows 1-13] [--terminal]"
+            )
+            return 2
+        return _run_session(cfg, results, printer, args)
     try:
         n = int(args.what)
     except ValueError:
@@ -1170,6 +1456,50 @@ def main(argv: list[str]) -> int:
         return asyncio.run(go())
     except KeyboardInterrupt:
         print("\nStopped; run it again to check.")
+        return 1
+    except (httpx.HTTPError, OSError, ExceptionGroup) as e:
+        while isinstance(e, ExceptionGroup) and e.exceptions:
+            e = e.exceptions[0]
+        print(f"cannot reach the warden at {url}: {e}")
+        return 1
+
+
+def _run_session(
+    cfg: config.Config, results: Results, printer: str, args: argparse.Namespace
+) -> int:
+    url = args.url or f"http://127.0.0.1:{cfg.port}"
+
+    async def go() -> int:
+        async with McpWarden(
+            url, os.environ.get("PRINT_WARDEN_TOKEN") or cfg.api_token
+        ) as w:
+            op: Operator = (
+                TerminalOperator() if args.terminal else PhoneOperator(w, printer)
+            )
+
+            def make(n: int) -> Ctx:
+                return Ctx(
+                    cfg,
+                    w,
+                    printer,
+                    results.scratch(n, printer),
+                    results,
+                    args.by,
+                    args.model,
+                )
+
+            done = await session(_rows(args.rows), make, op, args.by)
+            path = signoff_file(cfg, results, printer, done)
+            print(
+                f"\nSigned {len(done['signed'])}, failed {len(done['failed'])}, skipped {len(done['skipped'])}. "
+                f"Sign-off: {path}"
+            )
+            return 1 if done["failed"] else 0
+
+    try:
+        return asyncio.run(go())
+    except KeyboardInterrupt:
+        print("\nStopped; `validate session` again resumes where it left off.")
         return 1
     except (httpx.HTTPError, OSError, ExceptionGroup) as e:
         while isinstance(e, ExceptionGroup) and e.exceptions:

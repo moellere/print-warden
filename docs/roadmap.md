@@ -388,3 +388,17 @@ Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-o
   away and sent on return. The same numbers appear on `/status` ("This week") and from the `weekly_digest` tool.
 
 Done when: a configured digest arrives once a week with the week's numbers, and waits while nobody is home.
+
+## Phase 34 — Guided sign-off ✅ (build)
+
+- ✅ `print-warden validate session --printer P --by EM` walks the runbook in order and asks each step on the
+  phone (`ask_operator` / `operator_answer`, buttons that only record a tap).
+  - A setup runs on Go.
+  - A checkable row is polled until it passes (Skip meanwhile), and a failing one gets Retry / Fail with a note /
+    Skip.
+  - A row judged by eye is a Pass / Fail / Skip tap.
+- ✅ It resumes, passing over signed rows. `--rows` limits it and `--terminal` asks at the terminal.
+- ✅ It writes `<storage>/signoff-<printer>-<date>.md` with the table and each failure's note and checks. The PR
+  that carries it is made from chat, since the warden has no GitHub access.
+
+Done when: one printer's whole runbook can be signed in one session with the phone alone.

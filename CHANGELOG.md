@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `print-warden validate session --printer P --by EM` runs the whole runbook from the phone:
+  - each row's setup runs on a Go tap, and each checkable row is checked until it passes;
+  - a failing row offers Retry, Fail with a typed note, or Skip;
+  - a row judged by eye is a Pass / Fail / Skip tap.
+  It resumes where it stopped and writes `<storage>/signoff-<printer>-<date>.md`. Two new MCP tools,
+  `ask_operator` and `operator_answer`, carry the questions; a tap on them only records the answer.
+
 ## 0.10.0
 
 Rehearsal mode, the 1.0 contract and a weekly digest since 0.9.0. **Upgrade notes:** no config changes are needed.

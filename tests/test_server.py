@@ -1366,3 +1366,36 @@ async def test_weekly_digest_is_sent_once_a_week_and_held_while_away(monkeypatch
     assert len(sent) == 2
     d = await server.weekly_digest()
     assert d["message"] == digest.message(d)[1]
+
+
+async def test_ask_operator_records_the_tap(monkeypatch):
+    sent = []
+
+    async def notify(title, message, actions, image=None, tag=None, **kw):
+        sent.append(actions)
+        return True
+
+    async def clear(tag):
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    with pytest.raises(ValueError):
+        await server.ask_operator("t", "m", [])
+    res = await server.ask_operator(
+        "Row 9", "Pass?", ["Pass", "Fail", "Skip"], note_choice="Fail"
+    )
+    pid = res["prompt_id"]
+    assert res["sent"] and sent[0][1] == (
+        f"PRINT_WARDEN_VALIDATE_{pid}:1",
+        "Fail",
+        "textInput",
+    )
+    assert server.operator_answer(pid)["answered"] is False
+    await server._on_ha_action(f"PRINT_WARDEN_VALIDATE_{pid}:9", {})
+    assert server.operator_answer(pid)["answered"] is False  # no such button
+    await server._on_ha_action(
+        f"PRINT_WARDEN_VALIDATE_{pid}:1", {"reply_text": " blew a fuse "}
+    )
+    got = server.operator_answer(pid)
+    assert (got["choice"], got["note"]) == ("Fail", "blew a fuse")

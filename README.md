@@ -359,7 +359,9 @@ After a deploy that changes behaviour, run the live-validation runbook (`docs/li
   the warden's own state;
 - `--by <initials>` signs a passing run; `validate sign` records a row judged by eye, or `--issue <url>` for one
   that failed;
-- `validate report` prints the sign-off table.
+- `validate report` prints the sign-off table;
+- `validate session --printer P --by EM` walks every row in order from the phone (Go, Skip, Pass, Fail with a
+  note) and writes the sign-off for the printer.
 
 `print-warden backup` / `restore` keep the warden's state in one archive (`docs/operations.md`). What is
 promised about each public surface (MCP tools, CLI verbs, config keys, `/healthz`, HA entities, notification

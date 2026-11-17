@@ -214,6 +214,24 @@ async def test_the_runbook_against_the_demo(demo, monkeypatch):
 
         await row(35, setup=True, wait=0.5)
 
+        # the guided session asks on the (simulated) phone and reads the tap back
+        op = validate.PhoneOperator(w, "demo-b")
+        sess = asyncio.create_task(
+            validate.session(
+                [9],
+                lambda n: validate.Ctx(
+                    cfg, w, "demo-b", results.scratch(n, "demo-b"), results, by="CI"
+                ),
+                op,
+                "CI",
+                out=lambda _: None,
+            )
+        )
+        await phone.tap("PRINT_WARDEN_VALIDATE_", wait_s=20)
+        done = await asyncio.wait_for(sess, 20)
+        assert done["signed"] == [9]
+        assert results.get(9, "demo-b")["by"] == "CI"
+
     assert not failed, "\n\n".join(f"row {n}:\n{out}" for n, out in failed.items())
     assert {
         n

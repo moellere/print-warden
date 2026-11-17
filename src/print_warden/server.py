@@ -1690,6 +1690,23 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
             record_dried(int(job_id), "phone tap")
             if HA:
                 await HA.clear_notification(_upkeep_tag(f"dry:{job_id}"))
+        elif verb == "VALIDATE":
+            pid, _, idx = job_id.partition(":")
+            prompt = json.loads(JOBS.kv_get(f"operator_prompt:{pid}") or "{}")
+            choices = prompt.get("choices") or []
+            if idx.isdigit() and int(idx) < len(choices):
+                JOBS.kv_set(
+                    f"operator_answer:{pid}",
+                    json.dumps(
+                        {
+                            "choice": choices[int(idx)],
+                            "note": str(data.get("reply_text") or "").strip() or None,
+                            "at": time.time(),
+                        }
+                    ),
+                )
+                if HA:
+                    await HA.clear_notification(f"print_warden_validate_{pid}")
         elif verb in ("CANCEL", "RESUME"):
             res = await print_control(job_id, verb.lower(), "phone tap")
             if not res["done"] and HA:
@@ -1863,6 +1880,43 @@ async def fault_test(printer: str, requested_by: str) -> dict[str, Any]:
     )
     JOBS.note(res["id"], f"fault test requested by {requested_by.strip()}")
     return res
+
+
+@mcp.tool()
+async def ask_operator(
+    title: str, message: str, choices: list[str], note_choice: str | None = None
+) -> dict[str, Any]:
+    """Ask the operator a question on the phone, as buttons (`choices`, up to three). The choice named in
+    `note_choice` asks for a typed reply too. A tap only records the answer, which `operator_answer` reads; nothing
+    else happens. The live-validation session (`print-warden validate session`) asks each row's step this way."""
+    if not 1 <= len(choices) <= 3:
+        raise ValueError("choices: one to three buttons")
+    pid = uuid.uuid4().hex[:10]
+    JOBS.kv_set(
+        f"operator_prompt:{pid}", json.dumps({"choices": choices, "at": time.time()})
+    )
+    actions: list[tuple[str, ...]] = [
+        (f"PRINT_WARDEN_VALIDATE_{pid}:{i}", c, "textInput")
+        if c == note_choice
+        else (f"PRINT_WARDEN_VALIDATE_{pid}:{i}", c)
+        for i, c in enumerate(choices)
+    ]
+    sent = bool(
+        HA
+        and await HA.notify_actionable(
+            title, message, actions, tag=f"print_warden_validate_{pid}"
+        )
+    )
+    return {"prompt_id": pid, "sent": sent}
+
+
+@mcp.tool()
+def operator_answer(prompt_id: str) -> dict[str, Any]:
+    """The operator's tap on an `ask_operator` prompt: {answered, choice, note}."""
+    raw = JOBS.kv_get(f"operator_answer:{prompt_id}")
+    if not raw:
+        return {"answered": False, "choice": None, "note": None}
+    return {"answered": True, **json.loads(raw)}
 
 
 def _spoolman() -> Spoolman:
