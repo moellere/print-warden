@@ -334,6 +334,18 @@ docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppIm
 curl localhost:8710/healthz
 ```
 
+**Try it without a printer:** `print-warden demo` runs the whole warden against two simulated printers, a
+simulated Home Assistant and a simulated slicer (no OrcaSlicer needed). The simulated printers come with cameras,
+history and a console.
+- The phone is `http://127.0.0.1:8711/sim/phone`. It shows the warden's notifications with their buttons, the
+  alerts, each printer's camera, a console (`PAUSE`, `M112`, `FIRMWARE_RESTART` …) and a button that takes the part
+  off the bed.
+- The warden is on its usual port, with token `demo`.
+- Prints run 12 times faster than real time (`--speed`).
+
+`print-warden validate --config print-warden-demo/printers.yaml …` rehearses the runbook against it. CI runs
+15 rows of the runbook end to end against the demo on every change (`tests/test_demo_e2e.py`).
+
 After a deploy that changes behaviour, run the live-validation runbook (`docs/live-validation.md`) with
 `print-warden validate` in the container:
 - `validate` lists the rows and their sign-off per printer;
@@ -408,6 +420,8 @@ src/print_warden/
   stage.py      the /stage page: slice and queue from a browser, never start
   profiles.py   Orca vendor listing, slicer blocks, preset import, profiles from Klipper
   validate.py   the live-validation runbook against the running warden (an MCP client), with sign-offs
+  sim.py        simulated Moonraker, Home Assistant, cameras and slicer for the demo and the end-to-end test
+  demo.py       `print-warden demo`: the warden against two simulated printers
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

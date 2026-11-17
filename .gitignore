@@ -7,3 +7,4 @@ __pycache__/
 slicer/test-cube.*
 slicer/build.log
 /[0-9][0-9][0-9][0-9][0-9].log
+print-warden-demo/

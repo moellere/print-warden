@@ -498,7 +498,15 @@ async def check_12(ctx: Ctx) -> list[Check]:
 
 
 async def check_13(ctx: Ctx) -> list[Check]:
-    job = await _latest(ctx, "failed", "done", "printing")
+    job = next(
+        (
+            j
+            for j in await ctx.w.call("list_jobs", printer=ctx.printer, limit=20)
+            if j["state"] in ("failed", "done", "printing")
+            and not calibration.is_fault(j)
+        ),
+        None,
+    )
     why = f"{(job or {}).get('failure_cause')} / {(job or {}).get('error')}"
     return [
         _ok(
@@ -506,7 +514,7 @@ async def check_13(ctx: Ctx) -> list[Check]:
             job and job["state"] == "failed",
             job["state"] if job else "none",
         ),
-        _ok("as cancelled", job and "cancel" in why, why),
+        _ok("as cancelled", job and "cancel" in why.lower(), why),
     ]
 
 

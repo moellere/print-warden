@@ -349,3 +349,18 @@ Done when: a low material appears on the HA list by itself, and a scale reading 
   the failure stats.
 
 Done when: every row of `docs/live-validation.md` is signed or has an issue.
+
+## Phase 30 — Rehearsal mode ✅ (build)
+
+- ✅ `print-warden demo`: the warden, unchanged, against two simulated printers (Moonraker's HTTP routes and
+  websocket, a print played layer by layer, pause/cancel/error/shutdown as on Klipper, history, a gcode store,
+  printer.cfg settings and meshes), a simulated Home Assistant (alerts, notifications with buttons, entity states, the
+  tap websocket) with a phone page, simulated cameras (the part on the bed until it is taken off) and a simulated
+  slicer (`orca: sim`). Grace periods and the paused-print deadline run at the demo's speed.
+- ✅ `tests/test_demo_e2e.py`: 15 rows of the runbook through `validate` against the demo on every CI run.
+
+Done when: the checkable rows pass in CI against the simulator.
+
+It found one bug on its first run: after a print stops with an error, Klipper leaves `print_stats` at `error` until
+the next print, and the warden did not count that as idle, so nothing more was offered or started there (Reprint
+included). `error` with Klipper ready is idle now.

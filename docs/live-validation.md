@@ -31,6 +31,15 @@ nothing: a setup that offers a job still waits for the tap.
 - `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
 - `validate report` prints the table below, filled in, for pasting here.
 
+Rehearse first with `print-warden demo`, which runs the warden against simulated printers:
+1. Run it with `PRINT_WARDEN_TOKEN=demo print-warden validate --config print-warden-demo/printers.yaml <row>
+   --printer demo-a --setup`.
+2. Tap on the simulated phone at `http://127.0.0.1:8711/sim/phone`.
+3. Use each printer's console there for `PAUSE`, `M112` and `FIRMWARE_RESTART`.
+
+The rows CI already runs against the demo are 0, 1, 3, 4, 10–13, 23, 25, 28, 35, 38, 39 and 41. They prove the
+warden's side of each row, so on the printers only the hardware's side is left.
+
 ## 1. Slice and stage
 
 1. `submit_job(printer, model="cube.stl", material="PLA", quality="draft", offer=False)`.

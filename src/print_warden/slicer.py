@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import checks
+from . import checks, sim
 from . import park as parking
 from .calibration import apply as calibrate_gcode
 from .calibration import fault as fault_gcode
@@ -374,16 +374,21 @@ async def slice_stl(
             str(out_dir),
             str(project or stl),
         ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-        )
-        out, _ = await proc.communicate()
-        log = out.decode(errors="ignore")
         threemf = out_dir / f"{name}.3mf"
-        if not threemf.exists():
-            raise RuntimeError(
-                f"orca-slicer produced no 3mf (rc={proc.returncode}): {log[-2000:]}"
+        if cfg.orca == sim.ORCA:
+            log = sim.slice_to_3mf(
+                stl, threemf, machine_cfg, process_cfg, filament_cfg, copies
             )
+            rc = 0
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            out, _ = await proc.communicate()
+            log = out.decode(errors="ignore")
+            rc = proc.returncode or 0
+        if not threemf.exists():
+            raise RuntimeError(f"orca-slicer produced no 3mf (rc={rc}): {log[-2000:]}")
         with zipfile.ZipFile(threemf) as z:
             names = z.namelist()
             gcodes = [n for n in names if n.lower().endswith(".gcode")]

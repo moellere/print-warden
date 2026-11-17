@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .bedcheck import Check
 
-IDLE_STATES = {"standby", "complete", "cancelled", None}
+# Klipper keeps print_stats at "error" after a print stops with an error until the next print starts; with Klipper
+# ready, the printer is idle (a shutdown is Klipper's own state, checked separately).
+IDLE_STATES = {"standby", "complete", "cancelled", "error", None}
 SPOOL_MARGIN = 1.1
 
 

@@ -22,7 +22,7 @@ import aiomqtt
 import httpx
 import yaml
 
-from . import config, energy
+from . import config, energy, sim
 from .slicer import flatten, search_dirs
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -58,8 +58,11 @@ def _slicer(cfg: config.Config) -> list[Result]:
     s = cfg.slicer
     out: list[Result] = []
     orca = Path(s.orca)
+    simulated = s.orca == sim.ORCA
     out.append(
-        Result(OK, "slicer", f"OrcaSlicer at {orca}")
+        Result(WARN, "slicer", "simulated slicer (print-warden demo): no real gcode")
+        if simulated
+        else Result(OK, "slicer", f"OrcaSlicer at {orca}")
         if orca.is_file() and os.access(orca, os.X_OK)
         else Result(FAIL, "slicer", f"OrcaSlicer not executable at {orca}")
     )
@@ -90,7 +93,7 @@ def _slicer(cfg: config.Config) -> list[Result]:
             WARN, "slicer", f"OpenSCAD not found ({s.openscad}); .scad models will fail"
         )
     )
-    if not shutil.which("xvfb-run"):
+    if not simulated and not shutil.which("xvfb-run"):
         out.append(Result(FAIL, "slicer", "xvfb-run not found; Orca's CLI needs it"))
     return out
 
