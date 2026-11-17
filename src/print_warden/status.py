@@ -122,6 +122,22 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         cards.append(
             '<section class="card"><h2>Batches</h2>' + "".join(batches) + "</section>"
         )
+    if week := data.get("week"):
+        line = (
+            f"{_e(week['prints'])} print(s), {_e(week['failed'])} failed · {_e(week['hours'])} h · "
+            f"{_e(week['grams'])} g"
+            + (f" · {_e(week['kwh'])} kWh" if week.get("kwh") else "")
+        )
+        why = ", ".join(
+            f"{r['reason'].replace('_', ' ')} ×{r['count']}"
+            for r in week.get("reasons") or []
+        )
+        cards.append(
+            '<section class="card"><h2>This week</h2>'
+            f"<p>{line}</p>"
+            + (f'<p class="mute">{_e(why)}</p>' if why else "")
+            + "</section>"
+        )
     upkeep = []
     for r in data.get("reorder") or []:
         upkeep.append(

@@ -190,6 +190,12 @@ warden's side of each row, so on the printers only the hardware's side is left.
     HA list once; register a new spool and it comes off. With a `spool_scale_entity`: lift the spool off and back
     while the printer is idle; the next hourly pass records a weigh-in.
 
+## 16. Weekly digest
+
+45. Set `digest:` to today and a time an hour or two ahead, restart, and wait past it. Expect: one "Week in prints"
+    on the phone with the week's prints, failures and what is due (the same as `weekly_digest`), and no second one
+    an hour later. With away mode, set the person away before the time: nothing arrives until you are back.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -239,3 +245,4 @@ warden's side of each row, so on the printers only the hardware's side is left.
 | 42 | Spool registered, labelled, swapped on with the old one weighed | | |
 | 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
 | 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
+| 45 | Weekly digest arrives once; held while away | | |

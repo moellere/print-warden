@@ -378,3 +378,13 @@ included). `error` with Klipper ready is idle now.
   is upgraded in place (tested).
 
 Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-off is complete.
+
+## Phase 32 — Weekly digest ✅ (build)
+
+- ✅ `digest: {day, at}`: one phone summary a week. It covers prints done and failed (with the commonest reasons),
+  hours, grams, kWh and cost, per printer and in all, then what is due: maintenance, drying, weigh-ins, reorders and
+  materials running out within three weeks.
+- ✅ It is computed from the rows the warden keeps, with no model, and fault tests are excluded. It is held while
+  away and sent on return. The same numbers appear on `/status` ("This week") and from the `weekly_digest` tool.
+
+Done when: a configured digest arrives once a week with the week's numbers, and waits while nobody is home.

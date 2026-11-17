@@ -78,6 +78,7 @@ TITLES = {
     42: "Spool registered, labelled, swapped on with the old one weighed",
     43: "Weigh-in reply corrects Spoolman; a wrong density shows as drift",
     44: "Reorder on the HA to-do list and off again; the spool scale weighs",
+    45: "Weekly digest arrives once; held while away",
 }
 CUBE = "validate_cube.stl"
 OVERSIZED = "validate_oversized.stl"
@@ -727,6 +728,21 @@ async def check_41(ctx: Ctx) -> list[Check]:
     ]
 
 
+async def check_45(ctx: Ctx) -> list[Check]:
+    sent = [
+        e
+        for e in await ctx.w.call("get_events", since_minutes=8 * 24 * 60, limit=200)
+        if e["kind"] == "weekly_digest"
+    ]
+    return [
+        _ok(
+            "a weekly digest went out this week",
+            sent,
+            sent[0]["message"][:120] if sent else "none yet",
+        )
+    ]
+
+
 ROWS: dict[int, Row] = {
     0: Row(check=check_0, every_printer=True),
     1: Row(
@@ -868,6 +884,11 @@ ROWS: dict[int, Row] = {
     ),
     44: Row(
         ask="With upkeep.todo_entity set, let a material run under reorder_below_g; lift the spool off the scale."
+    ),
+    45: Row(
+        ask="Set digest to today, an hour or two ahead; restart and wait past it.",
+        check=check_45,
+        wait_min=150,
     ),
 }
 

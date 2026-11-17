@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from .digest import day_index
 from .presence import Presence
 from .upkeep import Interval, parse_maintenance
 
@@ -126,6 +127,13 @@ class Upkeep:
 
 
 @dataclass(frozen=True)
+class Digest:
+    day: int = 6
+    """Monday is 0."""
+    at: str = "18:00"
+
+
+@dataclass(frozen=True)
 class Mqtt:
     host: str
     port: int = 1883
@@ -171,6 +179,21 @@ class Config:
     cheap_power: CheapPower | None = None
     energy: Energy = Energy()
     presence: Presence | None = None
+    digest: Digest | None = None
+
+
+def _digest(raw: dict[str, Any] | None) -> Digest | None:
+    if not raw:
+        return None
+    at = str(raw.get("at", "18:00"))
+    hh, _, mm = at.partition(":")
+    if not (
+        hh.isdigit()
+        and 0 <= int(hh) < 24
+        and (not mm or (mm.isdigit() and 0 <= int(mm) < 60))
+    ):
+        raise ValueError(f"digest.at must be HH:MM, got {at!r}")
+    return Digest(day=day_index(str(raw.get("day", "sunday"))), at=at)
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -280,6 +303,7 @@ SCHEMA: dict[str, Any] = {
     "alerts": {"quiet_hours": None, "cooldown_s": None, "quiet_entity": None, "quiet_states": None},
     "presence": {f.name: None for f in fields(Presence)},
     "energy": {"price_per_kwh": None, "price_entity": None},
+    "digest": {"day": None, "at": None},
     "upkeep": {
         "reorder_below_g": None, "dry_after_days": ANY, "weigh_every_days": None, "todo_entity": None,
         "dry_boxes": [{"name": None, "entity": None, "max_pct": None}],
@@ -411,6 +435,7 @@ def load(path: str | Path) -> Config:
         if (cp := pol.get("cheap_power"))
         else None,
         presence=_presence(raw.get("presence")),
+        digest=_digest(raw.get("digest")),
         energy=Energy(
             price_per_kwh=float(en["price_per_kwh"])
             if (en := raw.get("energy") or {}).get("price_per_kwh") is not None

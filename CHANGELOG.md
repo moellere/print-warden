@@ -13,6 +13,10 @@
   holds from 1.0. A test keeps its tables in step with the code.
 - `print-warden check` warns on config keys the warden does not read ("did you mean …"); the server logs them at
   start.
+- Weekly digest (`digest: {day, at}`): one phone summary a week. It covers prints done and failed with the
+  commonest reasons, hours, grams, kWh and cost, plus what is due (maintenance, drying, weigh-ins, reorders,
+  materials running out). It is held while away. The same numbers appear on `/status` and from the new
+  `weekly_digest` tool.
 - `print-warden backup` / `print-warden restore` keep the warden's state in one archive: the databases, profiles,
   bed references and validation sign-offs.
 

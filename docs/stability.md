@@ -92,6 +92,7 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `swap_spool` | `printer`, `spool`, `swapped_by`, `outgoing_gross_g?` |
 | `upkeep_status` | — |
 | `waive_blockers` | `job_id`, `authorized_by` |
+| `weekly_digest` | — |
 | `weigh_spool` | `spool`, `gross_g`, `weighed_by`, `empty_g?` |
 
 ## HTTP routes (stable)
@@ -159,6 +160,7 @@ known key. The server also logs a warning at start.
 | `alerts` |
 | `presence` |
 | `energy` |
+| `digest` |
 | `upkeep` |
 
 `printers.example.yaml` shows them in use.

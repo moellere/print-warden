@@ -78,6 +78,12 @@ print with an error. It is queued and offered like any job, so it starts only on
 slice checks, which would otherwise block it. The job is kept out of failure stats, "failed before", repeat-cause
 warnings and `/healthz`'s `outcomes_7d`.
 
+**Weekly digest.** With `digest: {day: sunday, at: "18:00"}`, the phone gets one summary a week. It counts
+prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per printer and in all. It also
+lists what is due: maintenance, drying, weigh-ins, reorders, and materials the run-out forecast gives under three
+weeks. While nobody is home it waits and arrives on return. `/status` shows the same week, and `weekly_digest`
+answers in chat. Every number comes from rows the warden already keeps; fault tests are left out.
+
 **Spool inventory.** Spoolman stays the system of record; the warden runs the physical side, from chat or the
 `/spools` page (same token as `/status`):
 - `register_spool(vendor, material, color, registered_by, net_weight_g=1000, spool_weight_g, price, location)`: the
@@ -428,6 +434,7 @@ src/print_warden/
   sim.py        simulated Moonraker, Home Assistant, cameras and slicer for the demo and the end-to-end test
   demo.py       `print-warden demo`: the warden against two simulated printers
   backup.py     `print-warden backup` / `restore`
+  digest.py     the weekly digest: the week's prints and what is due
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

@@ -26,3 +26,16 @@ def test_unknown_keys_are_named_with_the_closest_known_one():
         "polcy (did you mean policy?)",
         "upkeep.dry_boxes[0].max_pc (did you mean max_pct?)",
     ]
+
+
+def test_digest_config(tmp_path):
+    from print_warden import config
+
+    p = tmp_path / "c.yaml"
+    p.write_text("printers: {}\ndigest: {day: friday, at: '07:15'}\n")
+    assert config.load(p).digest == config.Digest(4, "07:15")
+    p.write_text("printers: {}\ndigest: {day: friday, at: '7pm'}\n")
+    with pytest.raises(ValueError, match="HH:MM"):
+        config.load(p)
+    p.write_text("printers: {}\n")
+    assert config.load(p).digest is None

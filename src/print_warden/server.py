@@ -35,6 +35,7 @@ from . import (
     cameras,
     checks,
     config,
+    digest,
     energy,
     failures,
     footprint,
@@ -2398,6 +2399,9 @@ async def status_data() -> dict[str, Any]:
     report["forecast"] = up.get("forecast") or []
     report["batches"] = _open_batches()
     report["away"] = presence.away()
+    report["week"] = digest.summary(
+        JOBS.since(time.time() - digest.WEEK_S), up, time.time()
+    )
     return report
 
 
@@ -3005,7 +3009,53 @@ async def presence_tick(now: float | None = None) -> str | None:
                 await advance_queue(n)
             except Exception:
                 log.exception("welcome-home offer %s", n)
+        if JOBS.kv_get("digest_pending") == "1":
+            try:
+                await digest_tick(now, force=True)
+            except Exception:
+                log.exception("held digest")
     return change
+
+
+async def digest_tick(now: float | None = None, force: bool = False) -> str | None:
+    """Send the weekly digest when its slot has passed since the last one ("sent"); while away, hold it for the
+    return ("held"). The first pass after it is configured only starts the clock."""
+    cfg = CFG.digest
+    if not (cfg and HA):
+        return None
+    now = time.time() if now is None else now
+    last = JOBS.kv_get("digest_sent")
+    if last is None and not force:
+        JOBS.kv_set("digest_sent", str(now))
+        return None
+    due_at = digest.slot(cfg.day, cfg.at, datetime.fromtimestamp(now).astimezone())
+    if not force and float(last or 0) >= due_at.timestamp():
+        return None
+    if presence.away() and not force:
+        JOBS.kv_set("digest_pending", "1")
+        return "held"
+    title, msg = digest.message(await _digest(now))
+    await HA.alert("warden", "info", title, msg)
+    STORE.add(Event("warden", "weekly_digest", "info", msg, alert=False))
+    JOBS.kv_set("digest_sent", str(now))
+    JOBS.kv_delete("digest_pending")
+    return "sent"
+
+
+async def _digest(now: float) -> dict[str, Any]:
+    return digest.summary(
+        JOBS.since(now - digest.WEEK_S), await upkeep_report(now), now
+    )
+
+
+@mcp.tool()
+async def weekly_digest() -> dict[str, Any]:
+    """The last seven days: prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per
+    printer and in all, and what is due (maintenance, drying, weigh-ins, reorders, materials running out). The same
+    numbers as the weekly phone digest (`digest` in the config); read-only."""
+    d = await _digest(time.time())
+    d["message"] = digest.message(d)[1]
+    return d
 
 
 async def presence_loop() -> None:
@@ -3029,7 +3079,7 @@ async def upkeep_loop(interval_s: float = 3600) -> None:
             await health_alerts()
         except Exception:
             log.exception("health")
-        for task in (todo_sync, scale_tick):
+        for task in (todo_sync, scale_tick, digest_tick):
             try:
                 await task()
             except Exception:
