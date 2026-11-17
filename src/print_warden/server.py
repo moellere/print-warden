@@ -45,6 +45,7 @@ from . import (
     mqtt_entities,
     outcome,
     park,
+    plan,
     policy,
     presence,
     retention,
@@ -977,16 +978,16 @@ async def submit_batch(
         raise ValueError(
             f"no printer can take job(s) {homeless}: {skipped or 'they do not fit any plate'}"
         )
-    plan, done_in = schedule.assign(durations, free)
+    placed, done_in = schedule.assign(durations, free)
     batch_id = uuid.uuid4().hex[:8]
     label = name or f"batch-{batch_id}"
     jobs = []
     for u in sorted(
-        units, key=lambda u: (plan[u["key"]], -durations[u["key"]][plan[u["key"]]])
+        units, key=lambda u: (placed[u["key"]], -durations[u["key"]][placed[u["key"]]])
     ):
         jobs.append(
             await _submit_job(
-                plan[u["key"]],
+                placed[u["key"]],
                 u["model"],
                 u["material"],
                 u["quality"],
@@ -1143,6 +1144,17 @@ async def advance_queue(printer: str) -> dict[str, Any]:
     if not head:
         why = "queue empty" if not queue else "every queued job has slice blockers"
         return {"action": "none", "why": why}
+    if CFG.plan_offers:
+        now = time.time()
+        at, wait = plan.slot(_lane(printer, now), now, _corrected_est(head))
+        if at is not None and at > now + 60:
+            JOBS.kv_set(f"plan_hold:{printer}", str(at))
+            return {
+                "action": "none",
+                "why": f"planned for {datetime.fromtimestamp(at).astimezone():%a %H:%M}: {wait}",
+                "job_id": head["id"],
+            }
+        JOBS.kv_delete(f"plan_hold:{printer}")
     pr = CFG.presence
     if pr and pr.away_offer_max_hours is not None and presence.away():
         est_h = _corrected_est(head) / 3600
@@ -2453,6 +2465,10 @@ async def status_data() -> dict[str, Any]:
     report["forecast"] = up.get("forecast") or []
     report["batches"] = _open_batches()
     report["away"] = presence.away()
+    now = time.time()
+    report["plan"] = {
+        n: plan.describe(r, now)[:5] for n, r in _week_plan(now).items() if r
+    }
     report["week"] = digest.summary(
         JOBS.since(time.time() - digest.WEEK_S), up, time.time()
     )
@@ -2706,11 +2722,25 @@ async def expire_approvals(now: float | None = None) -> list[str]:
     return expired
 
 
+async def release_planned(now: float | None = None) -> list[str]:
+    """Offer the head of each queue whose planned slot (policy.plan_offers) has come."""
+    now = time.time() if now is None else now
+    out = []
+    for n in WATCHERS:
+        hold = JOBS.kv_get(f"plan_hold:{n}")
+        if hold and float(hold) <= now:
+            JOBS.kv_delete(f"plan_hold:{n}")
+            await advance_queue(n)
+            out.append(n)
+    return out
+
+
 async def housekeeping(interval_s: float = 60) -> None:
     last_prune = 0.0
     while True:
         try:
             await expire_approvals()
+            await release_planned()
             if time.time() - last_prune > 86400:
                 last_prune = time.time()
                 rows = STORE.prune(CFG.keep_days)
@@ -2721,6 +2751,75 @@ async def housekeeping(interval_s: float = 60) -> None:
         except Exception:
             log.exception("housekeeping")
         await asyncio.sleep(interval_s)
+
+
+def _lane(name: str, now: float) -> plan.Lane:
+    w = WATCHERS[name]
+    left = _print_left_s(name)
+    busy = w.status().get("state") in ("printing", "paused")
+    return plan.Lane(
+        printer=name,
+        free_at=now + (left or 0) if busy else now,
+        needs_clearing=busy or BED.state(name)["state"] == "occupied",
+        finish_window=w.p.finish_window,
+        quiet_hours=CFG.quiet_hours,
+        auto_start=w.p.auto_start,
+        auto_start_hours=w.p.auto_start_hours,
+    )
+
+
+def _week_plan(now: float) -> dict[str, list[dict[str, Any]]]:
+    queues = {
+        n: [
+            {
+                "id": j["id"],
+                "name": j["name"],
+                "est_s": _corrected_est(j),
+                "offered": True,
+            }
+            for j in JOBS.list(n, 5, ("awaiting_approval",))
+        ]
+        + [
+            {"id": j["id"], "name": j["name"], "est_s": _corrected_est(j)}
+            for j in JOBS.queue(n)
+            if j["offer"]
+        ]
+        for n in WATCHERS
+    }
+    return plan.plan([_lane(n, now) for n in WATCHERS], queues, now)
+
+
+@mcp.tool()
+def plan_week() -> dict[str, Any]:
+    """When each queued job would start and finish, per printer: after the current print and a bed-clearing gap, in
+    queue order, at the first slot whose finish falls in the printer's finish_window and whose start is outside quiet
+    hours (or, with auto_start, inside auto_start_hours), with what each job waits for. Read-only. With
+    policy.plan_offers the queue holds each offer until its planned slot."""
+    now = time.time()
+    rows = _week_plan(now)
+    return {
+        "plan_offers": CFG.plan_offers,
+        "printers": {
+            n: [
+                {
+                    **r,
+                    "start_at": datetime.fromtimestamp(r["start"])
+                    .astimezone()
+                    .isoformat()
+                    if r["start"]
+                    else None,
+                    "finish_at": datetime.fromtimestamp(r["finish"])
+                    .astimezone()
+                    .isoformat()
+                    if r["finish"]
+                    else None,
+                }
+                for r in lanes
+            ]
+            for n, lanes in rows.items()
+        },
+        "lines": {n: plan.describe(r, now) for n, r in rows.items()},
+    }
 
 
 _PUBLISHED: dict[str, tuple[str, dict[str, Any]]] = {}

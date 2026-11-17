@@ -122,6 +122,16 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         cards.append(
             '<section class="card"><h2>Batches</h2>' + "".join(batches) + "</section>"
         )
+    if planned := data.get("plan"):
+        cards.append(
+            '<section class="card"><h2>Plan</h2>'
+            + "".join(
+                f"<p><b>{_e(n)}</b></p>"
+                + "".join(f'<p class="mute">{_e(line)}</p>' for line in lines)
+                for n, lines in sorted(planned.items())
+            )
+            + "</section>"
+        )
     if week := data.get("week"):
         line = (
             f"{_e(week['prints'])} print(s), {_e(week['failed'])} failed · {_e(week['hours'])} h · "

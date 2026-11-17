@@ -1399,3 +1399,33 @@ async def test_ask_operator_records_the_tap(monkeypatch):
     )
     got = server.operator_answer(pid)
     assert (got["choice"], got["note"]) == ("Fail", "blew a fuse")
+
+
+async def test_plan_offers_hold_the_offer_until_its_slot(
+    monkeypatch, clean_queues, ready, phone
+):
+    import dataclasses
+    from datetime import datetime, timedelta
+
+    now = datetime.now().astimezone()
+    quiet = f"{now - timedelta(hours=1):%H:%M}-{now + timedelta(hours=2):%H:%M}"
+
+    monkeypatch.setattr(
+        server,
+        "CFG",
+        dataclasses.replace(server.CFG, plan_offers=True, quiet_hours=quiet),
+    )
+    job = _queued(est_seconds=600)
+    res = await server.advance_queue("testp")
+    assert res["action"] == "none" and res["why"].startswith("planned for ")
+    assert "quiet hours" in res["why"]
+    assert server.JOBS.get(job["id"])["state"] == "staged"
+    hold = float(server.JOBS.kv_get("plan_hold:testp"))
+    assert await server.release_planned(hold - 1) == []
+    monkeypatch.setattr(
+        server, "CFG", dataclasses.replace(server.CFG, plan_offers=False)
+    )
+    assert await server.release_planned(hold + 1) == ["testp"]
+    assert server.JOBS.get(job["id"])["state"] == "awaiting_approval"
+    week = server.plan_week()
+    assert week["printers"]["testp"][0]["waits"] == "offered: waiting for the tap"

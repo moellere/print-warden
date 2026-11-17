@@ -71,6 +71,7 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `move_job` | `job_id`, `position` |
 | `offer_next` | `printer` |
 | `operator_answer` | `prompt_id` |
+| `plan_week` | — |
 | `print_history` | `printer?`, `days?`, `state?` |
 | `print_status` | `printer?` |
 | `printer_health` | `printer`, `accept?` |

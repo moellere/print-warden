@@ -78,6 +78,13 @@ print with an error. It is queued and offered like any job, so it starts only on
 slice checks, which would otherwise block it. The job is kept out of failure stats, "failed before", repeat-cause
 warnings and `/healthz`'s `outcomes_7d`.
 
+**The week's plan.** `plan_week` (and the Plan card on `/status`) says when each queued job would start and
+finish on its printer, and what it waits for. The plan follows the queue order and starts after the current print,
+with a gap for clearing the bed. Each job gets the first slot whose finish falls in the printer's `finish_window`
+and whose start is outside quiet hours (an `auto_start` printer uses its `auto_start_hours` instead). With
+`policy.plan_offers: true`, the queue holds each offer until its slot: a four-hour job queued at 21:00 is offered at
+07:00. Without it the plan only informs. Either way, nothing starts without a tap or `auto_start`.
+
 **Weekly digest.** With `digest: {day: sunday, at: "18:00"}`, the phone gets one summary a week. It counts
 prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per printer and in all. It also
 lists what is due: maintenance, drying, weigh-ins, reorders, and materials the run-out forecast gives under three
@@ -440,6 +447,7 @@ src/print_warden/
   backup.py     `print-warden backup` / `restore`
   record.py     `print-warden record`: one real print, recorded for the simulator to replay
   digest.py     the weekly digest: the week's prints and what is due
+  plan.py       the week's plan: each queued job's slot, from windows, quiet hours and the queue
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```
 

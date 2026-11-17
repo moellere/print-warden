@@ -133,6 +133,7 @@ alerts:
 policy:
   approval_ttl_minutes: 15   # a Start tap older than this is refused; the request returns to staged
   paused_cancel_minutes: 30  # a print paused this long with no Resume is cancelled, heaters off (0 = never)
+  # plan_offers: true        # hold each offer until its planned slot (finish window, quiet hours); see plan_week
   # cheap_power:             # hold offers of long prints while power is dear (retried hourly)
   #   entity: sensor.electricity_price
   #   max_price: 0.20

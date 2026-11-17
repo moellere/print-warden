@@ -212,6 +212,12 @@ warden's side of each row, so on the printers only the hardware's side is left.
     on the phone with the week's prints, failures and what is due (the same as `weekly_digest`), and no second one
     an hour later. With away mode, set the person away before the time: nothing arrives until you are back.
 
+## 17. The week's plan
+
+46. With `policy.plan_offers: true`, a `finish_window` and quiet hours set, queue a job in the evening long enough
+    to finish outside the window. Expect: `plan_week` and `/status` put it at the first morning slot, no offer
+    arrives overnight, and the offer arrives at that slot.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -262,3 +268,4 @@ warden's side of each row, so on the printers only the hardware's side is left.
 | 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
 | 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
 | 45 | Weekly digest arrives once; held while away | | |
+| 46 | The plan holds an evening job and offers it at its morning slot | | |

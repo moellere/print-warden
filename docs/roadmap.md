@@ -420,3 +420,18 @@ Done when: one printer's whole runbook can be signed in one session with the pho
   and whether the warden then settles the job, is the first thing a real recording will show.
 
 Done when: CI replays at least one real error print and one real shutdown from each printer.
+
+## Phase 36 — The week's plan ✅ (build)
+
+- ✅ `plan.py`: each printer is a lane that is free after its current print plus a bed-clearing gap. Its queued
+  jobs take, in order, the first 15-minute slot whose finish falls in its `finish_window` and whose start is outside
+  quiet hours (`auto_start_hours` for an `auto_start` printer). The plan is pure and deterministic.
+- ✅ `plan_week` and the Plan card on `/status` show "what prints when" and what each job waits for.
+- ✅ `policy.plan_offers: true` holds the head of a queue until its slot and offers it then (checked every minute).
+  It is off by default, so the plan only informs until it is turned on. A job with no slot in a week is offered as
+  before, and nothing starts without a tap or `auto_start`.
+- Cheap power is still the hourly price check before an offer; planning around a price forecast waits for a
+  forecast source.
+
+Done when: a mixed queue across both printers gets a plan that respects every window and is offered on time
+(runbook row 46).

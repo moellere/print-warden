@@ -79,6 +79,7 @@ TITLES = {
     43: "Weigh-in reply corrects Spoolman; a wrong density shows as drift",
     44: "Reorder on the HA to-do list and off again; the spool scale weighs",
     45: "Weekly digest arrives once; held while away",
+    46: "The plan holds an evening job and offers it at its morning slot",
 }
 CUBE = "validate_cube.stl"
 OVERSIZED = "validate_oversized.stl"
@@ -889,6 +890,9 @@ ROWS: dict[int, Row] = {
         ask="Set digest to today, an hour or two ahead; restart and wait past it.",
         check=check_45,
         wait_min=150,
+    ),
+    46: Row(
+        ask="Queue a long job in the evening with plan_offers on; check plan_week, then wait for the morning offer."
     ),
 }
 

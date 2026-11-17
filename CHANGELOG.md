@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The week's plan: `plan_week` and a Plan card on `/status` say when each queued job would start and finish, after
+  the current print and a bed-clearing gap. Each job gets the first slot whose finish falls in the printer's
+  `finish_window` and whose start is outside quiet hours. `policy.plan_offers: true` (off by default) holds each
+  offer until its slot. Runbook row 46 checks it.
 - `print-warden record --printer P` keeps one print as the printer reported it: status updates, Klipper signals,
   the gcode store and the history entry, with file names replaced. `print-warden demo --replay demo-a=FILE` plays
   a recording back, and CI replays every recording in `tests/data/recordings/`.

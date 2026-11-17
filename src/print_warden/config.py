@@ -171,6 +171,7 @@ class Config:
     thingiverse_token: str | None = None
     approval_ttl_minutes: float = 15.0
     paused_cancel_minutes: float = 30.0
+    plan_offers: bool = False
     quiet_hours: str | None = None
     alert_cooldown_s: float = 300.0
     quiet_entity: str | None = None
@@ -297,7 +298,7 @@ SCHEMA: dict[str, Any] = {
     "spoolman": {"url": None},
     "intake": {"thingiverse_token_env": None},
     "policy": {
-        "approval_ttl_minutes": None, "paused_cancel_minutes": None,
+        "approval_ttl_minutes": None, "paused_cancel_minutes": None, "plan_offers": None,
         "cheap_power": {"entity": None, "max_price": None, "min_hours": None, "min_kwh": None},
     },
     "alerts": {"quiet_hours": None, "cooldown_s": None, "quiet_entity": None, "quiet_states": None},
@@ -420,6 +421,7 @@ def load(path: str | Path) -> Config:
         or None,
         approval_ttl_minutes=float(pol.get("approval_ttl_minutes", 15)),
         paused_cancel_minutes=float(pol.get("paused_cancel_minutes", 30)),
+        plan_offers=bool(pol.get("plan_offers", False)),
         quiet_hours=(raw.get("alerts") or {}).get("quiet_hours") or None,
         alert_cooldown_s=float((raw.get("alerts") or {}).get("cooldown_s", 300)),
         quiet_entity=(raw.get("alerts") or {}).get("quiet_entity") or None,
