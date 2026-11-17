@@ -1,0 +1,27 @@
+{"kind": "meta", "printer": "demo-a", "klipper": "v0.12.0-sim", "recorded": "2026-11-17T19:59:06+0000"}
+{"kind": "snapshot", "data": {"print_stats": {"state": "standby", "filename": "", "print_duration": 0.0, "total_duration": 0.0, "filament_used": 0.0, "message": "", "info": {"current_layer": null, "total_layer": null}}, "display_status": {"progress": 0.0, "message": null}, "virtual_sdcard": {"progress": 0.0, "is_active": false}, "webhooks": {"state": "ready", "state_message": "Printer is ready"}, "extruder": {"temperature": 22.0, "target": 0.0, "pressure_advance": 0.04}, "heater_bed": {"temperature": 22.0, "target": 0.0}, "toolhead": {"homed_axes": "", "position": [0.0, 0.0, 0.0, 0.0]}, "idle_timeout": {"state": "Idle"}, "gcode_move": {"gcode_position": [0.0, 0.0, 0.0, 0.0]}, "bed_mesh": {"profiles": {"default": {"points": [[0.0, 0.02], [0.01, -0.01]]}}}, "configfile": {"settings": {"printer": {"kinematics": "cartesian", "max_velocity": 300, "max_accel": 3000}, "extruder": {"rotation_distance": 7.71, "nozzle_diameter": 0.4}}, "save_config_pending": false}, "mcu": {"mcu_version": "v0.12.0-sim"}}}
+{"kind": "status", "t": 3.6, "data": {"print_stats": {"state": "printing", "filename": "warden/recorded-1.gcode", "print_duration": 0.0, "filament_used": 0.0, "message": "", "info": {"current_layer": 0, "total_layer": 42}}}}
+{"kind": "status", "t": 3.6, "data": {"virtual_sdcard": {"progress": 0.0, "is_active": true}}}
+{"kind": "status", "t": 3.601, "data": {"idle_timeout": {"state": "Printing"}}}
+{"kind": "status", "t": 3.601, "data": {"heater_bed": {"target": 60.0, "temperature": 60.0}}}
+{"kind": "status", "t": 3.601, "data": {"extruder": {"target": 210.0, "temperature": 210.0}}}
+{"kind": "status", "t": 3.601, "data": {"toolhead": {"homed_axes": "xyz"}}}
+{"kind": "status", "t": 3.601, "data": {"heater_bed": {"target": 60.0, "temperature": 60.0}}}
+{"kind": "status", "t": 3.601, "data": {"extruder": {"target": 210.0, "temperature": 210.0}}}
+{"kind": "status", "t": 3.701, "data": {"print_stats": {"print_duration": 6.0, "total_duration": 0.10030627250671387, "filament_used": 0.0, "info": {"current_layer": 1, "total_layer": 42}}}}
+{"kind": "status", "t": 3.701, "data": {"virtual_sdcard": {"progress": 0.0375}}}
+{"kind": "status", "t": 3.701, "data": {"display_status": {"progress": 0.0375}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [0.0, 0.0, 0.24, 0.0]}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.701, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.802, "data": {"print_stats": {"print_duration": 12.0, "total_duration": 0.20119404792785645, "filament_used": 2.64, "info": {"current_layer": 2, "total_layer": 42}}}}
+{"kind": "status", "t": 3.802, "data": {"virtual_sdcard": {"progress": 0.06}}}
+{"kind": "status", "t": 3.802, "data": {"display_status": {"progress": 0.06}}}
+{"kind": "status", "t": 3.802, "data": {"print_stats": {"message": "Move out of range: 9999.000 100.000 0.000 [0.000]"}}}
+{"kind": "status", "t": 3.802, "data": {"virtual_sdcard": {"is_active": false, "progress": 0.06}}}
+{"kind": "status", "t": 3.802, "data": {"print_stats": {"state": "error", "print_duration": 12.0, "filament_used": 2.64}}}
+{"kind": "gcode_store", "data": [{"message": "G1 X9999 F600", "time": 1794945550.1785192, "type": "command"}, {"message": "!! Move out of range: 9999.000 100.000 0.000 [0.000]", "time": 1794945550.1785243, "type": "response"}]}
+{"kind": "history", "data": [{"job_id": "000001", "filename": "warden/recorded-1.gcode", "status": "error", "start_time": 1794945549.9772475, "end_time": 1794945550.1785421, "print_duration": 12.0, "total_duration": 0.2012946605682373, "filament_used": 2.64}]}

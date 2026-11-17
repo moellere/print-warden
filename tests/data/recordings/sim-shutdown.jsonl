@@ -1,0 +1,140 @@
+{"kind": "meta", "printer": "demo-b", "klipper": "v0.12.0-sim", "recorded": "2026-11-17T19:59:32+0000"}
+{"kind": "snapshot", "data": {"print_stats": {"state": "standby", "filename": "", "print_duration": 0.0, "total_duration": 0.0, "filament_used": 0.0, "message": "", "info": {"current_layer": null, "total_layer": null}}, "display_status": {"progress": 0.0, "message": null}, "virtual_sdcard": {"progress": 0.0, "is_active": false}, "webhooks": {"state": "ready", "state_message": "Printer is ready"}, "extruder": {"temperature": 22.0, "target": 0.0, "pressure_advance": 0.04}, "heater_bed": {"temperature": 22.0, "target": 0.0}, "toolhead": {"homed_axes": "", "position": [0.0, 0.0, 0.0, 0.0]}, "idle_timeout": {"state": "Idle"}, "gcode_move": {"gcode_position": [0.0, 0.0, 0.0, 0.0]}, "bed_mesh": {"profiles": {"default": {"points": [[0.0, 0.02], [0.01, -0.01]]}}}, "configfile": {"settings": {"printer": {"kinematics": "cartesian", "max_velocity": 300, "max_accel": 3000}, "extruder": {"rotation_distance": 7.71, "nozzle_diameter": 0.4}}, "save_config_pending": false}, "mcu": {"mcu_version": "v0.12.0-sim"}}}
+{"kind": "status", "t": 3.534, "data": {"print_stats": {"state": "printing", "filename": "warden/recorded-1.gcode", "print_duration": 0.0, "filament_used": 0.0, "message": "", "info": {"current_layer": 0, "total_layer": 83}}}}
+{"kind": "status", "t": 3.535, "data": {"virtual_sdcard": {"progress": 0.0, "is_active": true}}}
+{"kind": "status", "t": 3.535, "data": {"idle_timeout": {"state": "Printing"}}}
+{"kind": "status", "t": 3.535, "data": {"heater_bed": {"target": 60.0, "temperature": 60.0}}}
+{"kind": "status", "t": 3.535, "data": {"extruder": {"target": 210.0, "temperature": 210.0}}}
+{"kind": "status", "t": 3.535, "data": {"toolhead": {"homed_axes": "xyz"}}}
+{"kind": "status", "t": 3.535, "data": {"heater_bed": {"target": 60.0, "temperature": 60.0}}}
+{"kind": "status", "t": 3.535, "data": {"extruder": {"target": 210.0, "temperature": 210.0}}}
+{"kind": "status", "t": 3.635, "data": {"print_stats": {"print_duration": 6.0, "total_duration": 0.10038065910339355, "filament_used": 0.0, "info": {"current_layer": 1, "total_layer": 83}}}}
+{"kind": "status", "t": 3.635, "data": {"virtual_sdcard": {"progress": 0.0195}}}
+{"kind": "status", "t": 3.635, "data": {"display_status": {"progress": 0.0195}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [0.0, 0.0, 0.24, 0.0]}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.635, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"print_stats": {"print_duration": 12.0, "total_duration": 0.20117759704589844, "filament_used": 2.64, "info": {"current_layer": 2, "total_layer": 83}}}}
+{"kind": "status", "t": 3.736, "data": {"virtual_sdcard": {"progress": 0.0312}}}
+{"kind": "status", "t": 3.736, "data": {"display_status": {"progress": 0.0312}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.48, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.736, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"print_stats": {"print_duration": 18.0, "total_duration": 0.3022892475128174, "filament_used": 5.28, "info": {"current_layer": 3, "total_layer": 83}}}}
+{"kind": "status", "t": 3.837, "data": {"virtual_sdcard": {"progress": 0.043}}}
+{"kind": "status", "t": 3.837, "data": {"display_status": {"progress": 0.043}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.72, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.837, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"print_stats": {"print_duration": 24.0, "total_duration": 0.4033243656158447, "filament_used": 7.92, "info": {"current_layer": 4, "total_layer": 83}}}}
+{"kind": "status", "t": 3.938, "data": {"virtual_sdcard": {"progress": 0.0547}}}
+{"kind": "status", "t": 3.938, "data": {"display_status": {"progress": 0.0547}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.96, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 3.938, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.038, "data": {"print_stats": {"print_duration": 30.0, "total_duration": 0.5037438869476318, "filament_used": 10.56, "info": {"current_layer": 5, "total_layer": 83}}}}
+{"kind": "status", "t": 4.039, "data": {"virtual_sdcard": {"progress": 0.0664}}}
+{"kind": "status", "t": 4.039, "data": {"display_status": {"progress": 0.0664}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 1.2, 0.0]}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.039, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"print_stats": {"print_duration": 36.0, "total_duration": 0.6045060157775879, "filament_used": 13.2, "info": {"current_layer": 6, "total_layer": 83}}}}
+{"kind": "status", "t": 4.139, "data": {"virtual_sdcard": {"progress": 0.0781}}}
+{"kind": "status", "t": 4.139, "data": {"display_status": {"progress": 0.0781}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 1.44, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.139, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"print_stats": {"print_duration": 42.0, "total_duration": 0.7052521705627441, "filament_used": 15.84, "info": {"current_layer": 7, "total_layer": 83}}}}
+{"kind": "status", "t": 4.24, "data": {"virtual_sdcard": {"progress": 0.0898}}}
+{"kind": "status", "t": 4.24, "data": {"display_status": {"progress": 0.0898}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 1.68, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.24, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"print_stats": {"print_duration": 48.0, "total_duration": 0.8058347702026367, "filament_used": 18.48, "info": {"current_layer": 8, "total_layer": 83}}}}
+{"kind": "status", "t": 4.341, "data": {"virtual_sdcard": {"progress": 0.1016}}}
+{"kind": "status", "t": 4.341, "data": {"display_status": {"progress": 0.1016}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 1.92, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.341, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"print_stats": {"print_duration": 54.0, "total_duration": 0.9069139957427979, "filament_used": 21.12, "info": {"current_layer": 9, "total_layer": 83}}}}
+{"kind": "status", "t": 4.442, "data": {"virtual_sdcard": {"progress": 0.1133}}}
+{"kind": "status", "t": 4.442, "data": {"display_status": {"progress": 0.1133}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 2.16, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.442, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"print_stats": {"print_duration": 60.0, "total_duration": 1.0078368186950684, "filament_used": 23.76, "info": {"current_layer": 10, "total_layer": 83}}}}
+{"kind": "status", "t": 4.543, "data": {"virtual_sdcard": {"progress": 0.125}}}
+{"kind": "status", "t": 4.543, "data": {"display_status": {"progress": 0.125}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 2.4, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.543, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"print_stats": {"print_duration": 66.0, "total_duration": 1.1081476211547852, "filament_used": 26.4, "info": {"current_layer": 11, "total_layer": 83}}}}
+{"kind": "status", "t": 4.643, "data": {"virtual_sdcard": {"progress": 0.1367}}}
+{"kind": "status", "t": 4.643, "data": {"display_status": {"progress": 0.1367}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 2.64, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.643, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.743, "data": {"print_stats": {"print_duration": 72.0, "total_duration": 1.2086317539215088, "filament_used": 29.04, "info": {"current_layer": 12, "total_layer": 83}}}}
+{"kind": "status", "t": 4.743, "data": {"virtual_sdcard": {"progress": 0.1484}}}
+{"kind": "status", "t": 4.743, "data": {"display_status": {"progress": 0.1484}}}
+{"kind": "status", "t": 4.743, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 2.88, 0.0]}}}
+{"kind": "status", "t": 4.744, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.744, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.744, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.744, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.744, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"print_stats": {"print_duration": 78.0, "total_duration": 1.3089561462402344, "filament_used": 31.68, "info": {"current_layer": 13, "total_layer": 83}}}}
+{"kind": "status", "t": 4.844, "data": {"virtual_sdcard": {"progress": 0.1602}}}
+{"kind": "status", "t": 4.844, "data": {"display_status": {"progress": 0.1602}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 3.12, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.844, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.945, "data": {"print_stats": {"print_duration": 84.0, "total_duration": 1.4100160598754883, "filament_used": 34.32, "info": {"current_layer": 14, "total_layer": 83}}}}
+{"kind": "status", "t": 4.945, "data": {"virtual_sdcard": {"progress": 0.1719}}}
+{"kind": "status", "t": 4.945, "data": {"display_status": {"progress": 0.1719}}}
+{"kind": "status", "t": 4.945, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 3.36, 0.0]}}}
+{"kind": "status", "t": 4.945, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.945, "data": {"gcode_move": {"gcode_position": [120.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.945, "data": {"gcode_move": {"gcode_position": [120.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.946, "data": {"gcode_move": {"gcode_position": [100.0, 120.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 4.946, "data": {"gcode_move": {"gcode_position": [100.0, 100.0, 0.0, 0.0]}}}
+{"kind": "status", "t": 5.03, "data": {"webhooks": {"state": "shutdown", "state_message": "Shutdown due to M112 command"}}}
+{"kind": "signal", "t": 5.031, "method": "notify_klippy_shutdown"}
+{"kind": "gcode_store", "data": [{"message": "M112", "time": 1794945577.9220653, "type": "command"}, {"message": "!! Shutdown due to M112 command", "time": 1794945577.9220843, "type": "response"}]}
+{"kind": "history", "data": [{"job_id": "000001", "filename": "warden/recorded-1.gcode", "status": "error", "start_time": 1794945576.4262152, "end_time": 1794945577.9394639, "print_duration": 90.0, "total_duration": 1.5132489204406738, "filament_used": 36.96}]}

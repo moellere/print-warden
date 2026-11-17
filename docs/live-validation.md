@@ -31,6 +31,22 @@ nothing: a setup that offers a job still waits for the tap.
 - `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
 - `validate report` prints the table below, filled in, for pasting here.
 
+**A whole printer in one go:** `print-warden validate session --printer garagex4 --by EM` walks every row in
+order and asks each step on the phone.
+- A setup runs only after you tap Go.
+- A checkable row is checked until it passes, with Skip on the phone meanwhile. If it doesn't pass, you get Retry,
+  Fail (with a typed note) or Skip.
+- A row judged by eye is a Pass / Fail / Skip tap.
+- Signed rows and rows with an issue are passed over, so stopping and starting the session again resumes it.
+- `--rows 1-13,39` limits it, and `--terminal` asks at the terminal instead of on the phone.
+- At the end it writes `<storage>/signoff-<printer>-<date>.md`: the filled-in table and each failure with its note
+  and failing checks, ready to paste here or file as issues.
+
+**Record while you validate:** in a second shell, `print-warden record --printer garagex4 --out
+tests/data/recordings/garagex4-fault.jsonl` before row 39. Do the same for row 13 (`-cancel`) and row 25
+(`-shutdown`). Each recording keeps one print as the printer reported it, with the file names replaced. Committed
+under `tests/data/recordings/`, it is replayed in CI on every change (`tests/test_record.py`).
+
 Rehearse first with `print-warden demo`, which runs the warden against simulated printers:
 1. Run it with `PRINT_WARDEN_TOKEN=demo print-warden validate --config print-warden-demo/printers.yaml <row>
    --printer demo-a --setup`.
@@ -196,6 +212,12 @@ warden's side of each row, so on the printers only the hardware's side is left.
     on the phone with the week's prints, failures and what is due (the same as `weekly_digest`), and no second one
     an hour later. With away mode, set the person away before the time: nothing arrives until you are back.
 
+## 17. The week's plan
+
+46. With `policy.plan_offers: true`, a `finish_window` and quiet hours set, queue a job in the evening long enough
+    to finish outside the window. Expect: `plan_week` and `/status` put it at the first morning slot, no offer
+    arrives overnight, and the offer arrives at that slot.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -246,3 +268,4 @@ warden's side of each row, so on the printers only the hardware's side is left.
 | 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
 | 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
 | 45 | Weekly digest arrives once; held while away | | |
+| 46 | The plan holds an evening job and offers it at its morning slot | | |

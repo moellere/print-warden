@@ -1366,3 +1366,66 @@ async def test_weekly_digest_is_sent_once_a_week_and_held_while_away(monkeypatch
     assert len(sent) == 2
     d = await server.weekly_digest()
     assert d["message"] == digest.message(d)[1]
+
+
+async def test_ask_operator_records_the_tap(monkeypatch):
+    sent = []
+
+    async def notify(title, message, actions, image=None, tag=None, **kw):
+        sent.append(actions)
+        return True
+
+    async def clear(tag):
+        return True
+
+    monkeypatch.setattr(server.HA, "notify_actionable", notify)
+    monkeypatch.setattr(server.HA, "clear_notification", clear)
+    with pytest.raises(ValueError):
+        await server.ask_operator("t", "m", [])
+    res = await server.ask_operator(
+        "Row 9", "Pass?", ["Pass", "Fail", "Skip"], note_choice="Fail"
+    )
+    pid = res["prompt_id"]
+    assert res["sent"] and sent[0][1] == (
+        f"PRINT_WARDEN_VALIDATE_{pid}:1",
+        "Fail",
+        "textInput",
+    )
+    assert server.operator_answer(pid)["answered"] is False
+    await server._on_ha_action(f"PRINT_WARDEN_VALIDATE_{pid}:9", {})
+    assert server.operator_answer(pid)["answered"] is False  # no such button
+    await server._on_ha_action(
+        f"PRINT_WARDEN_VALIDATE_{pid}:1", {"reply_text": " blew a fuse "}
+    )
+    got = server.operator_answer(pid)
+    assert (got["choice"], got["note"]) == ("Fail", "blew a fuse")
+
+
+async def test_plan_offers_hold_the_offer_until_its_slot(
+    monkeypatch, clean_queues, ready, phone
+):
+    import dataclasses
+    from datetime import datetime, timedelta
+
+    now = datetime.now().astimezone()
+    quiet = f"{now - timedelta(hours=1):%H:%M}-{now + timedelta(hours=2):%H:%M}"
+
+    monkeypatch.setattr(
+        server,
+        "CFG",
+        dataclasses.replace(server.CFG, plan_offers=True, quiet_hours=quiet),
+    )
+    job = _queued(est_seconds=600)
+    res = await server.advance_queue("testp")
+    assert res["action"] == "none" and res["why"].startswith("planned for ")
+    assert "quiet hours" in res["why"]
+    assert server.JOBS.get(job["id"])["state"] == "staged"
+    hold = float(server.JOBS.kv_get("plan_hold:testp"))
+    assert await server.release_planned(hold - 1) == []
+    monkeypatch.setattr(
+        server, "CFG", dataclasses.replace(server.CFG, plan_offers=False)
+    )
+    assert await server.release_planned(hold + 1) == ["testp"]
+    assert server.JOBS.get(job["id"])["state"] == "awaiting_approval"
+    week = server.plan_week()
+    assert week["printers"]["testp"][0]["waits"] == "offered: waiting for the tap"

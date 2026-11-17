@@ -115,7 +115,12 @@ def write(
 
 
 async def serve(
-    root: Path, port: int, sim_port: int, speed: float, pause_cancel_min: float
+    root: Path,
+    port: int,
+    sim_port: int,
+    speed: float,
+    pause_cancel_min: float,
+    replays: dict[str, Path] | None = None,
 ) -> None:
     path = write(root, port, sim_port, speed, pause_cancel_min)
     os.environ["PRINT_WARDEN_CONFIG"] = str(path)
@@ -128,7 +133,16 @@ async def serve(
     for noisy in ("httpx", "mcp"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    printers = {n: sim.SimPrinter(n, speed=speed) for n in PRINTERS}
+    from .record import load
+
+    printers = {
+        n: sim.SimPrinter(
+            n,
+            speed=speed,
+            replay=load(replays[n]) if replays and n in replays else None,
+        )
+        for n in PRINTERS
+    }
     ha = sim.SimHA()
     token = os.environ["PRINT_WARDEN_TOKEN"]
     sim_server = uvicorn.Server(
@@ -197,9 +211,24 @@ def main(argv: list[str]) -> int:
         default=2.0,
         help="policy.paused_cancel_minutes (real minutes)",
     )
+    ap.add_argument(
+        "--replay",
+        action="append",
+        default=[],
+        metavar="PRINTER=FILE",
+        help="play a recording (print-warden record) on that simulated printer whenever it prints",
+    )
     args = ap.parse_args(argv)
     if args.speed <= 0:
         ap.error("--speed must be above 0")
+    replays: dict[str, Path] = {}
+    for item in args.replay:
+        name, _, file = item.partition("=")
+        if name not in PRINTERS or not file:
+            ap.error(
+                f"--replay {item!r}: PRINTER=FILE, PRINTER one of {', '.join(PRINTERS)}"
+            )
+        replays[name] = Path(file)
     try:
         asyncio.run(
             serve(
@@ -208,6 +237,7 @@ def main(argv: list[str]) -> int:
                 args.sim_port,
                 args.speed,
                 args.pause_cancel_minutes,
+                replays,
             )
         )
     except KeyboardInterrupt:

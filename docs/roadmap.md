@@ -388,3 +388,50 @@ Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-o
   away and sent on return. The same numbers appear on `/status` ("This week") and from the `weekly_digest` tool.
 
 Done when: a configured digest arrives once a week with the week's numbers, and waits while nobody is home.
+
+## Phase 34 — Guided sign-off ✅ (build)
+
+- ✅ `print-warden validate session --printer P --by EM` walks the runbook in order and asks each step on the
+  phone (`ask_operator` / `operator_answer`, buttons that only record a tap).
+  - A setup runs on Go.
+  - A checkable row is polled until it passes (Skip meanwhile), and a failing one gets Retry / Fail with a note /
+    Skip.
+  - A row judged by eye is a Pass / Fail / Skip tap.
+- ✅ It resumes, passing over signed rows. `--rows` limits it and `--terminal` asks at the terminal.
+- ✅ It writes `<storage>/signoff-<printer>-<date>.md` with the table and each failure's note and checks. The PR
+  that carries it is made from chat, since the warden has no GitHub access.
+
+Done when: one printer's whole runbook can be signed in one session with the phone alone.
+
+## Phase 35 — Record and replay ✅ (build)
+
+- ✅ `print-warden record --printer P` subscribes to the printer's Moonraker as the warden does (read-only) and
+  writes one print as JSON lines:
+  - the snapshot, every status update and Klipper signal with its time;
+  - then the gcode store and the history entry;
+  - file names replaced with `recorded-<n>.gcode`.
+- ✅ The simulator replays a recording whenever a print starts (`sim.SimPrinter(replay=...)`,
+  `print-warden demo --replay demo-a=FILE`).
+- ✅ `tests/test_record.py` replays every file in `tests/data/recordings/` to its recorded end. Under the real warden,
+  the fault recording's diagnosis comes from the recorded gcode store, and the shutdown recording's from its
+  message.
+- The two recordings there now come from the simulator, so they prove the path, not Klipper. A replayed shutdown
+  leaves the job printing, because the recording stops at Klipper's signal. What the printer reports after a shutdown,
+  and whether the warden then settles the job, is the first thing a real recording will show.
+
+Done when: CI replays at least one real error print and one real shutdown from each printer.
+
+## Phase 36 — The week's plan ✅ (build)
+
+- ✅ `plan.py`: each printer is a lane that is free after its current print plus a bed-clearing gap. Its queued
+  jobs take, in order, the first 15-minute slot whose finish falls in its `finish_window` and whose start is outside
+  quiet hours (`auto_start_hours` for an `auto_start` printer). The plan is pure and deterministic.
+- ✅ `plan_week` and the Plan card on `/status` show "what prints when" and what each job waits for.
+- ✅ `policy.plan_offers: true` holds the head of a queue until its slot and offers it then (checked every minute).
+  It is off by default, so the plan only informs until it is turned on. A job with no slot in a week is offered as
+  before, and nothing starts without a tap or `auto_start`.
+- Cheap power is still the hourly price check before an offer; planning around a price forecast waits for a
+  forecast source.
+
+Done when: a mixed queue across both printers gets a plan that respects every window and is offered on time
+(runbook row 46).

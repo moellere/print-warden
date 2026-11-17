@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- The week's plan: `plan_week` and a Plan card on `/status` say when each queued job would start and finish, after
+  the current print and a bed-clearing gap. Each job gets the first slot whose finish falls in the printer's
+  `finish_window` and whose start is outside quiet hours. `policy.plan_offers: true` (off by default) holds each
+  offer until its slot. Runbook row 46 checks it.
+- `print-warden record --printer P` keeps one print as the printer reported it: status updates, Klipper signals,
+  the gcode store and the history entry, with file names replaced. `print-warden demo --replay demo-a=FILE` plays
+  a recording back, and CI replays every recording in `tests/data/recordings/`.
+- `print-warden validate session --printer P --by EM` runs the whole runbook from the phone:
+  - each row's setup runs on a Go tap, and each checkable row is checked until it passes;
+  - a failing row offers Retry, Fail with a typed note, or Skip;
+  - a row judged by eye is a Pass / Fail / Skip tap.
+  It resumes where it stopped and writes `<storage>/signoff-<printer>-<date>.md`. Two new MCP tools,
+  `ask_operator` and `operator_answer`, carry the questions; a tap on them only records the answer.
+
 ## 0.10.0
 
 Rehearsal mode, the 1.0 contract and a weekly digest since 0.9.0. **Upgrade notes:** no config changes are needed.

@@ -68,6 +68,8 @@ class SimPrinter:
     store: list[dict[str, Any]] = field(default_factory=list)
     clients: set[asyncio.Queue[dict[str, Any]]] = field(default_factory=set)
     state: dict[str, Any] = field(default_factory=dict)
+    replay: list[dict[str, Any]] | None = None
+    """A recording (`print-warden record`): any started print plays it back instead of the file."""
     part_on_bed: bool = False
     _task: asyncio.Task[None] | None = None
     _resume: asyncio.Event = field(default_factory=asyncio.Event)
@@ -190,7 +192,8 @@ class SimPrinter:
             raise ValueError("Klipper is not ready")
         self._stop = None
         self._resume.set()
-        self._task = asyncio.get_running_loop().create_task(self._play(filename))
+        play = self._replay(filename) if self.replay else self._play(filename)
+        self._task = asyncio.get_running_loop().create_task(play)
 
     def pause(self) -> None:
         if self.state["print_stats"]["state"] == "printing":
@@ -208,6 +211,63 @@ class SimPrinter:
         if self.printing:
             self._stop = "cancelled"
             self._resume.set()
+
+    async def _replay(self, filename: str) -> None:
+        """The recording's status updates and signals in their own time (`speed` times faster, gaps over two
+        seconds shortened), its file name swapped for this print's, then its gcode store and history entry."""
+        events = self.replay or []
+        recorded = ""
+        for e in events:
+            fn = (
+                ((e.get("data") or {}).get("print_stats") or {}).get("filename")
+                if e["kind"] in ("snapshot", "status")
+                else None
+            )
+            if fn:
+                recorded = fn
+                break
+        base = recorded.rsplit("/", 1)[-1]
+
+        def fix(objs: dict[str, Any]) -> dict[str, Any]:
+            out = json.loads(json.dumps(objs))
+            if isinstance(out.get("print_stats"), dict) and out["print_stats"].get(
+                "filename"
+            ):
+                out["print_stats"]["filename"] = filename
+            return out
+
+        last = 0.0
+        for e in events:
+            if e["kind"] == "status":
+                await asyncio.sleep(min(2.0, max(0.0, e["t"] - last) / self.speed))
+                last = e["t"]
+                changed = fix(e["data"])
+                for obj, fields in changed.items():
+                    if isinstance(fields, dict):
+                        self.state.setdefault(obj, {}).update(fields)
+                if (changed.get("print_stats") or {}).get("state") == "printing":
+                    self.part_on_bed = True
+                self._push(changed)
+            elif e["kind"] == "signal":
+                self._signal(e["method"])
+            elif e["kind"] == "gcode_store":
+                self.store = (
+                    [
+                        {
+                            **g,
+                            "message": str(g.get("message", "")).replace(
+                                base, filename.rsplit("/", 1)[-1]
+                            ),
+                        }
+                        for g in e["data"]
+                    ]
+                    if base
+                    else list(e["data"])
+                )
+            elif e["kind"] == "history":
+                self.history[:0] = [{**h, "filename": filename} for h in e["data"]]
+        self._resume.set()
+        self._task = None
 
     async def _play(self, filename: str) -> None:
         lines = self.files[filename].splitlines()
