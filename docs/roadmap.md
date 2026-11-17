@@ -402,3 +402,21 @@ Done when: a configured digest arrives once a week with the week's numbers, and 
   that carries it is made from chat, since the warden has no GitHub access.
 
 Done when: one printer's whole runbook can be signed in one session with the phone alone.
+
+## Phase 35 — Record and replay ✅ (build)
+
+- ✅ `print-warden record --printer P` subscribes to the printer's Moonraker as the warden does (read-only) and
+  writes one print as JSON lines:
+  - the snapshot, every status update and Klipper signal with its time;
+  - then the gcode store and the history entry;
+  - file names replaced with `recorded-<n>.gcode`.
+- ✅ The simulator replays a recording whenever a print starts (`sim.SimPrinter(replay=...)`,
+  `print-warden demo --replay demo-a=FILE`).
+- ✅ `tests/test_record.py` replays every file in `tests/data/recordings/` to its recorded end. Under the real warden,
+  the fault recording's diagnosis comes from the recorded gcode store, and the shutdown recording's from its
+  message.
+- The two recordings there now come from the simulator, so they prove the path, not Klipper. A replayed shutdown
+  leaves the job printing, because the recording stops at Klipper's signal. What the printer reports after a shutdown,
+  and whether the warden then settles the job, is the first thing a real recording will show.
+
+Done when: CI replays at least one real error print and one real shutdown from each printer.

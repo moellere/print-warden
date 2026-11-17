@@ -11,6 +11,7 @@ VERBS = {
     "demo": "run the warden against simulated printers",
     "backup": "write the warden's state to one archive",
     "restore": "put a backup's state back",
+    "record": "record one print as a printer reports it, for the simulator to replay",
 }
 
 
@@ -33,6 +34,10 @@ def main() -> None:
         from . import demo
 
         sys.exit(demo.main(rest))
+    if verb == "record":
+        from . import record
+
+        sys.exit(record.main(rest))
     if verb in ("backup", "restore"):
         from . import backup
 

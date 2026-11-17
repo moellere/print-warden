@@ -42,6 +42,11 @@ order and asks each step on the phone.
 - At the end it writes `<storage>/signoff-<printer>-<date>.md`: the filled-in table and each failure with its note
   and failing checks, ready to paste here or file as issues.
 
+**Record while you validate:** in a second shell, `print-warden record --printer garagex4 --out
+tests/data/recordings/garagex4-fault.jsonl` before row 39. Do the same for row 13 (`-cancel`) and row 25
+(`-shutdown`). Each recording keeps one print as the printer reported it, with the file names replaced. Committed
+under `tests/data/recordings/`, it is replayed in CI on every change (`tests/test_record.py`).
+
 Rehearse first with `print-warden demo`, which runs the warden against simulated printers:
 1. Run it with `PRINT_WARDEN_TOKEN=demo print-warden validate --config print-warden-demo/printers.yaml <row>
    --printer demo-a --setup`.

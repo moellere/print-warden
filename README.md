@@ -349,7 +349,9 @@ history and a console.
 - The warden is on its usual port, with token `demo`.
 - Prints run 12 times faster than real time (`--speed`).
 
-`print-warden validate --config print-warden-demo/printers.yaml …` rehearses the runbook against it. CI runs
+`print-warden validate --config print-warden-demo/printers.yaml …` rehearses the runbook against it.
+`print-warden record --printer P` saves one real print as the printer reported it. The demo replays such a
+recording with `--replay demo-a=FILE`, and CI replays every recording in `tests/data/recordings/`. CI runs
 15 rows of the runbook end to end against the demo on every change (`tests/test_demo_e2e.py`).
 
 After a deploy that changes behaviour, run the live-validation runbook (`docs/live-validation.md`) with
@@ -436,6 +438,7 @@ src/print_warden/
   sim.py        simulated Moonraker, Home Assistant, cameras and slicer for the demo and the end-to-end test
   demo.py       `print-warden demo`: the warden against two simulated printers
   backup.py     `print-warden backup` / `restore`
+  record.py     `print-warden record`: one real print, recorded for the simulator to replay
   digest.py     the weekly digest: the week's prints and what is due
   server.py     MCP tools + HTTP routes (/upload, /status, /stage, /obico/webhook, /ha/action, /files, /healthz)
 ```

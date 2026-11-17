@@ -5,6 +5,7 @@ own setup and checks, and the operator's taps go through the simulated phone.
 """
 
 import asyncio
+import contextlib
 import os
 import socket
 import subprocess
@@ -25,40 +26,48 @@ def _port() -> int:
         return int(s.getsockname()[1])
 
 
-@pytest.fixture(scope="module")
-def demo(tmp_path_factory):
-    root = tmp_path_factory.mktemp("demo")
+@contextlib.contextmanager
+def running_demo(root, *extra):
+    """A demo in a subprocess (its log in `root/demo.log`); yields (root, port, sim_port)."""
     port, sim_port = _port(), _port()
     env = {**os.environ, "PRINT_WARDEN_TOKEN": "demo"}
+    log = (root / "demo.log").open("wb")
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "print_warden.demo", "--dir", str(root), "--port", str(port),
-            "--sim-port", str(sim_port), "--speed", "120", "--pause-cancel-minutes", "0.05",
+            "--sim-port", str(sim_port), "--speed", "120", "--pause-cancel-minutes", "0.05", *extra,
         ],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        env=env, stdout=log, stderr=subprocess.STDOUT,
     )  # fmt: skip
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        try:
-            if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1).json()["ok"]:
-                break
-        except (httpx.HTTPError, ValueError, KeyError):
-            pass
-        if proc.poll() is not None:
-            break
-        time.sleep(0.3)
-    else:
-        proc.kill()
-    if proc.poll() is not None:
-        pytest.fail(
-            "demo did not start:\n" + proc.stdout.read().decode(errors="ignore")
-        )
-    yield root, port, sim_port
-    proc.terminate()
     try:
-        proc.wait(10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and proc.poll() is None:
+            try:
+                if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1).json()[
+                    "ok"
+                ]:
+                    break
+            except (httpx.HTTPError, ValueError, KeyError):
+                pass
+            time.sleep(0.3)
+        else:
+            pytest.fail(
+                "demo did not start:\n" + (root / "demo.log").read_text(errors="ignore")
+            )
+        yield root, port, sim_port
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log.close()
+
+
+@pytest.fixture(scope="module")
+def demo(tmp_path_factory):
+    with running_demo(tmp_path_factory.mktemp("demo")) as d:
+        yield d
 
 
 class Phone:

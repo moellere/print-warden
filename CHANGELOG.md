@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `print-warden record --printer P` keeps one print as the printer reported it: status updates, Klipper signals,
+  the gcode store and the history entry, with file names replaced. `print-warden demo --replay demo-a=FILE` plays
+  a recording back, and CI replays every recording in `tests/data/recordings/`.
 - `print-warden validate session --printer P --by EM` runs the whole runbook from the phone:
   - each row's setup runs on a Go tap, and each checkable row is checked until it passes;
   - a failing row offers Retry, Fail with a typed note, or Skip;

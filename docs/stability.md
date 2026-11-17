@@ -36,6 +36,7 @@ the next major version. Before 1.0 (now), the CHANGELOG's upgrade notes say what
 | `demo` | run the warden against simulated printers |
 | `backup` | write the warden's state to one archive |
 | `restore` | put a backup's state back |
+| `record` | record one print as a printer reports it, for the simulator to replay |
 
 Each verb's flags are stable as documented in its `--help`; output text is internal.
 
@@ -218,4 +219,5 @@ database is upgraded in place when it opens.
 ## Internal
 
 Python modules and their functions, the database schemas, log text, notification and page wording, `sim.py` and
-`demo.py`'s simulation (`slicer.orca: sim` is stable as a config value, the gcode it writes is not).
+`demo.py`'s simulation (`slicer.orca: sim` is stable as a config value, the gcode it writes is not), and the
+recording format of `print-warden record` (a recording is replayed by the same version that made it).
