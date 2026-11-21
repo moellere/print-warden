@@ -16,6 +16,18 @@ from .upkeep import Interval, parse_maintenance
 
 
 @dataclass(frozen=True)
+class OAuthConfig:
+    issuer: str
+    resource: str
+    audience: str
+    jwks_url: str | None = None
+    scopes: tuple[str, ...] = ("openid", "profile")
+    groups_claim: str = "groups"
+    operator_groups: tuple[str, ...] = ()
+    queue_groups: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Rules:
     heater_deviation_c: float = 8.0
     heater_deviation_s: float = 90.0
@@ -168,6 +180,7 @@ class Config:
     slicer: SlicerConfig = SlicerConfig()
     spoolman_url: str | None = None
     api_token: str | None = None
+    oauth: OAuthConfig | None = None
     thingiverse_token: str | None = None
     approval_ttl_minutes: float = 15.0
     paused_cancel_minutes: float = 30.0
@@ -195,6 +208,28 @@ def _digest(raw: dict[str, Any] | None) -> Digest | None:
     ):
         raise ValueError(f"digest.at must be HH:MM, got {at!r}")
     return Digest(day=day_index(str(raw.get("day", "sunday"))), at=at)
+
+
+def _oauth(raw: dict[str, Any] | None) -> OAuthConfig | None:
+    if not raw:
+        return None
+    missing = [k for k in ("issuer", "resource", "audience") if not raw.get(k)]
+    if missing:
+        raise ValueError(f"server.oauth needs {', '.join(missing)}")
+    if not (raw.get("operator_groups") or raw.get("queue_groups")):
+        raise ValueError(
+            "server.oauth needs operator_groups or queue_groups, or nobody could sign in"
+        )
+    return OAuthConfig(
+        issuer=str(raw["issuer"]),
+        resource=str(raw["resource"]).rstrip("/"),
+        audience=str(raw["audience"]),
+        jwks_url=raw.get("jwks_url"),
+        scopes=tuple(raw.get("scopes") or ("openid", "profile")),
+        groups_claim=str(raw.get("groups_claim") or "groups"),
+        operator_groups=tuple(raw.get("operator_groups") or ()),
+        queue_groups=tuple(raw.get("queue_groups") or ()),
+    )
 
 
 def _mqtt(raw: dict[str, Any] | None) -> Mqtt | None:
@@ -293,7 +328,13 @@ SCHEMA: dict[str, Any] = {
     },
     "obico": {"url": None, "webhook_secret_env": None},
     "storage": {"dir": None, "keep_days": None},
-    "server": {"host": None, "port": None, "public_url": None, "token_env": None},
+    "server": {
+        "host": None, "port": None, "public_url": None, "token_env": None,
+        "oauth": {
+            "issuer": None, "resource": None, "audience": None, "jwks_url": None, "scopes": None,
+            "groups_claim": None, "operator_groups": None, "queue_groups": None,
+        },
+    },
     "slicer": {f.name: None for f in fields(SlicerConfig)},
     "spoolman": {"url": None},
     "intake": {"thingiverse_token_env": None},
@@ -415,6 +456,7 @@ def load(path: str | Path) -> Config:
         ),
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
         api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
+        oauth=_oauth(sv.get("oauth")),
         thingiverse_token=os.environ.get(
             (raw.get("intake") or {}).get("thingiverse_token_env", "THINGIVERSE_TOKEN")
         )

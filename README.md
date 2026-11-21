@@ -390,6 +390,11 @@ Access:
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
 | `/healthz` | open |
 
+**Remote access (optional).** To let other people use the warden from a hosted Claude app, publish `/mcp` on a public
+HTTPS hostname and set `server.oauth`. Remote requests then need a sign-in with your identity provider, and each
+account's group decides whether it is an operator (every tool) or can only look and queue prints. Requests from the
+local network work as before. See `docs/operations.md`, "Remote access".
+
 `/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
 progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
 dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
