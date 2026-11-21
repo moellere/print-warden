@@ -23,6 +23,8 @@ the next major version. Before 1.0 (now), the CHANGELOG's upgrade notes say what
 - The deterministic start policy (`policy.can_start`) decides every start; no model takes part in a decision.
 - Cancelling or resuming a running print is a human's tap on a warden notification. The one automatic cancel is a
   pause left unanswered past `policy.paused_cancel_minutes`.
+- A remote caller in the queue role cannot start a print, waive a slice check, say the bed is clear or change
+  stock: those tools are neither listed for it nor callable by it.
 - Secrets come from the environment, never from the config file or storage.
 
 ## CLI verbs (stable)
@@ -112,8 +114,15 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `/obico/webhook` | Obico's webhook |
 | `/ha/action` | notification taps posted by Home Assistant |
 | `/files/snapshots`, `/files/timelapse`, `/files/jobs` | snapshots, timelapses and job artifacts |
+| `/.well-known/oauth-protected-resource` | RFC 9728 metadata, served to remote requests when `server.oauth` is set |
 
 The pages' HTML is internal; their URLs and the token rule are stable.
+
+With `server.oauth` set, a remote request (one for the public hostname, or one a reverse proxy forwarded) reaches
+only `/mcp` and the metadata route, and only with a bearer token from the configured issuer. The token's groups pick
+the role: operator groups get every tool; queue groups get the read tools and the tools that queue a job
+(`remote.QUEUE_TOOLS`). The rule and the two roles are stable; a tool may be added to the queue role in a minor
+release, and one is removed only under the deprecation policy.
 
 ## `/healthz` (stable, api 1)
 

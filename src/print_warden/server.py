@@ -66,6 +66,7 @@ from .events import Event, EventStore
 from .ha import HAClient, obico_event_to_alert
 from .ha_events import watch_notification_actions
 from .jobs import JobStore
+from .remote import RemoteGate, install_tool_gate
 from .spoolman import Spoolman
 from .watcher import PrinterWatcher
 
@@ -3421,7 +3422,10 @@ app = Starlette(
     ],
     lifespan=lifespan,
 )
-asgi = TokenAuth(app, CFG.api_token)
+install_tool_gate(mcp)
+asgi: ASGIApp = TokenAuth(app, CFG.api_token)
+if CFG.oauth:
+    asgi = RemoteGate(asgi, app, CFG.oauth)
 
 
 def main() -> None:

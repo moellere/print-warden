@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Remote access over OAuth (`server.oauth`): a request for the public hostname reaches only `/mcp`, needs a bearer
+  token from your identity provider, and gets a role from the token's groups. Operators have every tool; the queue
+  role can look and queue but not start. Local requests are unchanged. See `docs/operations.md`, "Remote access".
 - The week's plan: `plan_week` and a Plan card on `/status` say when each queued job would start and finish, after
   the current print and a bed-clearing gap. Each job gets the first slot whose finish falls in the printer's
   `finish_window` and whose start is outside quiet hours. `policy.plan_offers: true` (off by default) holds each

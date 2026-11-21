@@ -16,6 +16,46 @@ To run a released image instead of building, replace `build: .` in `compose.yml`
 MCP clients connect to `http://<host>:8710/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
 `?token=...` for clients that only take a URL.
 
+## Remote access
+
+Hosted MCP clients (the Claude apps, for one) connect from the vendor's servers, so they need a public HTTPS URL
+and OAuth. The warden does not run an authorization server; it checks tokens from one you already have.
+
+1. **Identity provider.** Create an OAuth2/OIDC application (authorization code + PKCE) whose access tokens are
+   JWTs signed with RS256 or ES256 and carry the user's groups. Allow the client's redirect URI (for Claude:
+   `https://claude.ai/api/mcp/auth_callback`). Put each person in an operator group or a queue group.
+2. **Public hostname.** Route a hostname on port 443 to the warden (a tunnel or reverse proxy). Everything may be
+   routed: for that hostname the warden serves only `/mcp` and `/.well-known/oauth-protected-resource`.
+3. **Config.**
+
+   ```yaml
+   server:
+     oauth:
+       issuer: https://id.example.com/application/o/print-warden/
+       resource: https://prints.example.com/mcp
+       audience: the-oauth-client-id
+       operator_groups: [print-operators]
+       queue_groups: [print-family]
+   ```
+
+   `issuer` and `audience` must equal the token's `iss` and `aud`. `jwks_url` is read from the issuer's
+   `/.well-known/openid-configuration` unless set. `scopes` (default `openid`, `profile`) is what clients are told
+   to ask for, and `groups_claim` (default `groups`) is where the token lists groups.
+4. **Client.** Add `resource` as a custom connector. If the provider cannot register clients by itself, enter the
+   client ID (and secret, if it issued one) by hand.
+
+What a remote caller gets:
+
+| Role | Tools |
+|---|---|
+| operator | all of them |
+| queue | the read tools, `submit_job`, `submit_split`, `submit_batch`, `save_batch`, `queue_saved_batch`, `reprint`, `request_start`, `offer_next` |
+
+A queue-role caller can ask for a start (`request_start` puts the Start button on the operator's phone) but cannot
+start one, waive blockers, clear the bed or edit spools. Each remote tool call is logged with the account's name.
+An account in neither group is refused with 403. Remote callers cannot upload a file; they print from a model page
+or a URL.
+
 ## First-run checklist
 
 `print-warden check [printers.yaml]` resolves every Orca profile and asks Moonraker, the cameras, Home Assistant
