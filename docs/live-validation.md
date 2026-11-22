@@ -220,6 +220,13 @@ warden's side of each row, so on the printers only the hardware's side is left.
     to finish outside the window. Expect: `plan_week` and `/status` put it at the first morning slot, no offer
     arrives overnight, and the offer arrives at that slot.
 
+## 18. Inbox
+
+47. With `PRINT_WARDEN_OPERATOR_PASSWORD` set, offer a job and swipe the notification away. Open `/inbox` on the
+    phone or a laptop: it sends you to sign in, then shows the Start offer. Press Start. Expect: the print starts,
+    its log says "the web inbox", and the prompt is gone from both the inbox and the phone. Then sign out and open
+    `/inbox?token=<PRINT_WARDEN_TOKEN>`: it sends you to sign in rather than showing the buttons.
+
 ## Sign-off
 
 | # | Row | garagex4 | wyolax1 |
@@ -271,3 +278,4 @@ warden's side of each row, so on the printers only the hardware's side is left.
 | 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
 | 45 | Weekly digest arrives once; held while away | | |
 | 46 | The plan holds an evening job and offers it at its morning slot | | |
+| 47 | A swiped-away Start answered from /inbox; the token alone is refused | | |

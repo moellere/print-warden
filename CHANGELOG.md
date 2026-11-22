@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `/inbox`: every prompt still waiting for you, with the phone's buttons, in a browser. A notification swiped away
+  by accident stays answerable there; answering on either side removes it from both. An expired Start offer, or a
+  job left waiting with no offer, gets **Offer again**. Tapping a notification's body opens the inbox.
+- Sign in from a browser: with `PRINT_WARDEN_OPERATOR_PASSWORD` set, `/status`, `/stage`, `/spools` and `/inbox`
+  ask for that password once per browser (30-day cookie) instead of needing the token in the URL. The inbox's
+  buttons need the sign-in; the API token, which MCP clients hold, never presses them.
+- New notification verb `REOFFER` (Offer again).
+- A first-layer or pause prompt is withdrawn from the phone once its print has ended, instead of lingering with a
+  Cancel button that would be refused.
+
 ## 0.12.0
 
 Since 0.11.0: power-price planning, guided printer setup, and a Bed cleared button on `/status`.

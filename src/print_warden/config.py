@@ -183,6 +183,8 @@ class Config:
     slicer: SlicerConfig = SlicerConfig()
     spoolman_url: str | None = None
     api_token: str | None = None
+    operator_password: str | None = None
+    """Signs a person in to `/status`, `/stage`, `/spools` and `/inbox`; never given to MCP clients."""
     oauth: OAuthConfig | None = None
     thingiverse_token: str | None = None
     approval_ttl_minutes: float = 15.0
@@ -332,7 +334,7 @@ SCHEMA: dict[str, Any] = {
     "obico": {"url": None, "webhook_secret_env": None},
     "storage": {"dir": None, "keep_days": None},
     "server": {
-        "host": None, "port": None, "public_url": None, "token_env": None,
+        "host": None, "port": None, "public_url": None, "token_env": None, "operator_password_env": None,
         "oauth": {
             "issuer": None, "resource": None, "audience": None, "jwks_url": None, "scopes": None,
             "groups_claim": None, "operator_groups": None, "queue_groups": None,
@@ -462,6 +464,10 @@ def load(path: str | Path) -> Config:
         ),
         spoolman_url=((raw.get("spoolman") or {}).get("url") or "").rstrip("/") or None,
         api_token=os.environ.get(sv.get("token_env", "PRINT_WARDEN_TOKEN")) or None,
+        operator_password=os.environ.get(
+            sv.get("operator_password_env", "PRINT_WARDEN_OPERATOR_PASSWORD")
+        )
+        or None,
         oauth=_oauth(sv.get("oauth")),
         thingiverse_token=os.environ.get(
             (raw.get("intake") or {}).get("thingiverse_token_env", "THINGIVERSE_TOKEN")

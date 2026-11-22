@@ -80,6 +80,7 @@ TITLES = {
     44: "Reorder on the HA to-do list and off again; the spool scale weighs",
     45: "Weekly digest arrives once; held while away",
     46: "The plan holds an evening job and offers it at its morning slot",
+    47: "A swiped-away Start answered from /inbox; the token alone is refused",
 }
 CUBE = "validate_cube.stl"
 OVERSIZED = "validate_oversized.stl"
@@ -893,6 +894,10 @@ ROWS: dict[int, Row] = {
     ),
     46: Row(
         ask="Queue a long job in the evening with plan_offers on; check plan_week, then wait for the morning offer."
+    ),
+    47: Row(
+        ask="Swipe a Start offer away on the phone, sign in at /inbox and press Start there; then try /inbox?token=.",
+        every_printer=True,
     ),
 }
 

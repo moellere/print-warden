@@ -245,7 +245,7 @@ def test_sign_listing_and_report(cfg, capsys):
     capsys.readouterr()
     assert validate.main([]) == 0
     listing = capsys.readouterr().out
-    assert "2 of 94 signed or with an issue" in listing
+    assert "2 of 96 signed or with an issue" in listing
     assert validate.main(["report"]) == 0
     rep = capsys.readouterr().out
     day = time.strftime("%Y-%m-%d")
@@ -382,4 +382,4 @@ async def test_an_assisted_row_passes_when_its_check_does(cfg, results):
 def test_rows_spec():
     assert validate._rows("1-3,12") == [1, 2, 3, 12]
     assert validate._rows(None) == list(validate.TITLES)
-    assert validate._rows("44-99") == [44, 45, 46]
+    assert validate._rows("44-99") == [44, 45, 46, 47]

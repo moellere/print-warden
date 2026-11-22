@@ -11,7 +11,7 @@ alerts fanned out through one Home Assistant webhook. Exposes an MCP server (Str
 | Action | Who decides |
 |---|---|
 | Slice, stage gcode, snapshots, alerts, work light | the warden, automatically |
-| Mark the bed clear | the operator: the "Bed cleared" phone button, or quoted chat permission (`mark_bed_clear`) |
+| Mark the bed clear | the operator: the "Bed cleared" phone button (or `/inbox`, `/status`), or quoted chat permission (`mark_bed_clear`) |
 | Start a print | the operator: a phone tap (`request_start`) or quoted chat permission (`start_print`), and `policy.can_start` must pass |
 | Start without a tap | the warden, only on an `auto_start` printer whose bed a human cleared, whose bed check agrees now and has a clean record, inside `auto_start_hours`, and (with `presence`) while someone is home |
 | Pause on detected failure | Obico |
@@ -362,6 +362,7 @@ when it is set, and with `--sites` that Printables still answers the warden's qu
 ```
 cp printers.example.yaml printers.yaml   # edit
 printf 'HA_BEARER_TOKEN=...\nOBICO_WEBHOOK_SECRET=...\nPRINT_WARDEN_TOKEN=...\nHA_ACTION_SECRET=...\n' > .env
+echo 'PRINT_WARDEN_OPERATOR_PASSWORD=...' >> .env   # optional: sign in to the pages and /inbox from a browser
 docker compose run --rm --build print-warden print-warden check   # every profile, service and camera answers
 docker compose up -d --build             # Ubuntu 24.04 + OrcaSlicer 2.4.2 AppImage + OpenSCAD + ffmpeg
 curl localhost:8710/healthz
@@ -404,11 +405,27 @@ Access:
 
 | Route | Guard |
 |---|---|
-| `/mcp`, `/upload`, `/status`, `/stage`, `/spools` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/mcp`, `/upload` | `PRINT_WARDEN_TOKEN` as `Authorization: Bearer …` or `?token=…` (open, with a startup warning, if unset) |
+| `/status`, `/stage`, `/spools` | the token, or the operator's sign-in (below) |
+| `/inbox` | the operator's sign-in only; off without `PRINT_WARDEN_OPERATOR_PASSWORD` |
 | `/obico/webhook` | `?secret=$OBICO_WEBHOOK_SECRET`; disabled if unset |
 | `/ha/action` | `?secret=$HA_ACTION_SECRET`; disabled if unset |
 | `/files/{snapshots,timelapse,jobs}/…` | open, so the phone can load notification images; databases and uploaded models are never served |
 | `/healthz` | open |
+
+**Signing in from a browser.** Set `PRINT_WARDEN_OPERATOR_PASSWORD` in `.env` and restart. Opening `/status`,
+`/stage`, `/spools` or `/inbox` without the token then asks for that password once per browser and keeps you signed
+in for 30 days (an HttpOnly cookie; changing the password signs every browser out; five wrong tries lock sign-in for
+10 minutes). Never give this password to an MCP client: it is what tells the warden a person pressed the button.
+
+**The inbox.** `/inbox` lists every prompt the warden has sent that is still waiting: Start / Skip, Bed cleared,
+first layer, outcome and reason, Reprint, calibration, maintenance Done, Dried, weigh-ins, Cancel / Resume and the
+`validate session` steps. Its buttons do exactly what the phone's do, and the job log says "the web inbox". A
+notification swiped away by accident stays here until it is answered, withdrawn or a week old; answering on either
+side removes it from both. A prompt whose job has moved on (a Start for a job no longer waiting, a first-layer or
+pause prompt after the print ended) is dropped and withdrawn from the phone. A Start offer that expired, or a job still waiting with no offer left, shows **Offer
+again**. With the password set, tapping a notification's body opens the inbox, and `/status` links to it with the
+count.
 
 **Remote access (optional).** To let other people use the warden from a hosted Claude app, publish `/mcp` on a public
 HTTPS hostname and set `server.oauth`. Remote requests then need a sign-in with your identity provider, and each
