@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
+
+Remote access over OAuth, the guided sign-off session, record and replay, and the week's plan since 0.10.0.
+**Upgrade notes:** no config changes are needed.
+- Remote access is off until `server.oauth` is configured, and local requests are unchanged.
+- `policy.plan_offers` is off by default, so offers behave as before until you turn it on. `plan_week` and the
+  `/status` Plan card only inform.
+- The new `ask_operator` / `operator_answer` tools only record a tap.
 
 - Remote access over OAuth (`server.oauth`): a request for the public hostname reaches only `/mcp`, needs a bearer
   token from your identity provider, and gets a role from the token's groups. Operators have every tool; the queue
