@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `/status` has a **Bed cleared** button on each printer whose bed is occupied and that is not printing. It does
+  what the phone's tap does: marks the bed clear and offers the next job. It posts with the page's CSRF token and
+  needs the API token like the page; remote access over OAuth still reaches only `/mcp`.
+
 ## 0.11.0
 
 Remote access over OAuth, the guided sign-off session, record and replay, and the week's plan since 0.10.0.

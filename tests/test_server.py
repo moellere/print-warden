@@ -1429,3 +1429,35 @@ async def test_plan_offers_hold_the_offer_until_its_slot(
     assert server.JOBS.get(job["id"])["state"] == "awaiting_approval"
     week = server.plan_week()
     assert week["printers"]["testp"][0]["waits"] == "offered: waiting for the tap"
+
+
+def test_bed_cleared_from_the_status_page(client, clean_queues):
+    import re
+
+    w = _ready_printer("testp")
+    server.BED.set_state("testp", "occupied", "test")
+    page = client.get("/status?token=test-token").text
+    assert 'action="/status/bed/testp?token=test-token"' in page
+    csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page)[1]
+
+    refused = client.post("/status/bed/testp?token=test-token", data={"csrf": "nope"})
+    assert refused.status_code == 403
+    assert server.BED.state("testp")["state"] == "occupied"
+    assert client.post("/status/bed/testp", data={"csrf": csrf}).status_code == 401
+
+    ok = client.post("/status/bed/testp?token=test-token", data={"csrf": csrf})
+    assert ok.status_code == 200 and "testp: bed cleared." in ok.text
+    assert server.BED.state("testp")["state"] == "clear"
+    assert "Bed cleared</button>" not in ok.text
+
+    server.BED.set_state("testp", "occupied", "test")
+    w.mr.state["print_stats"] = {"state": "printing"}
+    assert "Bed cleared</button>" not in client.get("/status?token=test-token").text
+    busy = client.post("/status/bed/testp?token=test-token", data={"csrf": csrf})
+    assert busy.status_code == 409 and "printing" in busy.text
+    assert (
+        client.post(
+            "/status/bed/nope?token=test-token", data={"csrf": csrf}
+        ).status_code
+        == 404
+    )

@@ -107,7 +107,8 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 |---|---|
 | `/mcp` | MCP, Streamable HTTP |
 | `/upload` | model upload (multipart `file`) |
-| `/status` | the read-only status page |
+| `/status` | the status page |
+| `/status/bed/<printer>` | the status page's Bed cleared button (POST with the page's CSRF token) |
 | `/stage` | the staging page |
 | `/spools` | the spool inventory page |
 | `/healthz` | the status contract below |

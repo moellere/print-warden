@@ -2492,7 +2492,46 @@ def _open_batches(days: float = 14) -> list[dict[str, Any]]:
 
 
 async def status_page(request: Request) -> HTMLResponse:
-    return HTMLResponse(status.render(await status_data()))
+    return HTMLResponse(
+        status.render(
+            await status_data(),
+            csrf=stage.csrf_token(CFG.api_token),
+            token=request.query_params.get("token"),
+        )
+    )
+
+
+async def bed_clear_page(request: Request) -> HTMLResponse:
+    """The /status page's Bed cleared button: the phone's tap, from a browser that holds the token."""
+    _, refused = await _stage_form(request)
+    printer = request.path_params["printer"]
+    message = error = None
+    code = 200
+    if refused:
+        error, code = refused, 403
+    elif printer not in WATCHERS:
+        error, code = f"no printer {printer}", 404
+    else:
+        try:
+            await _w(printer).mark_clear("the /status page")
+            offered = await advance_queue(printer)
+            message = f"{printer}: bed cleared." + (
+                " The next job is offered on the phone."
+                if offered.get("action") == "offered"
+                else ""
+            )
+        except ValueError as e:
+            error, code = f"{printer}: {e}", 409
+    return HTMLResponse(
+        status.render(
+            await status_data(),
+            csrf=stage.csrf_token(CFG.api_token),
+            token=request.query_params.get("token"),
+            message=message,
+            error=error,
+        ),
+        status_code=code,
+    )
 
 
 def _stage_choices() -> dict[str, list[str]]:
@@ -3406,6 +3445,7 @@ app = Starlette(
     routes=[
         Route("/healthz", health),
         Route("/status", status_page),
+        Route("/status/bed/{printer}", bed_clear_page, methods=["POST"]),
         Route("/stage", stage_page, methods=["GET", "POST"]),
         Route("/spools", spools_page),
         Route("/spools/{action}", spools_page, methods=["POST"]),
