@@ -1,8 +1,10 @@
 """`/status`: one read-only page for the whole warden, behind the same token as `/mcp`.
 
 Per printer: state, progress and finish time, bed, the queue with estimates, the latest snapshot and maintenance
-that is due; then filament that needs reordering or drying. It refreshes itself every 30 s. Nothing on the page
-acts: starts, cancels and bed-clears stay on the phone. Every value is escaped. Snapshots load from `/files`, which
+that is due; then filament that needs reordering or drying. It refreshes itself every 30 s. One thing on the page
+acts: a printer whose bed is occupied and that is not printing has a **Bed cleared** button. It is the phone's tap
+from a browser, posting the form's CSRF token from this page's own origin. Starts and cancels stay on the phone.
+Every value is escaped. Snapshots load from `/files`, which
 is open (as for notification images), so the token never lands in an image URL.
 """
 
@@ -26,6 +28,7 @@ img{width:100%;border-radius:6px;margin-top:8px}table{width:100%;border-collapse
 td{padding:3px 0;border-top:1px solid var(--line);vertical-align:top}td.r{text-align:right;white-space:nowrap}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}
 .bar i{display:block;height:100%;background:var(--ok)}
+form.act{margin:6px 0}form.act button{font:inherit;padding:6px 12px;border:0;border-radius:6px;background:var(--ok);color:#fff;cursor:pointer}
 """
 
 
@@ -57,9 +60,28 @@ def _state_class(p: dict[str, Any]) -> str:
     return "ok" if p.get("state") in ("printing", "paused") else ""
 
 
-def render(data: dict[str, Any], now: datetime | None = None) -> str:
+def _bed_button(name: str, csrf: str, token: str | None) -> str:
+    action = f"/status/bed/{quote(name)}" + (f"?token={quote(token)}" if token else "")
+    return (
+        f'<form class="act" method="post" action="{_e(action)}">'
+        f'<input type="hidden" name="csrf" value="{_e(csrf)}"><button type="submit">Bed cleared</button></form>'
+    )
+
+
+def render(
+    data: dict[str, Any],
+    now: datetime | None = None,
+    csrf: str | None = None,
+    token: str | None = None,
+    message: str | None = None,
+    error: str | None = None,
+) -> str:
+    """With `csrf`, an occupied bed on an idle printer gets the Bed cleared button."""
     now = now or datetime.now().astimezone()
     cards = []
+    note = (f'<p class="ok">{_e(message)}</p>' if message else "") + (
+        f'<p class="bad">{_e(error)}</p>' if error else ""
+    )
     for name, p in sorted(data["printers"].items()):
         state = (
             (p.get("state") or p.get("klippy") or "unknown")
@@ -86,6 +108,12 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         rows.append(
             f'<p class="mute">Bed {_e(p.get("bed") or "unknown")} · {_e(p.get("material") or "no material set")}</p>'
         )
+        if (
+            csrf
+            and p.get("bed") == "occupied"
+            and p.get("state") not in ("printing", "paused")
+        ):
+            rows.append(_bed_button(name, csrf, token))
         queue = p.get("queue_jobs") or []
         if queue:
             rows.append(
@@ -175,5 +203,6 @@ def render(data: dict[str, Any], now: datetime | None = None) -> str:
         f'<h1>print-warden <span class="mute">{_e(data.get("version"))} · {now:%H:%M}</span>'
         + (' <span class="warn">· away</span>' if data.get("away") else "")
         + "</h1>"
-        f'<div class="grid">{"".join(cards)}</div></main></body></html>'
+        + note
+        + f'<div class="grid">{"".join(cards)}</div></main></body></html>'
     )

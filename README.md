@@ -397,7 +397,9 @@ local network work as before. See `docs/operations.md`, "Remote access".
 
 `/status` (open it once with `?token=…` and bookmark it) is one read-only page for the house: per printer its state,
 progress and finish time, bed, queue with estimates, latest snapshot and maintenance due, then filament to reorder or
-dry. It refreshes every 30 s and has no buttons; starts, cancels and bed-clears stay on the phone.
+dry. It refreshes every 30 s. Its one button is **Bed cleared**, on a printer whose bed is occupied and that is
+not printing. It does what the phone's tap does: the bed is marked clear (a labelled check where a bed camera is
+set up) and the next queued job is offered. Starts and cancels stay on the phone.
 
 `/stage` (also opened with `?token=…`) adds a print from a browser: a file or a link, where, material, quality,
 copies and 3MF plate. Slice shows the preview, estimate, warnings and blockers; **Add to queue** puts it in the
