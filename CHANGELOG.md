@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
+
+Since 0.12.0: the web inbox and browser sign-in.
+**Upgrade notes:** nothing changes until you set `PRINT_WARDEN_OPERATOR_PASSWORD` in the `.env` next to
+`compose.yml` (on the Docker host) and restart. Then sign in once at `/inbox`. With it set, a browser without the
+token or a sign-in is sent to `/signin` rather than shown a 401, and a notification's body opens the inbox.
 
 - `/inbox`: every prompt still waiting for you, with the phone's buttons, in a browser. A notification swiped away
   by accident stays answerable there; answering on either side removes it from both. An expired Start offer, or a
