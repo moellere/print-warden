@@ -139,8 +139,9 @@ async def test_the_warden_diagnoses_a_replayed_print(tmp_path):
                 await phone.tap(f"PRINT_WARDEN_START_{job['id']}")
 
                 async def ended(jid=job["id"]):
+                    # a failed job is diagnosed a moment after it is marked failed (the gcode store is read then)
                     j = await w.call("job_status", job_id=jid)
-                    return j if j["state"] in ("done", "failed") else None
+                    return j if j["state"] == "done" or j.get("failure_cause") else None
 
                 if printer == "demo-a":
                     finished = await _until(ended, 30)
