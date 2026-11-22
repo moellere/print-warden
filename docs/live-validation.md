@@ -170,6 +170,8 @@ warden's side of each row, so on the printers only the hardware's side is left.
     test printer entry (or replace the slicer block of one printer in a copy of printers.yaml), `print-warden check`,
     then slice and print a 20 mm cube from it. Expect: the bed size and height in the written preset match
     `printer.cfg`, the gcode starts with your `PRINT_START` macro and its temperatures, and the cube prints.
+    For a whole new printer, `print-warden add-printer <name> --moonraker http://<printer>:7125 --write
+    data/printers.yaml` does this, and the entry, in one step (README, "Adding a printer").
 32. Export a printer or filament preset from OrcaSlicer (File → Export → Export Preset Bundle), then
     `print-warden profiles import <bundle>` and slice with the printed block. Expect: the job's gcode carries your
     preset's settings (e.g. its nozzle temperature).

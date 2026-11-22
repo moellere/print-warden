@@ -304,6 +304,23 @@ endpoint its site uses, which is unofficial and may change; any other page is se
 `.stl` / `.3mf` / `.scad`, with `og:title`, the `author` meta and a `rel="license"` link.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
 
+## Adding a printer
+
+`print-warden add-printer` does the whole setup for a Klipper printer from its Moonraker, read-only:
+
+```
+print-warden add-printer voron --moonraker http://voron.local:7125 --location garage --write
+```
+
+It writes the machine preset from Klipper's config (as `profiles klipper` does), and builds the printer's entry with
+the location, Moonraker URL and `slicer:` block. It also takes the cameras from Moonraker's webcams (or `--camera
+NAME=URL`) and the power device when Moonraker has exactly one. It prints the entry. With `--write`, it inserts the
+entry under `printers:` (other lines and comments are kept), checks that the result loads, and writes it back. In the
+container, printers.yaml is mounted read-only, so use `--write data/printers.yaml` and copy that file over. Last, it
+runs `check` for the new printer and names the sign-off rows to run after a restart:
+`print-warden validate session --printer voron --rows 0,1,3,4,11,12,39`. Add bed checks, light, windows and
+maintenance by hand afterwards (see `printers.example.yaml`).
+
 ## Printer profiles
 
 Any OrcaSlicer printer works, not only the Artillery set: presets are looked up by name in the warden's own profile
