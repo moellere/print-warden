@@ -1469,7 +1469,7 @@ async def test_the_plan_reads_the_price_forecast(monkeypatch, clean_queues, read
     from print_warden import config
 
     now = time.time()
-    hour = 3600 * (int(now // 3600) + 1)
+    hour = 3600 * int(now // 3600)
     attrs = {
         "forecast": [
             {"start": hour + i * 3600, "value": 0.40 if i < 2 else 0.05}
