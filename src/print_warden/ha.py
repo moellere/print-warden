@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import httpx
@@ -22,6 +22,11 @@ class HAClient:
             timeout=10,
             headers={"Authorization": f"Bearer {cfg.token}"} if cfg.token else {},
         )
+        self.on_prompt: Callable[..., None] | None = None
+        """Told of every button prompt as it is sent (tag, title, message, actions, image): the web inbox."""
+        self.on_clear: Callable[[str], None] | None = None
+        self.inbox_url: str | None = None
+        """Where a tap on a prompt's body goes when no `click_url` is given (the inbox, when sign-in is on)."""
 
     async def alert(
         self,
@@ -59,7 +64,10 @@ class HAClient:
         """Every button prompt is `sticky` (Android companion): a tap on its body does not dismiss it, so the
         buttons stay until they are used, the card is swiped away, or `clear_notification` withdraws it.
         `persistent` also stops the swipe; use it only for prompts the warden withdraws itself (start, skip, expiry).
-        A body tap opens `click_url`, by default the attached image, instead of the companion app's start page."""
+        A body tap opens `click_url`, by default the inbox (or the attached image), instead of the companion app's
+        start page. The prompt is recorded for the inbox before it is sent, so a failed send is still answerable."""
+        if self.on_prompt:
+            self.on_prompt(tag or "print_warden_job", title, message, actions, image)
         if not self.cfg.notify_service:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)
@@ -83,8 +91,8 @@ class HAClient:
             data["persistent"] = True
         if image:
             data["image"] = image
-        if click_url or image:
-            data["clickAction"] = click_url or image
+        if click_url or self.inbox_url or image:
+            data["clickAction"] = click_url or self.inbox_url or image
         try:
             r = await self._c.post(
                 f"/api/services/{domain}/{service}",
@@ -110,7 +118,9 @@ class HAClient:
             return False
 
     async def clear_notification(self, tag: str) -> bool:
-        """Withdraw an actionable notification from the phone (HA companion `clear_notification`)."""
+        """Withdraw an actionable notification from the phone (HA companion `clear_notification`) and the inbox."""
+        if self.on_clear:
+            self.on_clear(tag)
         if not self.cfg.notify_service:
             return False
         domain, service = self.cfg.notify_service.split(".", 1)

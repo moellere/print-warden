@@ -75,8 +75,10 @@ def render(
     token: str | None = None,
     message: str | None = None,
     error: str | None = None,
+    inbox_count: int | None = None,
 ) -> str:
-    """With `csrf`, an occupied bed on an idle printer gets the Bed cleared button."""
+    """With `csrf`, an occupied bed on an idle printer gets the Bed cleared button. With `inbox_count` (a signed-in
+    operator), the heading links to the inbox."""
     now = now or datetime.now().astimezone()
     cards = []
     note = (f'<p class="ok">{_e(message)}</p>' if message else "") + (
@@ -202,6 +204,11 @@ def render(
         f"<style>{CSS}</style></head><body><main>"
         f'<h1>print-warden <span class="mute">{_e(data.get("version"))} · {now:%H:%M}</span>'
         + (' <span class="warn">· away</span>' if data.get("away") else "")
+        + (
+            f' <span class="{"warn" if inbox_count else "mute"}">· <a href="/inbox">inbox ({inbox_count})</a></span>'
+            if inbox_count is not None
+            else ""
+        )
         + "</h1>"
         + note
         + f'<div class="grid">{"".join(cards)}</div></main></body></html>'

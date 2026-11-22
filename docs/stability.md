@@ -17,9 +17,10 @@ the next major version. Before 1.0 (now), the CHANGELOG's upgrade notes say what
 
 ## Safety invariants (stable, and not up for deprecation)
 
-- A print starts only on a phone tap that answers a request still inside the approval TTL, on `start_print` with
+- A print starts only on a tap that answers a request still inside the approval TTL, on `start_print` with
   the operator's quoted consent, or, where `auto_start` is set, when the bed check and every start check pass.
-  No tool, page or verb starts one any other way.
+  No tool, page or verb starts one any other way. A tap is a button on the phone's notification, or the same button
+  in `/inbox` pressed by a browser signed in with the operator password; the API token alone never answers a prompt.
 - The deterministic start policy (`policy.can_start`) decides every start; no model takes part in a decision.
 - Cancelling or resuming a running print is a human's tap on a warden notification. The one automatic cancel is a
   pause left unanswered past `policy.paused_cancel_minutes`.
@@ -109,6 +110,8 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `/mcp` | MCP, Streamable HTTP |
 | `/upload` | model upload (multipart `file`) |
 | `/status` | the status page |
+| `/inbox` | the prompts still waiting, with their buttons (operator sign-in only) |
+| `/signin`, `/signout` | the operator's sign-in, with `PRINT_WARDEN_OPERATOR_PASSWORD` |
 | `/status/bed/<printer>` | the status page's Bed cleared button (POST with the page's CSRF token) |
 | `/stage` | the staging page |
 | `/spools` | the spool inventory page |
@@ -118,7 +121,8 @@ Names and argument names; `?` marks an optional argument. Result fields are only
 | `/files/snapshots`, `/files/timelapse`, `/files/jobs` | snapshots, timelapses and job artifacts |
 | `/.well-known/oauth-protected-resource` | RFC 9728 metadata, served to remote requests when `server.oauth` is set |
 
-The pages' HTML is internal; their URLs and the token rule are stable.
+The pages' HTML is internal; their URLs and the token rule are stable. `/status`, `/stage` and `/spools` take the API
+token or the operator's sign-in cookie; `/inbox` takes only the sign-in.
 
 With `server.oauth` set, a remote request (one for the public hostname, or one a reverse proxy forwarded) reaches
 only `/mcp` and the metadata route, and only with a bearer token from the configured issuer. The token's groups pick
@@ -205,6 +209,7 @@ The `action` of every button the warden sends is `PRINT_WARDEN_<VERB>_<argument>
 | Verb |
 |---|
 | `START` |
+| `REOFFER` |
 | `SKIP` |
 | `BEDCLEAR` |
 | `FIRSTLAYER` |

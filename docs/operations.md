@@ -16,6 +16,24 @@ To run a released image instead of building, replace `build: .` in `compose.yml`
 MCP clients connect to `http://<host>:8710/mcp` with `Authorization: Bearer $PRINT_WARDEN_TOKEN`, or
 `?token=...` for clients that only take a URL.
 
+`.env` lives on the Docker host, next to `compose.yml`; `env_file` hands its values to the container as environment
+variables, so there is no `.env` inside the container. `docker compose exec print-warden printenv PRINT_WARDEN_TOKEN`
+shows what the warden got.
+
+## Signing in from a browser, and the inbox
+
+The pages a person uses (`/status`, `/stage`, `/spools`, `/inbox`) take a sign-in instead of the token:
+
+1. Add `PRINT_WARDEN_OPERATOR_PASSWORD=<a password>` to `.env` and `docker compose up -d` (a restart picks it up).
+   `server.operator_password_env` renames the variable.
+2. Open `http://<host>:8710/inbox` on the phone or a laptop and sign in. The browser stays signed in for 30 days.
+3. From then on a tap on a warden notification's body opens the inbox, and `/status` links to it.
+
+The password is the operator's, not a machine's: keep it out of MCP client configs and scripts, which use the
+token. The token alone opens `/status`, `/stage` and `/spools` as before, but never the inbox's buttons. The
+inbox is not served on the public hostname (`server.oauth` passes only `/mcp`); reach it on the LAN or a VPN.
+Five wrong passwords lock sign-in for 10 minutes, and each is logged with the client's address.
+
 ## Remote access
 
 Hosted MCP clients (the Claude apps, for one) connect from the vendor's servers, so they need a public HTTPS URL

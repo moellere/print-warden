@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 async def watch_notification_actions(
-    cfg: HomeAssistant, on_action: Callable[[str, dict], Awaitable[None]]
+    cfg: HomeAssistant, on_action: Callable[[str, dict], Awaitable[object]]
 ) -> None:
     url = (
         cfg.url.replace("https://", "wss://").replace("http://", "ws://")

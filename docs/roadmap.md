@@ -463,3 +463,21 @@ Done when: a long job queued in the dear hours is planned, and offered, in the c
 
 Done when: a new Klipper printer goes from its Moonraker URL to a passing `check` and a short sign-off with one
 command and a restart.
+
+## Phase 40 — The web inbox and browser sign-in ✅ (build)
+
+- ✅ Every button prompt is recorded as it is sent (even when the phone did not get it), keyed by its notification
+  tag. It leaves when the warden withdraws it, when it is answered on either side, or after a week.
+- ✅ `/inbox` shows the waiting prompts with their buttons, text replies included. A button runs the phone tap's
+  handler (`via` "the web inbox"), and answering in the inbox withdraws the phone's notification. An expired Start,
+  or a job awaiting approval with no prompt left, offers `REOFFER` (Offer again).
+- ✅ `PRINT_WARDEN_OPERATOR_PASSWORD` signs a browser in for 30 days (HMAC cookie bound to the password, HttpOnly,
+  SameSite=Strict; five wrong tries lock it for 10 minutes). `/status`, `/stage` and `/spools` take the cookie or
+  the token; `/inbox` takes only the cookie. The token is what MCP clients hold, so it never answers a prompt.
+- ✅ With the password set, a tap on a notification's body opens the inbox; `/status` links to it with the count.
+- ✅ A prompt whose job has moved on (Start after the job left awaiting approval; first layer, Cancel or Resume
+  after the print ended) is dropped from the inbox and withdrawn from the phone, which never happened before.
+- Another push channel (ntfy) is left for later: its taps would reach the same handler.
+
+Done when: a Start swiped away on the phone is started from the inbox, and the token alone cannot do it.
+

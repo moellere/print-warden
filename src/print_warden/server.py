@@ -24,7 +24,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -40,6 +40,7 @@ from . import (
     failures,
     footprint,
     ha_entities,
+    inbox,
     intake,
     moonraker,
     mqtt_entities,
@@ -51,6 +52,7 @@ from . import (
     retention,
     rules,
     schedule,
+    signin,
     slicer,
     spoolpage,
     spools,
@@ -75,6 +77,13 @@ CFG = config.load(os.environ.get("PRINT_WARDEN_CONFIG", "printers.yaml"))
 STORE = EventStore(CFG.storage_dir / "events.db")
 HA = HAClient(CFG.ha) if CFG.ha else None
 JOBS = JobStore(CFG.storage_dir / "jobs.db")
+if HA:
+    HA.on_prompt = lambda tag, title, message, actions, image: inbox.record(
+        JOBS, tag, title, message, actions, image
+    )
+    HA.on_clear = lambda tag: inbox.clear(JOBS, tag)
+    if CFG.operator_password:
+        HA.inbox_url = f"{CFG.public_url}/inbox"
 SPOOLMAN = Spoolman(CFG.spoolman_url) if CFG.spoolman_url else None
 BED = BedStore(CFG.storage_dir / "bed.db")
 WATCHERS: dict[str, PrinterWatcher] = {
@@ -1655,32 +1664,46 @@ async def _start(
     return {**_job_public(job), "started": True, "blockers": []}
 
 
-async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
+async def _on_ha_action(
+    action: str, data: dict[str, Any], via: str = "phone tap"
+) -> str | None:
+    """One tap, from the phone or the web inbox (`via` says which, in the job log). The prompt it answers leaves the
+    inbox; answered in the inbox, it is withdrawn from the phone too. Returns why a start, cancel or resume was
+    refused, or the error, for the inbox to show."""
     verb, _, job_id = action.removeprefix("PRINT_WARDEN_").partition("_")
+    for tag in inbox.answered(JOBS, action):
+        if via != "phone tap" and HA:
+            await HA.clear_notification(tag)
     try:
         if verb == "START":
-            res = await _start(job_id, "phone tap", via_tap=True)
-            if not res["started"] and HA:
-                await HA.alert(
-                    JOBS.get(job_id)["printer"],
-                    "warning",
-                    "start refused",
-                    "; ".join(res["blockers"]),
-                )
+            res = await _start(job_id, via, via_tap=True)
+            if not res["started"]:
+                if HA:
+                    await HA.alert(
+                        JOBS.get(job_id)["printer"],
+                        "warning",
+                        "start refused",
+                        "; ".join(res["blockers"]),
+                    )
+                return "start refused: " + "; ".join(res["blockers"])
+        elif verb == "REOFFER":
+            await request_start(job_id)
         elif verb == "SKIP":
-            JOBS.transition(job_id, "skipped", "phone tap")
+            JOBS.transition(job_id, "skipped", via)
         elif verb == "BEDCLEAR":
-            await _w(job_id).mark_clear("phone tap")
+            await _w(job_id).mark_clear(via)
             await advance_queue(job_id)
         elif verb == "FIRSTLAYER":
-            JOBS.note(job_id, "first layers look good (phone tap)")
+            JOBS.note(job_id, f"first layers look good ({via})")
         elif verb == "OUTCOME":
-            await _on_outcome_tap(job_id)
+            await _on_outcome_tap(job_id, via)
         elif verb == "WEIGH":
             gross = float(
                 str(data.get("reply_text") or "").strip().lower().removesuffix("g")
             )
-            res = await weigh_spool(job_id, gross, "phone reply")
+            res = await weigh_spool(
+                job_id, gross, "phone reply" if via == "phone tap" else via
+            )
             if HA:
                 await HA.clear_notification(_upkeep_tag(f"weigh:{job_id}"))
                 await HA.alert(
@@ -1691,18 +1714,18 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
                     + (f" {res['flag']}" if res["flag"] else ""),
                 )
         elif verb == "REPRINT":
-            await reprint(job_id, "phone tap")
+            await reprint(job_id, via)
             if HA:
                 await HA.clear_notification(outcome.tag(job_id))
         elif verb == "CALIB":
-            await _on_calibration_tap(job_id)
+            await _on_calibration_tap(job_id, via)
         elif verb == "MAINT":
             printer, _, item = job_id.partition(":")
-            record_maintenance(printer, item, "phone tap")
+            record_maintenance(printer, item, via)
             if HA:
                 await HA.clear_notification(_upkeep_tag(f"maint:{printer}:{item}"))
         elif verb == "DRIED":
-            record_dried(int(job_id), "phone tap")
+            record_dried(int(job_id), via)
             if HA:
                 await HA.clear_notification(_upkeep_tag(f"dry:{job_id}"))
         elif verb == "VALIDATE":
@@ -1723,19 +1746,23 @@ async def _on_ha_action(action: str, data: dict[str, Any]) -> None:
                 if HA:
                     await HA.clear_notification(f"print_warden_validate_{pid}")
         elif verb in ("CANCEL", "RESUME"):
-            res = await print_control(job_id, verb.lower(), "phone tap")
-            if not res["done"] and HA:
-                await HA.alert(
-                    JOBS.get(job_id)["printer"],
-                    "warning",
-                    f"{verb.lower()} refused",
-                    res["why"],
-                )
+            res = await print_control(job_id, verb.lower(), via)
+            if not res["done"]:
+                if HA:
+                    await HA.alert(
+                        JOBS.get(job_id)["printer"],
+                        "warning",
+                        f"{verb.lower()} refused",
+                        res["why"],
+                    )
+                return f"{verb.lower()} refused: {res['why']}"
     except (KeyError, ValueError, httpx.HTTPError) as e:
         log.warning("HA action %s: %s", action, e)
+        return str(e) or type(e).__name__
+    return None
 
 
-async def _on_outcome_tap(payload: str) -> None:
+async def _on_outcome_tap(payload: str, via: str = "phone tap") -> None:
     job_id, choice = outcome.parse(payload)
     job = JOBS.get(job_id)
     if choice in ("failed", "more") and HA:
@@ -1751,7 +1778,7 @@ async def _on_outcome_tap(payload: str) -> None:
         job_id,
         "good" if choice == "good" else "failed",
         None if choice in ("good", "failed") else choice,
-        "phone tap",
+        via,
     )
     if choice in outcome.REASONS and HA:
         await HA.notify_actionable(
@@ -1764,7 +1791,7 @@ async def _on_outcome_tap(payload: str) -> None:
         await HA.clear_notification(outcome.tag(job_id))
 
 
-async def _on_calibration_tap(payload: str) -> None:
+async def _on_calibration_tap(payload: str, via: str = "phone tap") -> None:
     job_id, _, choice = payload.partition(":")
     job = JOBS.get(job_id)
     cal = job.get("calibration")
@@ -1779,7 +1806,7 @@ async def _on_calibration_tap(payload: str) -> None:
                 tag=outcome.tag(job_id),
             )
         return
-    await record_calibration(job_id, int(choice), "phone tap")
+    await record_calibration(job_id, int(choice), via)
     if HA:
         await HA.clear_notification(outcome.tag(job_id))
 
@@ -2493,12 +2520,17 @@ def _open_batches(days: float = 14) -> list[dict[str, Any]]:
     return out
 
 
+async def _inbox_count(request: Request) -> int | None:
+    return len(await _inbox_prompts(time.time())) if _operator(request) else None
+
+
 async def status_page(request: Request) -> HTMLResponse:
     return HTMLResponse(
         status.render(
             await status_data(),
             csrf=stage.csrf_token(CFG.api_token),
             token=request.query_params.get("token"),
+            inbox_count=await _inbox_count(request),
         )
     )
 
@@ -2531,9 +2563,168 @@ async def bed_clear_page(request: Request) -> HTMLResponse:
             token=request.query_params.get("token"),
             message=message,
             error=error,
+            inbox_count=await _inbox_count(request),
         ),
         status_code=code,
     )
+
+
+def _operator(request: Request) -> bool:
+    """The browser is signed in as the operator (the API token is not enough)."""
+    return signin.cookie_ok(request.cookies.get(signin.COOKIE), CFG.operator_password)
+
+
+_LIVE = {
+    "START": ("awaiting_approval",),
+    "FIRSTLAYER": ("printing", "paused"),
+    "CANCEL": ("printing", "paused"),
+    "RESUME": ("printing", "paused"),
+}
+"""A prompt with one of these verbs is stale once its job has left these states."""
+
+
+def _stale(acts: list[list[str]]) -> bool:
+    for a in acts:
+        verb, _, jid = a[0].removeprefix("PRINT_WARDEN_").partition("_")
+        if verb in _LIVE:
+            try:
+                return JOBS.get(jid)["state"] not in _LIVE[verb]
+            except KeyError:
+                return True
+    return False
+
+
+async def _inbox_prompts(now: float) -> list[dict[str, Any]]:
+    """The inbox: open prompts, minus those whose job has moved on (withdrawn from the phone too); an expired Start
+    turned into Offer again; and a job still awaiting approval with no prompt left (a refused tap) gets Offer again."""
+    out, offered = [], set()
+    for p in inbox.open_prompts(JOBS, now):
+        acts = p.get("actions") or []
+        if _stale(acts):
+            inbox.clear(JOBS, p["tag"])
+            if HA:
+                await HA.clear_notification(p["tag"])
+            continue
+        start = next((a for a in acts if a[0].startswith("PRINT_WARDEN_START_")), None)
+        if start:
+            jid = start[0].removeprefix("PRINT_WARDEN_START_")
+            job = JOBS.get(jid)
+            offered.add(jid)
+            if policy.approval_expired(job, now, CFG.approval_ttl_minutes):
+                p = {
+                    **p,
+                    "actions": [
+                        [f"PRINT_WARDEN_REOFFER_{jid}", "Offer again"],
+                        *(a for a in acts if a is not start),
+                    ],
+                    "note": "This offer expired. Offer again sends a fresh one.",
+                }
+        out.append(p)
+    for job in JOBS.list(limit=50, states=("awaiting_approval",)):
+        if job["id"] in offered:
+            continue
+        out.append(
+            {
+                "tag": f"reoffer:{job['id']}",
+                "title": "Start print?",
+                "message": f"{job['name']} on {job['printer']} is waiting for a Start tap, but its offer is gone.",
+                "actions": [
+                    [f"PRINT_WARDEN_REOFFER_{job['id']}", "Offer again"],
+                    [f"PRINT_WARDEN_SKIP_{job['id']}", "Skip"],
+                ],
+                "image": _job_public(job).get("preview_url"),
+                "at": job.get("approval_requested_at") or job["updated"],
+            }
+        )
+    return out
+
+
+async def inbox_page(request: Request) -> Response:
+    """`/inbox`: the waiting prompts with their buttons. A button is the phone's tap, for a signed-in operator only."""
+    if not _operator(request):
+        if request.method == "GET":
+            return RedirectResponse("/signin?next=/inbox", status_code=303)
+        return HTMLResponse("sign in first", status_code=403)
+    csrf = stage.csrf_token(CFG.api_token)
+    message = error = None
+    code = 200
+    if request.method == "POST":
+        form, refused = await _stage_form(request)
+        action = str(form.get("action") or "")
+        allowed = {
+            a[0]
+            for p in await _inbox_prompts(time.time())
+            for a in p.get("actions") or []
+        }
+        if refused:
+            error, code = refused, 403
+        elif action not in allowed:
+            error, code = "that prompt was already answered or withdrawn", 409
+        else:
+            reply = str(form.get("reply") or "").strip()
+            error = await _on_ha_action(
+                action, {"reply_text": reply} if reply else {}, via="the web inbox"
+            )
+            message = None if error else "Done."
+            code = 409 if error else 200
+    return HTMLResponse(
+        inbox.render(
+            status.CSS,
+            await _inbox_prompts(time.time()),
+            csrf,
+            message=message,
+            error=error,
+        ),
+        status_code=code,
+    )
+
+
+SIGNIN_LIMIT = signin.Limiter()
+
+
+async def signin_page(request: Request) -> Response:
+    csrf = stage.csrf_token(CFG.api_token)
+    target = signin.safe_next(request.query_params.get("next"))
+    enabled = bool(CFG.operator_password)
+    if request.method == "GET" or not enabled:
+        return HTMLResponse(signin.page(status.CSS, csrf, target, enabled=enabled))
+    form, refused = await _stage_form(request)
+    target = signin.safe_next(str(form.get("next") or ""))
+    wait = SIGNIN_LIMIT.locked()
+    if refused or wait:
+        why = refused or f"too many wrong passwords; try again in {wait / 60:.0f} min"
+        return HTMLResponse(
+            signin.page(status.CSS, csrf, target, why), status_code=429 if wait else 403
+        )
+    if not signin.password_ok(str(form.get("password") or ""), CFG.operator_password):
+        SIGNIN_LIMIT.failed()
+        log.warning(
+            "operator sign-in: wrong password from %s",
+            request.client.host if request.client else "?",
+        )
+        return HTMLResponse(
+            signin.page(status.CSS, csrf, target, "wrong password"), status_code=401
+        )
+    SIGNIN_LIMIT.reset()
+    out = RedirectResponse(target, status_code=303)
+    out.set_cookie(
+        signin.COOKIE,
+        signin.cookie_value(str(CFG.operator_password)),
+        max_age=int(signin.DAYS * 86400),
+        httponly=True,
+        samesite="strict",
+        secure=request.url.scheme == "https",
+    )
+    return out
+
+
+async def signout(request: Request) -> Response:
+    _, refused = await _stage_form(request)
+    if refused:
+        return HTMLResponse(refused, status_code=403)
+    out = RedirectResponse("/signin", status_code=303)
+    out.delete_cookie(signin.COOKIE)
+    return out
 
 
 def _stage_choices() -> dict[str, list[str]]:
@@ -3389,13 +3580,17 @@ async def entity_loop(interval_s: float = 30) -> None:
 
 
 class TokenAuth:
-    """Bearer token (or ?token=, for clients that can only set a URL) on everything but the open paths."""
+    """Bearer token (or ?token=, for clients that can only set a URL) on everything but the open paths. The pages a
+    person uses also take the operator's sign-in cookie, and send a browser without either to `/signin`. `/inbox`
+    and sign-in check the operator themselves: the token alone never answers a prompt."""
 
-    OPEN = ("/healthz", "/obico/webhook", "/ha/action")
+    OPEN = ("/healthz", "/obico/webhook", "/ha/action", "/inbox", "/signin", "/signout")
+    PAGES = ("/status", "/stage", "/spools")
 
-    def __init__(self, app: ASGIApp, token: str | None):
+    def __init__(self, app: ASGIApp, token: str | None, password: str | None = None):
         self.app = app
         self.token = (token or "").encode()
+        self.password = password
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not self.token or self._open(scope["path"]):
@@ -3407,6 +3602,17 @@ class TokenAuth:
         given = given or req.query_params.get("token", "")
         if hmac.compare_digest(given.encode(), self.token):
             await self.app(scope, receive, send)
+            return
+        page = any(
+            scope["path"] == p or scope["path"].startswith(p + "/") for p in self.PAGES
+        )
+        if page and signin.cookie_ok(req.cookies.get(signin.COOKIE), self.password):
+            await self.app(scope, receive, send)
+            return
+        if page and self.password and req.method == "GET":
+            await RedirectResponse(f"/signin?next={scope['path']}", status_code=303)(
+                scope, receive, send
+            )
             return
         await JSONResponse({"error": "unauthorized"}, status_code=401)(
             scope, receive, send
@@ -3469,6 +3675,9 @@ app = Starlette(
     routes=[
         Route("/healthz", health),
         Route("/status", status_page),
+        Route("/inbox", inbox_page, methods=["GET", "POST"]),
+        Route("/signin", signin_page, methods=["GET", "POST"]),
+        Route("/signout", signout, methods=["POST"]),
         Route("/status/bed/{printer}", bed_clear_page, methods=["POST"]),
         Route("/stage", stage_page, methods=["GET", "POST"]),
         Route("/spools", spools_page),
@@ -3487,7 +3696,7 @@ app = Starlette(
     lifespan=lifespan,
 )
 install_tool_gate(mcp)
-asgi: ASGIApp = TokenAuth(app, CFG.api_token)
+asgi: ASGIApp = TokenAuth(app, CFG.api_token, CFG.operator_password)
 if CFG.oauth:
     asgi = RemoteGate(asgi, app, CFG.oauth)
 
