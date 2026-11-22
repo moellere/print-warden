@@ -39,6 +39,7 @@ the next major version. Before 1.0 (now), the CHANGELOG's upgrade notes say what
 | `backup` | write the warden's state to one archive |
 | `restore` | put a backup's state back |
 | `record` | record one print as a printer reports it, for the simulator to replay |
+| `add-printer` | a new printer's entry and profile from its Moonraker, then check it |
 
 Each verb's flags are stable as documented in its `--help`; output text is internal.
 

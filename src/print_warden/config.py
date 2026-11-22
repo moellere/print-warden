@@ -120,6 +120,9 @@ class CheapPower:
 class Energy:
     price_per_kwh: float | None = None
     price_entity: str | None = None
+    plan_by_price: bool = False
+    price_forecast_entity: str | None = None
+    plan_max_delay_hours: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -344,7 +347,10 @@ SCHEMA: dict[str, Any] = {
     },
     "alerts": {"quiet_hours": None, "cooldown_s": None, "quiet_entity": None, "quiet_states": None},
     "presence": {f.name: None for f in fields(Presence)},
-    "energy": {"price_per_kwh": None, "price_entity": None},
+    "energy": {
+        "price_per_kwh": None, "price_entity": None, "plan_by_price": None, "price_forecast_entity": None,
+        "plan_max_delay_hours": None,
+    },
     "digest": {"day": None, "at": None},
     "upkeep": {
         "reorder_below_g": None, "dry_after_days": ANY, "weigh_every_days": None, "todo_entity": None,
@@ -486,6 +492,9 @@ def load(path: str | Path) -> Config:
             else None,
             price_entity=en.get("price_entity")
             or ((pol.get("cheap_power") or {}).get("entity")),
+            plan_by_price=bool(en.get("plan_by_price", False)),
+            price_forecast_entity=en.get("price_forecast_entity") or None,
+            plan_max_delay_hours=float(en.get("plan_max_delay_hours", 12)),
         ),
         upkeep=Upkeep(
             reorder_below_g=float(

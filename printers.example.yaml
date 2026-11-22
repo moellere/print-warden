@@ -142,6 +142,9 @@ policy:
 
 # energy:
 #   price_per_kwh: 0.28       # or price_entity (defaults to policy.cheap_power.entity)
+#   plan_by_price: true       # the week's plan moves a job to cheaper forecast hours (saving >= 10 %)
+#   price_forecast_entity: sensor.nordpool_kwh   # whose attributes hold the forecast (default: price_entity)
+#   plan_max_delay_hours: 12  # how far a job may wait for cheaper power
 
 storage:
   dir: ./data          # events.db + snapshots/

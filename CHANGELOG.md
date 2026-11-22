@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `print-warden add-printer NAME --moonraker URL [--write [PATH]]` sets up a new Klipper printer. From Moonraker it
+  writes the machine preset and builds the printer's entry: cameras from Moonraker's webcams, the power device and
+  the `slicer:` block. It inserts the entry into printers.yaml with comments kept, checks the printer, and names the
+  sign-off rows for it. It only reads from the printer.
+
+- The week's plan can wait for cheaper power: with `energy.plan_by_price: true`, a job moves to the cheapest slot
+  within `energy.plan_max_delay_hours` (12) when the forecast covers the print and saves at least 10 %. The forecast
+  is read from a Home Assistant price sensor's attributes, such as Nord Pool's `raw_today`/`raw_tomorrow` or
+  `{start, end, value}` lists. Windows still apply, and `policy.plan_offers` holds the offer for that slot.
 - `/status` has a **Bed cleared** button on each printer whose bed is occupied and that is not printing. It does
   what the phone's tap does: marks the bed clear and offers the next job. It posts with the page's CSRF token and
   needs the API token like the page; remote access over OAuth still reaches only `/mcp`.

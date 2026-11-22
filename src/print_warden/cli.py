@@ -12,6 +12,7 @@ VERBS = {
     "backup": "write the warden's state to one archive",
     "restore": "put a backup's state back",
     "record": "record one print as a printer reports it, for the simulator to replay",
+    "add-printer": "a new printer's entry and profile from its Moonraker, then check it",
 }
 
 
@@ -34,6 +35,10 @@ def main() -> None:
         from . import demo
 
         sys.exit(demo.main(rest))
+    if verb == "add-printer":
+        from . import add_printer
+
+        sys.exit(add_printer.main(rest))
     if verb == "record":
         from . import record
 
@@ -45,7 +50,7 @@ def main() -> None:
     if verb in ("-h", "--help", "help"):
         print("print-warden: run the warden. Or print-warden <verb>:")
         for v, what in VERBS.items():
-            print(f"  {v:<9} {what}")
+            print(f"  {v:<12} {what}")
         sys.exit(0)
     from . import server
 

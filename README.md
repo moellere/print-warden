@@ -83,7 +83,10 @@ finish on its printer, and what it waits for. The plan follows the queue order a
 with a gap for clearing the bed. Each job gets the first slot whose finish falls in the printer's `finish_window`
 and whose start is outside quiet hours (an `auto_start` printer uses its `auto_start_hours` instead). With
 `policy.plan_offers: true`, the queue holds each offer until its slot: a four-hour job queued at 21:00 is offered at
-07:00. Without it the plan only informs. Either way, nothing starts without a tap or `auto_start`.
+07:00. Without it the plan only informs. With `energy.plan_by_price: true`, a job may also wait for cheaper power.
+The plan reads the price forecast that a Home Assistant price sensor (Nord Pool, Tibber, Octopus and the like)
+keeps in its attributes. It moves a job to the cheapest slot within `energy.plan_max_delay_hours` (12 by default),
+but only when that saves at least 10 % over the print and the forecast covers it. Either way, nothing starts without a tap or `auto_start`.
 
 **Weekly digest.** With `digest: {day: sunday, at: "18:00"}`, the phone gets one summary a week. It counts
 prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per printer and in all. It also
@@ -300,6 +303,23 @@ token in `THINGIVERSE_TOKEN` (`intake.thingiverse_token_env` to rename it); Prin
 endpoint its site uses, which is unofficial and may change; any other page is searched for links ending in
 `.stl` / `.3mf` / `.scad`, with `og:title`, the `author` meta and a `rel="license"` link.
 `overrides` on `submit_job` are OrcaSlicer process keys applied last (e.g. `{"enable_support": "0"}`).
+
+## Adding a printer
+
+`print-warden add-printer` does the whole setup for a Klipper printer from its Moonraker, read-only:
+
+```
+print-warden add-printer voron --moonraker http://voron.local:7125 --location garage --write
+```
+
+It writes the machine preset from Klipper's config (as `profiles klipper` does), and builds the printer's entry with
+the location, Moonraker URL and `slicer:` block. It also takes the cameras from Moonraker's webcams (or `--camera
+NAME=URL`) and the power device when Moonraker has exactly one. It prints the entry. With `--write`, it inserts the
+entry under `printers:` (other lines and comments are kept), checks that the result loads, and writes it back. In the
+container, printers.yaml is mounted read-only, so use `--write data/printers.yaml` and copy that file over. Last, it
+runs `check` for the new printer and names the sign-off rows to run after a restart:
+`print-warden validate session --printer voron --rows 0,1,3,4,11,12,39`. Add bed checks, light, windows and
+maintenance by hand afterwards (see `printers.example.yaml`).
 
 ## Printer profiles
 

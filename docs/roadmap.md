@@ -435,3 +435,31 @@ Done when: CI replays at least one real error print and one real shutdown from e
 
 Done when: a mixed queue across both printers gets a plan that respects every window and is offered on time
 (runbook row 46).
+
+## Phase 38 — Plan around power prices ✅ (build)
+
+- ✅ `energy.plan_by_price` makes the planner read a price forecast from a Home Assistant sensor's attributes.
+  `energy.price_forecast_entity` names the sensor, defaulting to `price_entity`. It understands Nord Pool's
+  `raw_today`/`raw_tomorrow`, any list of `{start, end, value}`-like intervals, and hourly `today`/`tomorrow` lists.
+- ✅ A job moves to the cheapest slot within `energy.plan_max_delay_hours` only when the forecast covers the whole
+  print and the mean price is at least 10 % lower. Finish windows, quiet hours and auto-start hours still apply.
+- ✅ `plan_week` says why ("cheaper power (~0.1 vs 0.3 a kWh)"). With `policy.plan_offers` the offer waits for that
+  slot. The forecast is read at most every 15 minutes.
+- Cheap power's offer-time hold (`policy.cheap_power`) is unchanged.
+
+Done when: a long job queued in the dear hours is planned, and offered, in the cheap ones within its windows.
+
+## Phase 39 — Adding a printer, guided ✅ (build)
+
+- ✅ `print-warden add-printer NAME --moonraker URL` reads Moonraker read-only. It gets Klipper's config (for the
+  machine preset, as `profiles klipper`), the webcams (as `cameras:`, unless `--camera` names them) and the power
+  devices (one becomes `power_device`).
+- ✅ It builds the entry (location, Moonraker, cameras, power device, the `slicer:` block that `profiles block` would
+  print) and prints it. `--write [PATH]` inserts it under `printers:` with every other line kept. It refuses a name
+  already there, or any unknown key the old config did not have.
+- ✅ It runs `check`'s profile and Moonraker rows for the new printer, then names the sign-off subset:
+  `validate session --printer NAME --rows 0,1,3,4,11,12,39`.
+- Bed checks, lights, windows and maintenance stay hand-written: they need the operator's measurements.
+
+Done when: a new Klipper printer goes from its Moonraker URL to a passing `check` and a short sign-off with one
+command and a restart.
