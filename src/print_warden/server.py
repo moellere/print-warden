@@ -1147,7 +1147,9 @@ async def advance_queue(printer: str) -> dict[str, Any]:
         return {"action": "none", "why": why}
     if CFG.plan_offers:
         now = time.time()
-        at, wait = plan.slot(_lane(printer, now), now, _corrected_est(head))
+        at, wait = plan.slot(
+            _lane(printer, now, await _prices(now)), now, _corrected_est(head)
+        )
         if at is not None and at > now + 60:
             JOBS.kv_set(f"plan_hold:{printer}", str(at))
             return {
@@ -2468,7 +2470,7 @@ async def status_data() -> dict[str, Any]:
     report["away"] = presence.away()
     now = time.time()
     report["plan"] = {
-        n: plan.describe(r, now)[:5] for n, r in _week_plan(now).items() if r
+        n: plan.describe(r, now)[:5] for n, r in (await _week_plan(now)).items() if r
     }
     report["week"] = digest.summary(
         JOBS.since(time.time() - digest.WEEK_S), up, time.time()
@@ -2793,7 +2795,25 @@ async def housekeeping(interval_s: float = 60) -> None:
         await asyncio.sleep(interval_s)
 
 
-def _lane(name: str, now: float) -> plan.Lane:
+_PRICES: dict[str, Any] = {"at": 0.0, "prices": ()}
+PRICE_CACHE_S = 900
+
+
+async def _prices(now: float) -> tuple[plan.Price, ...]:
+    """The price forecast the plan uses (energy.plan_by_price), read at most every 15 minutes."""
+    en = CFG.energy
+    entity = en.price_forecast_entity or en.price_entity
+    if not (en.plan_by_price and entity and HA):
+        return ()
+    if now - _PRICES["at"] > PRICE_CACHE_S:
+        st = await HA.state_full(entity)
+        _PRICES.update(
+            at=now, prices=plan.parse_forecast((st or {}).get("attributes") or {}, now)
+        )
+    return tuple(_PRICES["prices"])
+
+
+def _lane(name: str, now: float, prices: tuple[plan.Price, ...] = ()) -> plan.Lane:
     w = WATCHERS[name]
     left = _print_left_s(name)
     busy = w.status().get("state") in ("printing", "paused")
@@ -2805,10 +2825,12 @@ def _lane(name: str, now: float) -> plan.Lane:
         quiet_hours=CFG.quiet_hours,
         auto_start=w.p.auto_start,
         auto_start_hours=w.p.auto_start_hours,
+        prices=prices,
+        max_delay_s=CFG.energy.plan_max_delay_hours * 3600,
     )
 
 
-def _week_plan(now: float) -> dict[str, list[dict[str, Any]]]:
+async def _week_plan(now: float) -> dict[str, list[dict[str, Any]]]:
     queues = {
         n: [
             {
@@ -2826,17 +2848,19 @@ def _week_plan(now: float) -> dict[str, list[dict[str, Any]]]:
         ]
         for n in WATCHERS
     }
-    return plan.plan([_lane(n, now) for n in WATCHERS], queues, now)
+    prices = await _prices(now)
+    return plan.plan([_lane(n, now, prices) for n in WATCHERS], queues, now)
 
 
 @mcp.tool()
-def plan_week() -> dict[str, Any]:
+async def plan_week() -> dict[str, Any]:
     """When each queued job would start and finish, per printer: after the current print and a bed-clearing gap, in
     queue order, at the first slot whose finish falls in the printer's finish_window and whose start is outside quiet
-    hours (or, with auto_start, inside auto_start_hours), with what each job waits for. Read-only. With
+    hours (or, with auto_start, inside auto_start_hours), with what each job waits for. With energy.plan_by_price a
+    job may wait up to energy.plan_max_delay_hours for a slot whose forecast power price is 10 % lower. Read-only. With
     policy.plan_offers the queue holds each offer until its planned slot."""
     now = time.time()
-    rows = _week_plan(now)
+    rows = await _week_plan(now)
     return {
         "plan_offers": CFG.plan_offers,
         "printers": {

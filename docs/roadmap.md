@@ -435,3 +435,16 @@ Done when: CI replays at least one real error print and one real shutdown from e
 
 Done when: a mixed queue across both printers gets a plan that respects every window and is offered on time
 (runbook row 46).
+
+## Phase 38 — Plan around power prices ✅ (build)
+
+- ✅ `energy.plan_by_price` makes the planner read a price forecast from a Home Assistant sensor's attributes.
+  `energy.price_forecast_entity` names the sensor, defaulting to `price_entity`. It understands Nord Pool's
+  `raw_today`/`raw_tomorrow`, any list of `{start, end, value}`-like intervals, and hourly `today`/`tomorrow` lists.
+- ✅ A job moves to the cheapest slot within `energy.plan_max_delay_hours` only when the forecast covers the whole
+  print and the mean price is at least 10 % lower. Finish windows, quiet hours and auto-start hours still apply.
+- ✅ `plan_week` says why ("cheaper power (~0.1 vs 0.3 a kWh)"). With `policy.plan_offers` the offer waits for that
+  slot. The forecast is read at most every 15 minutes.
+- Cheap power's offer-time hold (`policy.cheap_power`) is unchanged.
+
+Done when: a long job queued in the dear hours is planned, and offered, in the cheap ones within its windows.

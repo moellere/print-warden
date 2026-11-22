@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from print_warden import plan
 
@@ -83,3 +83,85 @@ def test_status_page_shows_the_plan():
         {"printers": {}, "version": "x", "plan": {"x4": ["10:15 → 12:15 lid"]}}
     )
     assert "<h2>Plan</h2>" in html and "10:15 → 12:15 lid" in html
+
+
+def _hours(day, *prices):
+    """Hourly prices from midnight of `day`."""
+    base = _t(day, 0)
+    return tuple(
+        (base + i * 3600, base + (i + 1) * 3600, p) for i, p in enumerate(prices)
+    )
+
+
+def test_a_job_waits_for_cheaper_power_within_the_delay():
+    prices = _hours(17, *([0.30] * 13 + [0.10] * 4 + [0.30] * 7))  # cheap 13:00-17:00
+    lane = plan.Lane("x4", 0, False, prices=prices, max_delay_s=6 * 3600)
+    start, why = plan.slot(lane, _t(17, 9), 2 * 3600)
+    assert start == _t(17, 13)
+    assert why.startswith("cheaper power (~0.1 vs 0.3")
+    near = plan.Lane("x4", 0, False, prices=prices, max_delay_s=2 * 3600)
+    assert plan.slot(near, _t(17, 9), 2 * 3600) == (
+        _t(17, 9),
+        None,
+    )  # the cheap hours are too far
+
+
+def test_a_small_saving_or_a_gap_in_the_forecast_does_not_move_a_job():
+    flat = _hours(17, *([0.30] * 12 + [0.28] * 12))
+    lane = plan.Lane("x4", 0, False, prices=flat)
+    assert plan.slot(lane, _t(17, 9), 3600) == (_t(17, 9), None)
+    short = _hours(
+        17, *([0.30] * 10)
+    )  # ends at 10:00: a 2 h print from 09:00 is not covered
+    assert plan.slot(plan.Lane("x4", 0, False, prices=short), _t(17, 9), 7200) == (
+        _t(17, 9),
+        None,
+    )
+
+
+def test_windows_still_apply_to_the_cheap_slot():
+    prices = _hours(
+        17, *([0.30] * 22 + [0.05] * 2)
+    )  # cheapest 22:00-24:00, inside quiet hours
+    lane = plan.Lane("x4", 0, False, quiet_hours="21:00-07:00", prices=prices)
+    start, _ = plan.slot(lane, _t(17, 9), 3600)
+    assert start == _t(17, 9)
+
+
+def test_parse_forecast_reads_the_common_shapes():
+    now = _t(17, 12)
+    nordpool = {
+        "raw_today": [
+            {
+                "start": "2026-11-17T11:00:00+00:00",
+                "end": "2026-11-17T12:00:00+00:00",
+                "value": 0.2,
+            },
+            {
+                "start": "2026-11-17T12:00:00+00:00",
+                "end": "2026-11-17T13:00:00+00:00",
+                "value": 0.3,
+            },
+        ],
+        "unit": "kWh",
+    }
+    got = plan.parse_forecast(
+        nordpool, datetime(2026, 11, 17, 12, 30, tzinfo=UTC).timestamp()
+    )
+    noon = datetime(2026, 11, 17, 12, tzinfo=UTC).timestamp()
+    assert got == ((noon, noon + 3600, 0.3),)
+    starts_only = {
+        "forecast": [
+            {"datetime": _t(17, 13), "price": 0.1},
+            {"datetime": _t(17, 14), "price": 0.2},
+        ]
+    }
+    got = plan.parse_forecast(starts_only, now)
+    assert got == ((_t(17, 13), _t(17, 14), 0.1), (_t(17, 14), _t(17, 15), 0.2))
+    hourly = {"today": [0.1] * 24}
+    got = plan.parse_forecast(hourly, now)
+    assert got[0] == (_t(17, 12), _t(17, 13), 0.1) and len(got) == 12
+    assert (
+        plan.parse_forecast({"rates": [{"start": "nope", "value": 1}], "x": 3}, now)
+        == ()
+    )

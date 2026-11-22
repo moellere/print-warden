@@ -1427,7 +1427,7 @@ async def test_plan_offers_hold_the_offer_until_its_slot(
     )
     assert await server.release_planned(hold + 1) == ["testp"]
     assert server.JOBS.get(job["id"])["state"] == "awaiting_approval"
-    week = server.plan_week()
+    week = await server.plan_week()
     assert week["printers"]["testp"][0]["waits"] == "offered: waiting for the tap"
 
 
@@ -1461,3 +1461,38 @@ def test_bed_cleared_from_the_status_page(client, clean_queues):
         ).status_code
         == 404
     )
+
+
+async def test_the_plan_reads_the_price_forecast(monkeypatch, clean_queues, ready):
+    import dataclasses
+
+    from print_warden import config
+
+    now = time.time()
+    hour = 3600 * (int(now // 3600) + 1)
+    attrs = {
+        "forecast": [
+            {"start": hour + i * 3600, "value": 0.40 if i < 2 else 0.05}
+            for i in range(12)
+        ]
+    }
+    reads = []
+
+    async def state_full(entity):
+        reads.append(entity)
+        return {"state": "0.4", "attributes": attrs}
+
+    monkeypatch.setattr(server.HA, "state_full", state_full)
+    energy = config.Energy(
+        price_entity="sensor.price", plan_by_price=True, plan_max_delay_hours=8
+    )
+    monkeypatch.setattr(
+        server, "CFG", dataclasses.replace(server.CFG, energy=energy, quiet_hours=None)
+    )
+    server._PRICES.update(at=0.0, prices=())
+    _queued(est_seconds=3600)
+    week = await server.plan_week()
+    row = week["printers"]["testp"][0]
+    assert row["start"] >= hour + 2 * 3600 and row["waits"].startswith("cheaper power")
+    await server.plan_week()
+    assert reads == ["sensor.price"]  # cached

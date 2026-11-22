@@ -83,7 +83,10 @@ finish on its printer, and what it waits for. The plan follows the queue order a
 with a gap for clearing the bed. Each job gets the first slot whose finish falls in the printer's `finish_window`
 and whose start is outside quiet hours (an `auto_start` printer uses its `auto_start_hours` instead). With
 `policy.plan_offers: true`, the queue holds each offer until its slot: a four-hour job queued at 21:00 is offered at
-07:00. Without it the plan only informs. Either way, nothing starts without a tap or `auto_start`.
+07:00. Without it the plan only informs. With `energy.plan_by_price: true`, a job may also wait for cheaper power.
+The plan reads the price forecast that a Home Assistant price sensor (Nord Pool, Tibber, Octopus and the like)
+keeps in its attributes. It moves a job to the cheapest slot within `energy.plan_max_delay_hours` (12 by default),
+but only when that saves at least 10 % over the print and the forecast covers it. Either way, nothing starts without a tap or `auto_start`.
 
 **Weekly digest.** With `digest: {day: sunday, at: "18:00"}`, the phone gets one summary a week. It counts
 prints done and failed (with the commonest reasons), hours, grams, kWh and cost, per printer and in all. It also
