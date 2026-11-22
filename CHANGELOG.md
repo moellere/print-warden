@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
+
+Since 0.11.0: power-price planning, guided printer setup, and a Bed cleared button on `/status`.
+**Upgrade notes:** no config changes are needed. `energy.plan_by_price` is off by default, so the plan is unchanged
+until you turn it on.
 
 - `print-warden add-printer NAME --moonraker URL [--write [PATH]]` sets up a new Klipper printer. From Moonraker it
   writes the machine preset and builds the printer's entry: cameras from Moonraker's webcams, the power device and
