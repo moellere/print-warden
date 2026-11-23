@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `validate sign <row> --printer P --na "<why>"` records a row that does not apply to a printer, and
+  `validate sign all --printer P --na "<why>"` marks every row not already settled on a printer left out. n/a counts
+  as settled in the listing, the report and `validate session`.
+- `validate ready` prints the 1.0 checklist: per printer, each open row with the command that settles it, which
+  rows CI already covers and which one run covers for every printer. It exits 0 only when every row is settled.
+  A session ends with the same count on the phone and in its sign-off file.
+
 ## 0.14.0
 
 Since 0.13.0: undo for a mistaken tap, and the status page says what each printer is doing.

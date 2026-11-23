@@ -389,6 +389,8 @@ After a deploy that changes behaviour, run the live-validation runbook (`docs/li
   the warden's own state;
 - `--by <initials>` signs a passing run; `validate sign` records a row judged by eye, or `--issue <url>` for one
   that failed;
+- `validate sign <row|all> --printer P --na "<why>"` marks rows that do not apply to a printer;
+- `validate ready` prints what is left before 1.0, per printer, with the command for each row;
 - `validate report` prints the sign-off table;
 - `validate session --printer P --by EM` walks every row in order from the phone (Go, Skip, Pass, Fail with a
   note) and writes the sign-off for the printer.

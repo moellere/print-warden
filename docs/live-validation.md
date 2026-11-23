@@ -28,8 +28,14 @@ nothing: a setup that offers a job still waits for the tap.
   - row 38 sends `PAUSE` to the printer's running warden print;
   - row 39 queues `fault_test`;
   - row 41 takes the printer-health snapshot.
-- `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one.
+- `validate sign <row> --printer P --by EM` signs a manual row; `--issue <url>` records a failing one;
+  `--na "<why>"` records that the row does not apply to that printer. `validate sign all --printer P --na "<why>"`
+  marks every row not already settled on a printer you are leaving out (n/a counts as settled).
 - `validate report` prints the table below, filled in, for pasting here.
+- `validate ready` prints the 1.0 checklist: per printer, each row still open with its kind, whether CI already
+  proves the warden's side or one run covers every printer, and the command that settles it. It exits 0 only when
+  every row is signed, has an issue, or is n/a. A session ends with the same count on the phone and in its
+  sign-off file.
 
 **A whole printer in one go:** `print-warden validate session --printer garagex4 --by EM` walks every row in
 order and asks each step on the phone.
@@ -39,6 +45,7 @@ order and asks each step on the phone.
 - A row judged by eye is a Pass / Fail / Skip tap.
 - Signed rows and rows with an issue are passed over, so stopping and starting the session again resumes it.
 - `--rows 1-13,39` limits it, and `--terminal` asks at the terminal instead of on the phone.
+- Rows marked n/a are passed over like signed ones.
 - At the end it writes `<storage>/signoff-<printer>-<date>.md`: the filled-in table and each failure with its note
   and failing checks, ready to paste here or file as issues.
 

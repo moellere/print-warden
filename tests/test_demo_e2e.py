@@ -17,7 +17,7 @@ import pytest
 
 from print_warden import config, validate
 
-ROWS_COVERED = (0, 1, 3, 4, 10, 11, 12, 13, 23, 25, 28, 35, 38, 39, 41)
+ROWS_COVERED = validate.CI_ROWS
 
 
 def _port() -> int:
