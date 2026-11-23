@@ -229,53 +229,56 @@ warden's side of each row, so on the printers only the hardware's side is left.
 
 ## Sign-off
 
+wyolax1 is at another location and is **not applicable for 1.0** (owner's decision, 2026-11-23): 1.0 is cut on
+garagex4's sign-off. Its column is filled in when it is next reachable.
+
 | # | Row | garagex4 | wyolax1 |
 |---|---|---|---|
-| 0 | `print-warden check` reports 0 failed | | |
-| 1 | Slice and stage an STL | | |
-| 2 | 3MF from Orca / Bambu Studio / PrusaSlicer, plate 2 | | |
-| 3 | Oversized model refused before slicing | | |
-| 4 | Start by tap | | |
-| 5 | Expired Start tap refused | | |
-| 6 | First-layer prompt | | |
-| 7 | Completion: alert, Spoolman, timelapse, park | | |
-| 8 | Outcome prompt labels the job; "failed before" warning | | |
-| 9 | HA entities follow the print | | |
-| 10 | Occupied bed blocks the next start | | |
-| 11 | Bed cleared → labelled check → next job offered | | |
-| 12 | Bed check sees a part | | |
-| 13 | Cancel by tap; stale Cancel ignored | | |
-| 14 | Obico pause → Resume | | |
-| 15 | Restart mid-print, settled from history | | |
-| 16 | Quiet hours / quiet entity hold warnings, not criticals | | |
-| 17 | Quiet entity off → warnings resume | | |
-| 18 | MQTT device, rename survives HA restart, unavailable when stopped | | |
-| 19 | homelab-helper `printer-offline` opens and resolves | | |
-| 20 | Maintenance due → Done resets it and the sensor | | |
-| 21 | Reorder alert once a day | | |
-| 22 | Drying reminder → Dried resets it | | |
-| 23 | submit_split shares copies; each share tap-started | | |
-| 24 | Cheap-power hold, offered when the price drops | | |
-| 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | |
-| 26 | Temperature tower → section saved to the spool and used | | |
-| 27 | Flow tower leaves the printer at 100 % | | |
-| 28 | `/status` shows both printers live; 401 without the token | | |
-| 29 | Thingiverse page → named file printed, license on the job | | |
-| 30 | Printables page → named file printed, license on the job | | |
-| 31 | Profile from Klipper: block, check, a cube printed | | |
-| 32 | Imported Orca preset bundle sliced with its settings | | |
-| 33 | `profiles diff` after an Orca upgrade | | |
-| 34 | `check --sites`: Thingiverse token and Printables query | | |
-| 35 | A 4-plate project as one batch across both printers | | |
-| 36 | `/stage`: upload, slice, queue, offer on the phone | | |
-| 37 | kWh per print within a few percent of the plug's counter | | |
-| 38 | A paused print cancels itself, heaters off; a failed print is cooled | | |
-| 39 | An errored print names its cause; Reprint queues it | | |
-| 40 | Away mode: no offer or auto-start away; summary and offer on return | | |
-| 41 | Printer health: a printer.cfg change is a finding until accepted | | |
-| 42 | Spool registered, labelled, swapped on with the old one weighed | | |
-| 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | |
-| 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | |
-| 45 | Weekly digest arrives once; held while away | | |
-| 46 | The plan holds an evening job and offers it at its morning slot | | |
-| 47 | A swiped-away Start answered from /inbox; the token alone is refused | | |
+| 0 | `print-warden check` reports 0 failed | | n/a |
+| 1 | Slice and stage an STL | | n/a |
+| 2 | 3MF from Orca / Bambu Studio / PrusaSlicer, plate 2 | | n/a |
+| 3 | Oversized model refused before slicing | | n/a |
+| 4 | Start by tap | | n/a |
+| 5 | Expired Start tap refused | | n/a |
+| 6 | First-layer prompt | | n/a |
+| 7 | Completion: alert, Spoolman, timelapse, park | | n/a |
+| 8 | Outcome prompt labels the job; "failed before" warning | | n/a |
+| 9 | HA entities follow the print | | n/a |
+| 10 | Occupied bed blocks the next start | | n/a |
+| 11 | Bed cleared → labelled check → next job offered | | n/a |
+| 12 | Bed check sees a part | | n/a |
+| 13 | Cancel by tap; stale Cancel ignored | | n/a |
+| 14 | Obico pause → Resume | | n/a |
+| 15 | Restart mid-print, settled from history | | n/a |
+| 16 | Quiet hours / quiet entity hold warnings, not criticals | | n/a |
+| 17 | Quiet entity off → warnings resume | | n/a |
+| 18 | MQTT device, rename survives HA restart, unavailable when stopped | | n/a |
+| 19 | homelab-helper `printer-offline` opens and resolves | | n/a |
+| 20 | Maintenance due → Done resets it and the sensor | | n/a |
+| 21 | Reorder alert once a day | | n/a |
+| 22 | Drying reminder → Dried resets it | | n/a |
+| 23 | submit_split shares copies; each share tap-started | | n/a |
+| 24 | Cheap-power hold, offered when the price drops | | n/a |
+| 25 | Shutdown cause in `/healthz` and as a homelab-helper finding | | n/a |
+| 26 | Temperature tower → section saved to the spool and used | | n/a |
+| 27 | Flow tower leaves the printer at 100 % | | n/a |
+| 28 | `/status` shows both printers live; 401 without the token | | n/a |
+| 29 | Thingiverse page → named file printed, license on the job | | n/a |
+| 30 | Printables page → named file printed, license on the job | | n/a |
+| 31 | Profile from Klipper: block, check, a cube printed | | n/a |
+| 32 | Imported Orca preset bundle sliced with its settings | | n/a |
+| 33 | `profiles diff` after an Orca upgrade | | n/a |
+| 34 | `check --sites`: Thingiverse token and Printables query | | n/a |
+| 35 | A 4-plate project as one batch across both printers | | n/a |
+| 36 | `/stage`: upload, slice, queue, offer on the phone | | n/a |
+| 37 | kWh per print within a few percent of the plug's counter | | n/a |
+| 38 | A paused print cancels itself, heaters off; a failed print is cooled | | n/a |
+| 39 | An errored print names its cause; Reprint queues it | | n/a |
+| 40 | Away mode: no offer or auto-start away; summary and offer on return | | n/a |
+| 41 | Printer health: a printer.cfg change is a finding until accepted | | n/a |
+| 42 | Spool registered, labelled, swapped on with the old one weighed | | n/a |
+| 43 | Weigh-in reply corrects Spoolman; a wrong density shows as drift | | n/a |
+| 44 | Reorder on the HA to-do list and off again; the spool scale weighs | | n/a |
+| 45 | Weekly digest arrives once; held while away | | n/a |
+| 46 | The plan holds an evening job and offers it at its morning slot | | n/a |
+| 47 | A swiped-away Start answered from /inbox; the token alone is refused | | n/a |

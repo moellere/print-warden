@@ -377,7 +377,8 @@ included). `error` with Klipper ready is idle now.
   archive; restore refuses while a warden answers and keeps what it replaces. A database from the first release
   is upgraded in place (tested).
 
-Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-off is complete.
+Done when: the contract is written and tested; 1.0 is cut once Phase 29's sign-off is complete on garagex4
+(wyolax1, at another location, is not applicable for 1.0).
 
 ## Phase 32 — Weekly digest ✅ (build)
 
