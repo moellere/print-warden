@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
+
+Since 0.13.0: undo for a mistaken tap, and the status page says what each printer is doing.
+**Upgrade notes:** no config changes are needed. Recent and Undo appear in the inbox, which needs
+`PRINT_WARDEN_OPERATOR_PASSWORD` (0.13.0).
 
 - The inbox lists the last day's answers under **Recent** (button, prompt, phone or inbox, when), with **Undo** for
   a mistaken Skip, outcome label or Bed cleared while nothing has moved on since. Undoing Bed cleared withdraws the
