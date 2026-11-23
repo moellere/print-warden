@@ -178,11 +178,18 @@ class Results:
         return out
 
 
+CI_ROWS = (0, 1, 3, 4, 10, 11, 12, 13, 23, 25, 28, 35, 38, 39, 41)
+"""Rows CI runs against the demo on every change (tests/test_demo_e2e.py): the warden's side is proven, so on a
+printer only the hardware's side is left."""
+
+
 def cell(entry: dict[str, Any] | None) -> str:
     """One sign-off table cell."""
     if not entry:
         return ""
     day = datetime.fromtimestamp(entry["at"]).astimezone().strftime("%Y-%m-%d")
+    if entry["result"] == "na":
+        return "n/a" + (f" ({entry['why']})" if entry.get("why") else "")
     if entry.get("issue"):
         return f"[issue]({entry['issue']})"
     if entry["result"] == "signed":
@@ -1054,14 +1061,46 @@ def listing(cfg: config.Config, results: Results) -> str:
     for n, title in TITLES.items():
         cells = " ".join(f"{cell(results.get(n, p)) or '-':<22}" for p in names)
         lines.append(f"{n:>3} {ROWS[n].kind:<9} {cells} {title}")
-    done = sum(
-        1
-        for n in TITLES
-        for p in names
-        if (e := results.get(n, p)) and (e["result"] == "signed" or e.get("issue"))
+    done = sum(1 for n in TITLES for p in names if _settled(results, n, p))
+    lines.append(
+        f"\n{done} of {len(TITLES) * len(names)} settled (signed, with an issue, or n/a)"
     )
-    lines.append(f"\n{done} of {len(TITLES) * len(names)} signed or with an issue")
     return "\n".join(lines)
+
+
+def ready(cfg: config.Config, results: Results) -> tuple[str, int]:
+    """The 1.0 checklist: per printer, every row not yet signed, with an issue or n/a, and how to settle it."""
+    lines, left = [], 0
+    for p in cfg.printers:
+        open_rows = [n for n in TITLES if not _settled(results, n, p)]
+        left += len(open_rows)
+        if not open_rows:
+            lines.append(f"{p}: every row settled")
+            continue
+        lines.append(f"{p}: {len(open_rows)} row(s) left")
+        for n in open_rows:
+            row = ROWS[n]
+            e = results.get(n, p)
+            how = (
+                f"validate {n} --printer {p} --setup --by <initials>"
+                if row.check and not (e and e["result"] == "pass")
+                else f"validate sign {n} --printer {p} --by <initials>"
+            )
+            tags = [row.kind]
+            if n in CI_ROWS:
+                tags.append("CI covers the warden's side")
+            if row.every_printer:
+                tags.append("one run covers every printer")
+            if e and e["result"] in ("fail", "pass"):
+                tags.append(cell(e))
+            lines.append(f"  {n:>2} {TITLES[n]} [{'; '.join(tags)}]\n     {how}")
+    lines.append(
+        "\nReady for 1.0: every row is signed, has an issue, or is n/a."
+        if not left
+        else f"\n{left} row(s) left before 1.0. `validate session --printer P --by <initials>` walks them in order;"
+        ' `validate sign <row|all> --printer P --na "<why>"` marks what does not apply.'
+    )
+    return "\n".join(lines), left
 
 
 def report(cfg: config.Config, results: Results) -> str:
@@ -1204,8 +1243,9 @@ def _rows(spec: str | None) -> list[int]:
 
 
 def _settled(results: Results, n: int, printer: str) -> bool:
+    """Signed, failing with an issue, or not applicable to this printer."""
     e = results.get(n, printer)
-    return bool(e and (e["result"] == "signed" or e.get("issue")))
+    return bool(e and (e["result"] in ("signed", "na") or e.get("issue")))
 
 
 async def session(
@@ -1347,6 +1387,8 @@ def signoff_file(
         + ("## Failed\n\n" + "\n".join(failed) + "\n\n" if failed else "")
         + "## Sign-off\n\n"
         + report(cfg, results)
+        + "\n\n## Left for 1.0\n\n"
+        + ready(cfg, results)[0]
         + "\n"
     )
     return path
@@ -1359,9 +1401,9 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "what",
         nargs="?",
-        help="a row number, `session`, `sign` or `report` (none: list the rows)",
+        help="a row number, `session`, `sign`, `report` or `ready` (none: list the rows)",
     )
-    ap.add_argument("row", nargs="?", type=int, help="with `sign`: the row")
+    ap.add_argument("row", nargs="?", help="with `sign`: the row, or `all`")
     ap.add_argument(
         "--config", default=os.environ.get("PRINT_WARDEN_CONFIG", "printers.yaml")
     )
@@ -1378,6 +1420,11 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--by", help="initials: a passing run, or `sign`, signs the row")
     ap.add_argument(
         "--issue", help="with `sign`: the issue a failing row is tracked in"
+    )
+    ap.add_argument(
+        "--na",
+        metavar="WHY",
+        help="with `sign`: the row does not apply to this printer, and why",
     )
     ap.add_argument(
         "--model",
@@ -1405,6 +1452,10 @@ def main(argv: list[str]) -> int:
     if args.what == "report":
         print(report(cfg, results))
         return 0
+    if args.what == "ready":
+        text, left = ready(cfg, results)
+        print(text)
+        return 1 if left else 0
     printer = args.printer or (
         next(iter(cfg.printers)) if len(cfg.printers) == 1 else None
     )
@@ -1412,16 +1463,33 @@ def main(argv: list[str]) -> int:
         print(f"unknown printer {printer}; one of {', '.join(cfg.printers)}")
         return 2
     if args.what == "sign":
-        if args.row not in TITLES or not printer or not (args.by or args.issue):
+        rows = list(TITLES) if args.row == "all" else _rows(args.row or "")
+        if (
+            not args.row
+            or not rows
+            or not printer
+            or not (args.by or args.issue or args.na)
+            or (args.row == "all" and not args.na)
+        ):
             print(
-                "usage: print-warden validate sign <row> --printer P (--by <initials> | --issue <url>)"
+                "usage: print-warden validate sign <row> --printer P (--by <initials> | --issue <url> | --na <why>);"
+                " `sign all` takes only --na"
             )
             return 2
-        entry = {"result": "signed" if args.by and not args.issue else "fail"}
+        if args.na:
+            entry: dict[str, Any] = {"result": "na", "why": args.na}
+        else:
+            entry = {"result": "signed" if args.by and not args.issue else "fail"}
         entry |= {k: v for k, v in (("by", args.by), ("issue", args.issue)) if v}
-        results.record(args.row, printer, entry)
+        for n in rows:
+            if args.row == "all" and _settled(results, n, printer):
+                continue
+            results.record(n, printer, entry)
         results.save()
-        print(f"Row {args.row} on {printer}: {cell(results.get(args.row, printer))}")
+        if len(rows) == 1:
+            print(f"Row {rows[0]} on {printer}: {cell(results.get(rows[0], printer))}")
+        else:
+            print(f"{printer}: every row not already settled is n/a ({args.na})")
         return 0
     if args.what == "session":
         if not printer or not args.by:
@@ -1499,10 +1567,21 @@ def _run_session(
 
             done = await session(_rows(args.rows), make, op, args.by)
             path = signoff_file(cfg, results, printer, done)
+            left = sum(1 for n in TITLES if not _settled(results, n, printer))
             print(
                 f"\nSigned {len(done['signed'])}, failed {len(done['failed'])}, skipped {len(done['skipped'])}. "
-                f"Sign-off: {path}"
+                f"Sign-off: {path}\n{left} row(s) left on {printer} before 1.0 (`validate ready`)."
             )
+            with contextlib.suppress(WardenError, httpx.HTTPError):
+                await op.tell(
+                    f"Sign-off on {printer}",
+                    f"signed {len(done['signed'])}, failed {len(done['failed'])}, skipped {len(done['skipped'])}; "
+                    + (
+                        f"{left} row(s) left before 1.0"
+                        if left
+                        else "every row settled: ready for 1.0"
+                    ),
+                )
             return 1 if done["failed"] else 0
 
     try:

@@ -245,7 +245,7 @@ def test_sign_listing_and_report(cfg, capsys):
     capsys.readouterr()
     assert validate.main([]) == 0
     listing = capsys.readouterr().out
-    assert "2 of 96 signed or with an issue" in listing
+    assert "2 of 96 settled (signed, with an issue, or n/a)" in listing
     assert validate.main(["report"]) == 0
     rep = capsys.readouterr().out
     day = time.strftime("%Y-%m-%d")
@@ -383,3 +383,59 @@ def test_rows_spec():
     assert validate._rows("1-3,12") == [1, 2, 3, 12]
     assert validate._rows(None) == list(validate.TITLES)
     assert validate._rows("44-99") == [44, 45, 46, 47]
+
+
+def test_not_applicable_and_the_1_0_checklist(cfg, capsys):
+    path = cfg.storage_dir / "validation.json"
+    path.unlink(missing_ok=True)
+    assert validate.main(["sign", "all", "--printer", "testq"]) == 2  # `all` needs --na
+    assert validate.main(["sign", "all", "--printer", "testq", "--by", "EM"]) == 2
+    assert validate.main(["sign", "5", "--printer", "testp", "--by", "EM"]) == 0
+    assert (
+        validate.main(["sign", "all", "--printer", "testq", "--na", "other location"])
+        == 0
+    )
+    assert (
+        validate.main(["sign", "7", "--printer", "testp", "--na", "no Spoolman"]) == 0
+    )
+    passed = validate.Results.load(path)
+    passed.record(3, "testp", {"result": "pass"})
+    passed.save()
+    capsys.readouterr()
+    assert validate.main(["report"]) == 0
+    rep = capsys.readouterr().out
+    assert (
+        "| 7 | Completion: alert, Spoolman, timelapse, park | n/a (no Spoolman) | n/a (other location) |"
+        in rep
+    )
+    assert validate.main(["ready"]) == 1
+    text = capsys.readouterr().out
+    assert "testq: every row settled" in text
+    assert f"testp: {len(validate.TITLES) - 2} row(s) left" in text
+    assert "   1 Slice and stage an STL [auto; CI covers the warden's side]" in text
+    assert "validate 1 --printer testp --setup --by <initials>" in text
+    assert "validate sign 2 --printer testp --by <initials>" in text
+    assert (
+        "validate sign 3 --printer testp --by <initials>" in text
+    )  # checks passed: only the signature
+    assert "one run covers every printer" in text and " 5 Expired" not in text
+    results = validate.Results.load(path)
+    for n in validate.TITLES:
+        results.record(n, "testp", {"result": "signed", "by": "EM"})
+    results.save()
+    assert validate.main(["ready"]) == 0
+    assert "Ready for 1.0" in capsys.readouterr().out
+    path.unlink()
+
+
+def test_the_sign_off_file_lists_what_is_left(cfg, results):
+    results.record(0, "testp", {"result": "signed", "by": "EM"})
+    path = validate.signoff_file(
+        cfg,
+        results,
+        "testp",
+        {"signed": [0], "failed": [], "skipped": [], "already": []},
+    )
+    text = path.read_text()
+    assert "## Left for 1.0" in text and "testp: 47 row(s) left" in text
+    path.unlink()

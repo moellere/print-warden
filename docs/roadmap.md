@@ -508,3 +508,15 @@ Done when: a Skip tapped by mistake on the phone is undone from the inbox and th
 
 Done when: a print heating up reads as heating, not as a stuck "printing 0 %".
 
+## Phase 45 — The sign-off finish line ✅ (build)
+
+- ✅ `validate sign … --na "<why>"` records a row that does not apply to a printer; `sign all --na` covers a printer
+  left out (wyolax1 for 1.0). n/a is settled everywhere a signature is: the listing, the report, the session.
+- ✅ `validate ready` lists, per printer, each row still open with its kind, the command that settles it, whether
+  CI already proves the warden's side (`CI_ROWS`, shared with the demo's end-to-end test), and whether one run
+  covers every printer. It exits 0 only when every row is settled.
+- ✅ A session ends with "N row(s) left before 1.0" on the phone, at the terminal and in its sign-off file, which
+  now has a "Left for 1.0" section.
+
+Done when: `validate ready` reads "Ready for 1.0" on the operator's warden.
+
