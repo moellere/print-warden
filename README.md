@@ -427,6 +427,12 @@ pause prompt after the print ended) is dropped and withdrawn from the phone. A S
 again**. With the password set, tapping a notification's body opens the inbox, and `/status` links to it with the
 count.
 
+Below the prompts, **Recent** lists the last day's answers: the button, the prompt, where it came from (phone tap or
+the web inbox) and when. A mistaken **Skip** (the job goes back to the queue), **outcome label** (cleared and asked
+again) or **Bed cleared** (the bed is occupied again, and an offer it led to is withdrawn) has an **Undo** while
+nothing has moved on since: the job is still skipped, the label is unchanged, no print has started. Start, Cancel
+and Resume acted on the printer and are listed without one.
+
 **Remote access (optional).** To let other people use the warden from a hosted Claude app, publish `/mcp` on a public
 HTTPS hostname and set `server.oauth`. Remote requests then need a sign-in with your identity provider, and each
 account's group decides whether it is an operator (every tool) or can only look and queue prints. Requests from the
@@ -437,6 +443,12 @@ progress and finish time, bed, queue with estimates, latest snapshot and mainten
 dry. It refreshes every 30 s. Its one button is **Bed cleared**, on a printer whose bed is occupied and that is
 not printing. It does what the phone's tap does: the bed is marked clear (a labelled check where a bed camera is
 set up) and the next queued job is offered. Starts and cancels stay on the phone.
+
+Each printer card says what the printer is doing, in words: *heating: bed 62/80 °C*, *start sequence: homing,
+probing or a bed mesh*, *printing layer 12 of 84*, *complete; cooling*. Klipper reports "printing" from the moment the
+file starts, so a print at 0 % for minutes is usually still heating or probing. Where there is no Bed cleared button,
+the card says why ("Bed cleared appears when this print ends", "Bed is clear; cube is waiting for your Start").
+`print_status` carries the same words as `activity`, and a refused Bed cleared says what the printer is doing.
 
 `/stage` (also opened with `?token=…`) adds a print from a browser: a file or a link, where, material, quality,
 copies and 3MF plate. Slice shows the preview, estimate, warnings and blockers; **Add to queue** puts it in the

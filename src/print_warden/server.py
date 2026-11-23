@@ -1668,12 +1668,36 @@ async def _on_ha_action(
     action: str, data: dict[str, Any], via: str = "phone tap"
 ) -> str | None:
     """One tap, from the phone or the web inbox (`via` says which, in the job log). The prompt it answers leaves the
-    inbox; answered in the inbox, it is withdrawn from the phone too. Returns why a start, cancel or resume was
-    refused, or the error, for the inbox to show."""
+    inbox; answered in the inbox, it is withdrawn from the phone too. The answer is kept for the inbox's Recent list.
+    Returns why a start, cancel or resume was refused, or the error, for the inbox to show."""
+    prompts = inbox.answered(JOBS, action)
+    if via != "phone tap" and HA:
+        for p in prompts:
+            await HA.clear_notification(p["tag"])
+    at = time.time()
+    refused = await _handle_action(action, data, via)
+    verb, _, arg = action.removeprefix("PRINT_WARDEN_").partition("_")
+    button = next(
+        (a[1] for p in prompts for a in p.get("actions") or [] if a[0] == action), None
+    )
+    inbox.remember(
+        JOBS,
+        {
+            "at": at,
+            "action": action,
+            "verb": verb,
+            "arg": arg,
+            "via": via,
+            "choice": button or _label(verb, arg),
+            "title": prompts[0]["title"] if prompts else None,
+            "refused": refused,
+        },
+    )
+    return refused
+
+
+async def _handle_action(action: str, data: dict[str, Any], via: str) -> str | None:
     verb, _, job_id = action.removeprefix("PRINT_WARDEN_").partition("_")
-    for tag in inbox.answered(JOBS, action):
-        if via != "phone tap" and HA:
-            await HA.clear_notification(tag)
     try:
         if verb == "START":
             res = await _start(job_id, via, via_tap=True)
@@ -1760,6 +1784,116 @@ async def _on_ha_action(
         log.warning("HA action %s: %s", action, e)
         return str(e) or type(e).__name__
     return None
+
+
+_LABELS = {
+    "START": "Start",
+    "REOFFER": "Offer again",
+    "SKIP": "Skip",
+    "BEDCLEAR": "Bed cleared",
+    "FIRSTLAYER": "Looks good",
+    "REPRINT": "Reprint",
+    "MAINT": "Done",
+    "DRIED": "Dried",
+    "WEIGH": "Weighed",
+    "CANCEL": "Cancel",
+    "RESUME": "Resume",
+}
+
+
+def _label(verb: str, arg: str) -> str:
+    """A tap's name for Recent when its prompt was not recorded (sent before the inbox, or never shown)."""
+    if verb in ("OUTCOME", "CALIB", "VALIDATE"):
+        return arg.partition(":")[2].replace("_", " ").capitalize() or verb.title()
+    return _LABELS.get(verb, verb.title())
+
+
+def _undo_why(e: dict[str, Any]) -> str | None:
+    """Why an answer can no longer be undone, or None when it can. Only Skip, an outcome label and Bed cleared have
+    an undo; Start, Cancel and Resume acted on the printer."""
+    if e.get("undone_at"):
+        return "already undone"
+    if e.get("refused"):
+        return ""
+    verb, arg = e.get("verb"), str(e.get("arg") or "")
+    try:
+        if verb == "SKIP":
+            return (
+                None if JOBS.get(arg)["state"] == "skipped" else "the job has moved on"
+            )
+        if verb == "OUTCOME":
+            jid, choice = outcome.parse(arg)
+            if choice in ("failed", "more"):
+                return ""
+            job = JOBS.get(jid)
+            same = (
+                job.get("outcome")
+                and abs(float(job.get("outcome_at") or 0) - e["at"]) < 30
+            )
+            return None if same else "labelled again since"
+        if verb == "BEDCLEAR":
+            if arg not in WATCHERS or BED.state(arg)["state"] != "clear":
+                return "the bed is no longer marked clear"
+            started = [
+                j for j in JOBS.list(arg, 20) if (j.get("started_at") or 0) > e["at"]
+            ]
+            return "a print has started since" if started else None
+    except (KeyError, ValueError):
+        return "the job is gone"
+    return "can't be undone" if verb in ("START", "CANCEL", "RESUME") else ""
+
+
+async def _undo(e: dict[str, Any], via: str) -> None:
+    verb, arg = e["verb"], str(e["arg"])
+    if verb == "SKIP":
+        job = JOBS.transition(arg, "staged", f"undo: Skip reversed ({via})")
+        if job["offer"]:
+            await advance_queue(job["printer"])
+        else:
+            await request_start(arg)
+    elif verb == "OUTCOME":
+        jid, _ = outcome.parse(arg)
+        job = JOBS.note(
+            jid,
+            f"undo: label cleared ({via})",
+            outcome=None,
+            outcome_reason=None,
+            outcome_by=None,
+            outcome_at=None,
+        )
+        if HA:
+            await HA.notify_actionable(
+                f"How did {job['name']} turn out?",
+                f"{job['printer']}: the label was undone. The label feeds the failure stats.",
+                outcome.first(jid, job["state"] == "done"),
+                tag=outcome.tag(jid),
+            )
+    elif verb == "BEDCLEAR":
+        BED.set_state(arg, "occupied", f"undo: Bed cleared reversed ({via})")
+        for job in JOBS.list(arg, 20, states=("awaiting_approval",)):
+            if (job.get("approval_requested_at") or 0) >= e["at"] - 1:
+                JOBS.transition(
+                    job["id"], "staged", f"offer withdrawn: Bed cleared undone ({via})"
+                )
+                inbox.clear(JOBS, f"print_warden_{job['id']}")
+                if HA:
+                    await HA.clear_notification(f"print_warden_{job['id']}")
+        if HA:
+            await HA.notify_actionable(
+                f"Clear the bed on {arg}",
+                "Tap when the bed is empty. Starts stay blocked until then.",
+                [(f"PRINT_WARDEN_BEDCLEAR_{arg}", "Bed cleared")],
+                tag=f"print_warden_bed_{arg}",
+            )
+    inbox.update_answer(JOBS, {**e, "undone_at": time.time()})
+
+
+def _recent_answers(now: float) -> list[dict[str, Any]]:
+    out = []
+    for e in inbox.recent(JOBS, now):
+        why = _undo_why(e)
+        out.append({**e, "undo_ok": why is None, "undo_why": why})
+    return out
 
 
 async def _on_outcome_tap(payload: str, via: str = "phone tap") -> None:
@@ -2490,6 +2624,10 @@ async def status_data() -> dict[str, Any]:
             for j in JOBS.queue(n)
         ]
         p["snapshot"] = _latest_snapshot(n)
+        p["activity"] = _w(n).status()["activity"]
+        p["waiting"] = next(
+            (j["name"] for j in JOBS.list(n, 10, states=("awaiting_approval",))), None
+        )
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
     report["forecast"] = up.get("forecast") or []
@@ -2651,6 +2789,7 @@ async def inbox_page(request: Request) -> Response:
     if request.method == "POST":
         form, refused = await _stage_form(request)
         action = str(form.get("action") or "")
+        undo = str(form.get("undo") or "")
         allowed = {
             a[0]
             for p in await _inbox_prompts(time.time())
@@ -2658,6 +2797,14 @@ async def inbox_page(request: Request) -> Response:
         }
         if refused:
             error, code = refused, 403
+        elif undo:
+            entry = inbox.answer(JOBS, undo)
+            why = _undo_why(entry) if entry else "that answer is gone"
+            if why is not None or not entry:
+                error, code = f"can't undo: {why or 'not undoable'}", 409
+            else:
+                await _undo(entry, "the web inbox")
+                message = f"Undone: {entry.get('choice')}."
         elif action not in allowed:
             error, code = "that prompt was already answered or withdrawn", 409
         else:
@@ -2674,6 +2821,7 @@ async def inbox_page(request: Request) -> Response:
             csrf,
             message=message,
             error=error,
+            answers=_recent_answers(time.time()),
         ),
         status_code=code,
     )

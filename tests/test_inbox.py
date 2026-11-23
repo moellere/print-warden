@@ -71,7 +71,7 @@ def test_prompts_are_kept_by_tag_until_answered_or_old():
     got = inbox.open_prompts(kv, now=inbox.MAX_AGE_S + 5)
     assert [p["tag"] for p in got] == ["b", "a"] and got[1]["message"] == "newer"
     assert "prompt:old" not in kv.d
-    assert inbox.answered(kv, "PRINT_WARDEN_START_1") == ["a"]
+    assert [p["tag"] for p in inbox.answered(kv, "PRINT_WARDEN_START_1")] == ["a"]
     assert inbox.answered(kv, "PRINT_WARDEN_START_1") == []
     inbox.clear(kv, "b")
     assert inbox.open_prompts(kv) == []
@@ -293,3 +293,91 @@ async def test_a_notification_body_opens_the_inbox(monkeypatch):
     assert posted[-1]["data"]["clickAction"] == "http://warden/inbox"
     await ha.notify_actionable("t", "m", [("A", "a")], click_url="http://x")
     assert posted[-1]["data"]["clickAction"] == "http://x"
+
+
+def _tap(action, via="phone tap"):
+    import asyncio
+
+    return asyncio.run(server._on_ha_action(action, {}, via))
+
+
+def _undo_id(page, choice):
+    m = re.search(
+        rf"<b>{choice}</b>.*?name=\"undo\" value=\"([0-9.]+)\"", page, re.DOTALL
+    )
+    return m[1] if m else None
+
+
+def test_a_mistaken_skip_is_undone(op, clean_queues, ready):
+    j = server.JOBS.transition(
+        _staged()["id"], "awaiting_approval", approval_requested_at=time.time()
+    )
+    inbox.record(server.JOBS, f"print_warden_{j['id']}", "Start print?", "m",
+                 [(f"PRINT_WARDEN_START_{j['id']}", "Start"), (f"PRINT_WARDEN_SKIP_{j['id']}", "Skip")])  # fmt: skip
+    _tap(f"PRINT_WARDEN_SKIP_{j['id']}")
+    assert server.JOBS.get(j["id"])["state"] == "skipped"
+    csrf = _sign_in(op)
+    page = op.get("/inbox").text
+    assert "Recent" in page and "phone tap" in page
+    uid = _undo_id(page, "Skip")
+    r = op.post("/inbox", data={"csrf": csrf, "undo": uid})
+    assert r.status_code == 200 and "Undone: Skip." in r.text
+    job = server.JOBS.get(j["id"])
+    assert job["state"] == "awaiting_approval"  # offered by hand, so offered again
+    assert any("undo: Skip reversed (the web inbox)" in e["note"] for e in job["log"])
+    assert op.post("/inbox", data={"csrf": csrf, "undo": uid}).status_code == 409
+    assert "undone" in op.get("/inbox").text
+
+
+def test_a_label_is_undone_and_asked_again(op, clean_queues):
+    j = server.JOBS.transition(
+        server.JOBS.transition(_staged()["id"], "printing")["id"], "done"
+    )
+    _tap(f"PRINT_WARDEN_OUTCOME_{j['id']}:good")
+    assert server.JOBS.get(j["id"])["outcome"] == "good"
+    csrf = _sign_in(op)
+    uid = _undo_id(op.get("/inbox").text, "Good")
+    assert op.post("/inbox", data={"csrf": csrf, "undo": uid}).status_code == 200
+    job = server.JOBS.get(j["id"])
+    assert job["outcome"] is None and job["outcome_by"] is None
+    assert f'value="PRINT_WARDEN_OUTCOME_{j["id"]}:good">Good' in op.get("/inbox").text
+
+
+def test_bed_cleared_is_undone_and_its_offer_withdrawn(
+    op, clean_queues, ready, monkeypatch
+):
+    from tests.test_server import _queued
+
+    async def post(url, json):
+        return type("R", (), {"status_code": 200})()
+
+    monkeypatch.setattr(
+        server.HA,
+        "cfg",
+        dataclasses.replace(server.HA.cfg, notify_service="notify.phone"),
+    )
+    monkeypatch.setattr(server.HA._c, "post", post)
+    server.BED.set_state("testp", "occupied", "test")
+    q = _queued(est_seconds=600)
+    _tap("PRINT_WARDEN_BEDCLEAR_testp")
+    assert server.BED.state("testp")["state"] == "clear"
+    assert server.JOBS.get(q["id"])["state"] == "awaiting_approval"
+    csrf = _sign_in(op)
+    uid = _undo_id(op.get("/inbox").text, "Bed cleared")
+    assert op.post("/inbox", data={"csrf": csrf, "undo": uid}).status_code == 200
+    assert server.BED.state("testp")["state"] == "occupied"
+    assert server.JOBS.get(q["id"])["state"] == "staged"
+    page = op.get("/inbox").text
+    assert (
+        "Clear the bed on testp" in page and f"PRINT_WARDEN_START_{q['id']}" not in page
+    )
+
+
+def test_a_start_cannot_be_undone(op, clean_queues, ready):
+    j = server.JOBS.transition(
+        _staged()["id"], "awaiting_approval", approval_requested_at=time.time()
+    )
+    _tap(f"PRINT_WARDEN_START_{j['id']}")
+    _sign_in(op)
+    page = op.get("/inbox").text
+    assert "can&#x27;t be undone" in page and 'name="undo"' not in page

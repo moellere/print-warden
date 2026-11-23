@@ -23,6 +23,7 @@ from . import (
     moonraker,
     outcome,
     park,
+    phase,
     policy,
     presence,
     reconcile,
@@ -648,8 +649,11 @@ class PrinterWatcher:
         labelled check that the vision verdict is graded against."""
         if not self.bed:
             raise ValueError("bed ledger unavailable")
-        if self.status().get("state") in ("printing", "paused"):
-            raise ValueError(f"{self.p.name} is printing; the bed cannot be clear")
+        st = self.status()
+        if st.get("state") in ("printing", "paused"):
+            raise ValueError(
+                f"{self.p.name} is still printing ({st['activity']}); clear the bed after the print ends"
+            )
         self.bed.set_state(self.p.name, "clear", note)
         if self.ha:
             await self.ha.clear_notification(f"print_warden_bed_{self.p.name}")
@@ -922,9 +926,10 @@ class PrinterWatcher:
             await self.ha.light(self.p.light, False)
 
     def status(self) -> dict[str, Any]:
+        """The live state, with `activity`: what the printer is doing, in words (`phase.describe`)."""
         st = self.mr.state
         ps = st.get("print_stats", {})
-        return {
+        out = {
             "printer": self.p.name,
             "moonraker_connected": self.mr.connected,
             "klippy": st.get("webhooks", {}).get("state"),
@@ -950,3 +955,5 @@ class PrinterWatcher:
             if self.job_dir and self.job_dir.exists()
             else 0,
         }
+        out["activity"] = phase.describe(out)[1]
+        return out

@@ -1452,9 +1452,19 @@ def test_bed_cleared_from_the_status_page(client, clean_queues):
 
     server.BED.set_state("testp", "occupied", "test")
     w.mr.state["print_stats"] = {"state": "printing"}
-    assert "Bed cleared</button>" not in client.get("/status?token=test-token").text
+    w.mr.state["heater_bed"] = {"temperature": 47.5, "target": 80}
+    page = client.get("/status?token=test-token").text
+    assert "Bed cleared</button>" not in page
+    assert (
+        "Bed cleared appears when this print ends." in page
+        and "heating: bed 48/80" in page
+    )
     busy = client.post("/status/bed/testp?token=test-token", data={"csrf": csrf})
-    assert busy.status_code == 409 and "printing" in busy.text
+    assert (
+        busy.status_code == 409
+        and "still printing (heating: bed 48/80 °C)" in busy.text
+    )
+    w.mr.state.pop("heater_bed")
     assert (
         client.post(
             "/status/bed/nope?token=test-token", data={"csrf": csrf}

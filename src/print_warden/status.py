@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
+from . import phase
+
 CSS = """
 :root{--bg:#f6f6f4;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#e2e2dd;--ok:#2f7d4f;--warn:#b26b00;--bad:#b3261e}
 @media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#21211f;--ink:#ecece8;--mute:#9a9a94;--line:#33332f}}
@@ -91,6 +93,8 @@ def render(
             else "offline"
         )
         rows = []
+        if p.get("activity"):
+            rows.append(f"<p>{_e(p['activity'])}</p>")
         if p.get("last_shutdown"):
             sd = p["last_shutdown"]
             cls, label = (
@@ -110,12 +114,11 @@ def render(
         rows.append(
             f'<p class="mute">Bed {_e(p.get("bed") or "unknown")} · {_e(p.get("material") or "no material set")}</p>'
         )
-        if (
-            csrf
-            and p.get("bed") == "occupied"
-            and p.get("state") not in ("printing", "paused")
-        ):
+        why = phase.bed_note(p, p.get("bed"), p.get("waiting"))
+        if csrf and why is None:
             rows.append(_bed_button(name, csrf, token))
+        elif why:
+            rows.append(f'<p class="mute">{_e(why)}</p>')
         queue = p.get("queue_jobs") or []
         if queue:
             rows.append(

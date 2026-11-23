@@ -30,8 +30,9 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     "printing": frozenset({"done", "failed"}),
     "done": frozenset(),
     "failed": frozenset(),
-    "skipped": frozenset(),
+    "skipped": frozenset({"staged"}),
 }
+"""`skipped -> staged` is Undo on a mistaken Skip (the inbox); nothing else leaves `skipped`."""
 FIELDS = (
     "id",
     "created",

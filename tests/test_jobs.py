@@ -30,7 +30,8 @@ def test_illegal_transitions_raise(store):
         store.transition(j["id"], "printing")
     j = store.transition(j["id"], "skipped")
     with pytest.raises(ValueError):
-        store.transition(j["id"], "staged")
+        store.transition(j["id"], "printing")
+    assert store.transition(j["id"], "staged")["state"] == "staged"  # Undo on a Skip
     with pytest.raises(ValueError):
         store.transition(j["id"], "bogus")
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- The inbox lists the last day's answers under **Recent** (button, prompt, phone or inbox, when), with **Undo** for
+  a mistaken Skip, outcome label or Bed cleared while nothing has moved on since. Undoing Bed cleared withdraws the
+  offer it led to. Start, Cancel and Resume are listed but cannot be undone. A skipped job can now go back to
+  `staged` (only through Undo).
+- `/status` says what each printer is doing (heating with temperatures, start sequence, printing layer N of M,
+  cooling) and why a Bed cleared button is missing. `print_status` has the same words as `activity`. A refused
+  Bed cleared now reads "still printing (heating: bed 62/80 °C); clear the bed after the print ends".
+
 ## 0.13.0
 
 Since 0.12.0: the web inbox and browser sign-in.
