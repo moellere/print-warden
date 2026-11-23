@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
+
+Since 0.14.0: the sign-off finish line (`validate sign … --na`, `validate ready`).
+**Upgrade notes:** no config changes are needed. To leave a printer out of 1.0:
+`print-warden validate sign all --printer <name> --na "<why>"`, then `print-warden validate ready`.
 
 - `validate sign <row> --printer P --na "<why>"` records a row that does not apply to a printer, and
   `validate sign all --printer P --na "<why>"` marks every row not already settled on a printer left out. n/a counts
