@@ -323,7 +323,7 @@ def test_a_mistaken_skip_is_undone(op, clean_queues, ready):
     r = op.post("/inbox", data={"csrf": csrf, "undo": uid})
     assert r.status_code == 200 and "Undone: Skip." in r.text
     job = server.JOBS.get(j["id"])
-    assert job["state"] in ("staged", "awaiting_approval")
+    assert job["state"] == "awaiting_approval"  # offered by hand, so offered again
     assert any("undo: Skip reversed (the web inbox)" in e["note"] for e in job["log"])
     assert op.post("/inbox", data={"csrf": csrf, "undo": uid}).status_code == 409
     assert "undone" in op.get("/inbox").text

@@ -444,6 +444,12 @@ dry. It refreshes every 30 s. Its one button is **Bed cleared**, on a printer wh
 not printing. It does what the phone's tap does: the bed is marked clear (a labelled check where a bed camera is
 set up) and the next queued job is offered. Starts and cancels stay on the phone.
 
+Each printer card says what the printer is doing, in words: *heating: bed 62/80 °C*, *start sequence: homing,
+probing or a bed mesh*, *printing layer 12 of 84*, *complete; cooling*. Klipper reports "printing" from the moment the
+file starts, so a print at 0 % for minutes is usually still heating or probing. Where there is no Bed cleared button,
+the card says why ("Bed cleared appears when this print ends", "Bed is clear; cube is waiting for your Start").
+`print_status` carries the same words as `activity`, and a refused Bed cleared says what the printer is doing.
+
 `/stage` (also opened with `?token=…`) adds a print from a browser: a file or a link, where, material, quality,
 copies and 3MF plate. Slice shows the preview, estimate, warnings and blockers; **Add to queue** puts it in the
 printer's queue, where it is offered on the phone like any job, and **Discard** drops it. The page never starts,

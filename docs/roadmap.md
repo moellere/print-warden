@@ -495,3 +495,16 @@ Done when: a Start swiped away on the phone is started from the inbox, and the t
 
 Done when: a Skip tapped by mistake on the phone is undone from the inbox and the job is offered again.
 
+## Phase 42 — Say what the printer is doing ✅ (build)
+
+- ✅ `phase.describe` turns a printer's live status into a stage: heating (which heater, how far), start sequence
+  (heaters at target with the nozzle held below printing temperature: homing, probing, a mesh), printing (layer N of
+  M, or progress for files without layer info), paused, cooling, idle, offline, or Klipper's own state.
+- ✅ `/status` shows it on every printer card, and says why the Bed cleared button is missing (a print running, the
+  bed already clear, a job waiting for its Start, or the bed state unknown). `print_status` returns it as
+  `activity`.
+- ✅ A refused Bed cleared names the stage: "still printing (heating: bed 62/80 °C); clear the bed after the print
+  ends", where it used to say "is printing; the bed cannot be clear" during heat-up.
+
+Done when: a print heating up reads as heating, not as a stuck "printing 0 %".
+

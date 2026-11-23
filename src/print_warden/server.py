@@ -1847,7 +1847,10 @@ async def _undo(e: dict[str, Any], via: str) -> None:
     verb, arg = e["verb"], str(e["arg"])
     if verb == "SKIP":
         job = JOBS.transition(arg, "staged", f"undo: Skip reversed ({via})")
-        await advance_queue(job["printer"])
+        if job["offer"]:
+            await advance_queue(job["printer"])
+        else:
+            await request_start(arg)
     elif verb == "OUTCOME":
         jid, _ = outcome.parse(arg)
         job = JOBS.note(
@@ -2621,6 +2624,10 @@ async def status_data() -> dict[str, Any]:
             for j in JOBS.queue(n)
         ]
         p["snapshot"] = _latest_snapshot(n)
+        p["activity"] = _w(n).status()["activity"]
+        p["waiting"] = next(
+            (j["name"] for j in JOBS.list(n, 10, states=("awaiting_approval",))), None
+        )
     up = await upkeep_report()
     report["reorder"], report["drying"] = up["reorder"], up["drying"]
     report["forecast"] = up.get("forecast") or []
