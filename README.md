@@ -427,6 +427,12 @@ pause prompt after the print ended) is dropped and withdrawn from the phone. A S
 again**. With the password set, tapping a notification's body opens the inbox, and `/status` links to it with the
 count.
 
+Below the prompts, **Recent** lists the last day's answers: the button, the prompt, where it came from (phone tap or
+the web inbox) and when. A mistaken **Skip** (the job goes back to the queue), **outcome label** (cleared and asked
+again) or **Bed cleared** (the bed is occupied again, and an offer it led to is withdrawn) has an **Undo** while
+nothing has moved on since: the job is still skipped, the label is unchanged, no print has started. Start, Cancel
+and Resume acted on the printer and are listed without one.
+
 **Remote access (optional).** To let other people use the warden from a hosted Claude app, publish `/mcp` on a public
 HTTPS hostname and set `server.oauth`. Remote requests then need a sign-in with your identity provider, and each
 account's group decides whether it is an operator (every tool) or can only look and queue prints. Requests from the

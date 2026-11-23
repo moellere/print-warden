@@ -84,7 +84,9 @@ def test_notification_verbs():
     src = (
         Path(__file__).parent.parent / "src" / "print_warden" / "server.py"
     ).read_text()
-    body = src.split("async def _on_ha_action", 1)[1].split("\nasync def ", 1)[0]
+    body = re.split(
+        r"\n(?:async )?def ", src.split("async def _handle_action", 1)[1], maxsplit=1
+    )[0]
     verbs = re.findall(r'verb == "([A-Z]+)"', body)
     for group in re.findall(r"verb in \(([^)]*)\)", body):
         verbs += re.findall(r'"([A-Z]+)"', group)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The inbox lists the last day's answers under **Recent** (button, prompt, phone or inbox, when), with **Undo** for
+  a mistaken Skip, outcome label or Bed cleared while nothing has moved on since. Undoing Bed cleared withdraws the
+  offer it led to. Start, Cancel and Resume are listed but cannot be undone. A skipped job can now go back to
+  `staged` (only through Undo).
+
 ## 0.13.0
 
 Since 0.12.0: the web inbox and browser sign-in.
